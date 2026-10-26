@@ -9,7 +9,7 @@ O projeto é pessoal, privado e self-hosted. A stack definida no [ADR 0002](0002
 
 ## Decisão
 
-Usar Docker Compose em um único host, com três serviços permanentes, inicialmente um container por serviço:
+Usar Docker Compose em uma VM dentro do Proxmox, com três serviços permanentes, inicialmente um container por serviço:
 
 - `web`: frontend e backend/API Next.js no mesmo processo/container; único serviço permanente da aplicação com acesso ao PostgreSQL.
 - `mcp`: servidor MCP independente, acessado pelo Hermes e consumidor da API HTTP autenticada do `web`; sem acesso à rede ou às credenciais do banco.
@@ -31,4 +31,4 @@ Usar imagens com versões identificáveis, secrets fora das imagens/repositório
 
 Web e MCP poderão ser atualizados separadamente, respeitando compatibilidade de contratos. O host será um ponto único de falha; Compose não oferece alta disponibilidade entre hosts nesta topologia. Volume persistente não substitui backup, e rollback de imagem não desfaz migrations.
 
-Host, proxy, DNS, portas de entrada, armazenamento, política de backup e entrega de secrets continuam pendentes em [deployment.md](../deployment.md). Esta decisão não cria Compose, Dockerfiles, migrations ou deploy real.
+Recursos da VM, proxy, DNS, portas de entrada, armazenamento, política de backup e entrega de secrets continuam pendentes em [deployment.md](../deployment.md). Esta decisão não cria Compose, Dockerfiles, migrations ou deploy real.

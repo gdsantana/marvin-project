@@ -18,7 +18,7 @@ Este documento define **o modelo de domínio, os dados e os invariantes**; não 
 3. Uma transferência entre contas próprias **não é receita nem despesa**.
 4. O pagamento de uma fatura **não é uma segunda despesa**: é transferência da conta corrente para o passivo do cartão.
 5. Compra parcelada é **uma compra econômica e uma dívida integral**, distribuída em itens de faturas mensais. As parcelas **não debitam o passivo novamente**.
-6. Separar **data da compra**, **mês de competência do orçamento/fatura** e **data da saída efetiva do dinheiro da conta corrente**.
+6. Separar **data da compra**, **competência da fatura** e **data da saída efetiva do dinheiro da conta corrente**.
 7. A API é autoridade para cálculo de parcelas, datas, saldos e invariantes; o LLM nunca escreve SQL nem decide valores contábeis finais.
 8. O aplicativo é privado, mas o MCP exige autenticação própria e idempotência.
 
@@ -30,7 +30,8 @@ Este documento define **o modelo de domínio, os dados e os invariantes**; não 
 - Pix, débito, crédito, transferências, salários, rendimentos, cashback e estornos.
 - Compras à vista e parceladas no crédito, faturas com fechamento/vencimento configuráveis, pagamentos parciais/totais.
 - Categorias de despesa e receita, eventualmente hierárquicas, e transações divididas entre categorias.
-- Orçamento mensal por categoria/moeda; relatórios de saldo, entradas, saídas, fatura e compromissos futuros.
+- Controle básico: saldos, receitas, despesas, transferências, categorias, cartões, faturas e compromissos futuros.
+- Orçamentos, metas e limites de gasto por categoria ficam fora do escopo inicial.
 - Inclusão/edição manual pelo navegador desktop/mobile.
 - Ferramentas MCP para consulta, validação, lançamento e correção via Hermes.
 - Auditoria mínima, tratamento de duplicatas e backup.
@@ -72,12 +73,12 @@ Pix e débito que saem da mesma conta movimentam o **mesmo** `account_id`. Cart�
 - `category_allocations.amount_minor` acompanha o **sinal da movimentação econômica**: despesa negativa, receita positiva, estorno de despesa positivo.
 - `card_statement_items.amount_minor` usa convenção de **cobrança da fatura**: positivo aumenta a cobrança; negativo é crédito/abatimento.
 
-Não confundir os sinais das duas tabelas: um item de fatura de `+33333` está associado à classificação orçamentária de `-33333`.
+Não confundir os sinais das duas tabelas: um item de fatura positivo representa cobrança; a classificação da compra original é negativa e registrada uma única vez.
 
 ### 2.3 Três perspectivas de relatório
 
 1. **Patrimônio/posição financeira:** reconhece **a dívida total da compra no cartão na data da compra**; calcula o saldo pela soma de `account_entries`.
-2. **Orçamento/comprometimento mensal:** compra parcelada impacta os meses das respectivas **faturas** (padrão: mês do `due_on`), usando `category_allocations` vinculadas aos itens da fatura.
+2. **Compromissos futuros:** parcelas aparecem nas respectivas faturas, junto de projeções identificadas como previstas. Não há métrica de orçamento ou competência mensal por categoria no escopo inicial.
 3. **Fluxo de caixa bancário:** quando a fatura é paga, há saída de dinheiro da conta corrente. O pagamento não gera nova despesa categorizada.
 
 Os relatórios devem nomear claramente sua perspectiva. Não somar os lançamentos patrimoniais originais com todas as parcelas como se fossem despesas independentes.
@@ -96,10 +97,8 @@ erDiagram
   ACCOUNTS ||--o{ CARD_STATEMENTS : issues
   INSTALLMENT_PLANS o|--o{ CARD_STATEMENT_ITEMS : schedules
   CARD_STATEMENTS ||--o{ CARD_STATEMENT_ITEMS : includes
-  CARD_STATEMENT_ITEMS o|--o{ CATEGORY_ALLOCATIONS : attributes
   CARD_STATEMENTS ||--o{ STATEMENT_PAYMENTS : receives
   TRANSACTIONS ||--o{ STATEMENT_PAYMENTS : funds
-  CATEGORIES ||--o{ BUDGET_LIMITS : budgets
   AGENT_REQUESTS o|--o{ TRANSACTIONS : creates
 ```
 
@@ -207,29 +206,19 @@ Convenções:
 | `id` | UUID | PK |
 | `transaction_id` | UUID | FK `transactions` |
 | `category_id` | UUID NULL | categoria pendente é permitida |
-| `statement_item_id` | UUID NULL | FK `card_statement_items` |
 | `amount_minor` | BIGINT | assinado |
 
-**Regra de competência:**
+**Classificação simples, sem orçamento:**
 
-- Entrada ou gasto comum: data do orçamento = mês de `transactions.occurred_on`.
-- Compra com cartão (inclusive **1x**): alocação vinculada ao `card_statement_item`; data do orçamento = mês de vencimento de sua fatura (`card_statements.due_on`) por padrão.
+- Classificar receitas, despesas e estornos na transação original, sem competência mensal de orçamento.
 - Transação `transfer`: **nenhuma** alocação categorizada.
-- Em gasto dividido por categorias, as alocações daquela operação ou item de fatura devem somar exatamente o respectivo valor assinado.
+- Em gasto dividido por categorias, as alocações somam exatamente o valor assinado da operação.
+- Compra no crédito de `-100000` em 3x: classificar `-100000` uma única vez na compra. As três parcelas pertencem aos itens de fatura e não geram novas alocações de categoria.
+- Estorno reduz a categoria original pelo crédito efetivamente registrado.
 
-Para uma compra no crédito de `-100000` em 3x, são criadas três alocações de `-33333`, `-33333` e `-33334`, ligadas aos três itens de fatura; **não** criar também uma quarta alocação de `-100000` na compra original.
+### 4.8 Orçamentos — fora do escopo inicial
 
-### 4.8 `budget_limits`
-
-| Campo | Tipo | Regras |
-|---|---|---|
-| `id` | UUID | PK |
-| `category_id` | UUID | FK; somente categoria de despesa para limites de gasto |
-| `period_month` | DATE | primeiro dia do mês |
-| `currency` | CHAR(3) | moeda do orçamento |
-| `limit_minor` | BIGINT | >= 0 |
-
-`UNIQUE(category_id, period_month, currency)`. Orçamentos multi-moeda não podem somar BRL e PLN sem uma política de câmbio; MVP exibe por moeda.
+Não criar `budget_limits`, metas ou métricas de competência orçamentária no MVP. Categorias servem somente para classificar os lançamentos. Uma eventual evolução de orçamento exigirá decisão própria.
 
 ### 4.9 `installment_plans`
 
@@ -250,7 +239,7 @@ Toda compra em cartão pode possuir um plano de 1 ou N parcelas. A transação o
 | `id` | UUID | PK |
 | `card_account_id` | UUID | FK conta `credit_card` |
 | `cycle_start_on` | DATE | início inclusivo |
-| `closing_on` | DATE | fechamento inclusivo |
+| `closing_on` | DATE | data de fechamento; limite exclusivo do ciclo |
 | `due_on` | DATE | vencimento |
 | `status` | TEXT | `open`, `closed`, `paid`, `partially_paid`, `overdue` |
 | `created_at`, `updated_at` | TIMESTAMPTZ | obrigatórios |
@@ -303,14 +292,14 @@ Uma entrada natural pode criar várias `transactions`; relacionamento de 1 reque
 
 ## 5. Operações e efeitos contábeis
 
-| Operação | `transaction.kind` | `account_entries` | Classificação/orçamento |
+| Operação | `transaction.kind` | `account_entries` | Classificação |
 |---|---|---|---|
 | Salário BRL 5.000 na corrente | `income` | corrente `+500000` | Salário `+500000` |
 | Cashback BRL 25 na corrente | `income` | corrente `+2500` | Cashback `+2500` |
 | Pix recebido de terceiro (presente) | `income` | corrente `+valor` | Presentes `+valor` |
 | Pix para outra pessoa | `expense` | corrente `-valor` | categoria despesa `-valor` |
 | Compra no débito | `expense` | corrente `-valor` | categoria despesa `-valor` |
-| Compra no crédito | `expense` | cartão `-total` | alocações por itens de fatura |
+| Compra no crédito | `expense` | cartão `-total` | classificação integral na compra original |
 | Pagar fatura | `transfer` | corrente `-pagamento`, cartão `+pagamento` | sem categoria |
 | Transferir entre contas próprias | `transfer` | conta A `-valor`, conta B `+valor` | sem categoria |
 | Estorno na corrente | `refund` | corrente `+valor` | devolve à categoria original (`+valor`) |
@@ -337,14 +326,14 @@ Cartão BRL, fechamento em **20**, vencimento em **28** de cada mês. Compra em 
 2. Criar **uma** `account_entry` do cartão de `-100000` centavos; dívida integral aumenta imediatamente.
 3. Criar `installment_plan(total=100000, count=3)`.
 4. Como a compra ocorreu após o fechamento de outubro, primeira fatura tem fechamento em **20/11/2026** e vencimento em **28/11/2026** (pressupondo que o banco atribua a compra a esse ciclo).
-5. Criar três `card_statement_items` e alocações de categoria correspondentes:
+5. Classificar a compra integral uma única vez em Eletrônicos e criar três `card_statement_items`, sem novas alocações de categoria por parcela:
 
-| Parcela | Fechamento | Vencimento | Cobrança na fatura | Alocação orçamentária |
-|---|---|---|---:|---:|
-| 1/3 | 2026-11-20 | 2026-11-28 | +33333 | -33333 |
-| 2/3 | 2026-12-20 | 2026-12-28 | +33333 | -33333 |
-| 3/3 | 2027-01-20 | 2027-01-28 | +33334 | -33334 |
-| **Total** | — | — | **+100000** | **-100000** |
+| Parcela | Fechamento | Vencimento | Cobrança na fatura |
+|---|---|---|---:|
+| 1/3 | 2026-11-20 | 2026-11-28 | +33333 |
+| 2/3 | 2026-12-20 | 2026-12-28 | +33333 |
+| 3/3 | 2027-01-20 | 2027-01-28 | +33334 |
+| **Total** | — | — | **+100000** |
 
 6. Ao pagar a primeira fatura em 28/11, criar `transfer` de `-33333` na conta corrente e `+33333` no cartão; vincular em `statement_payments`.
 7. Após esse pagamento, dívida total remanescente da compra = `-66667` centavos no cartão, sem gerar novas despesas de Eletrônicos no momento do pagamento.
@@ -367,7 +356,7 @@ O emissor pode distribuir os centavos de outra maneira. Permitir ajuste manual d
 
 - Usar o **ciclo de fechamento efetivo**, não `purchase_month + 1`.
 - `posted_on` do cartão tem precedência para conciliação quando disponível; a UI preserva `occurred_on` da compra.
-- O comportamento exato no **dia de fechamento** pode variar por emissor: escolha padrão documentada e possibilidade de sobrescrever a fatura antes do fechamento.
+- Compras no **dia do fechamento** pertencem à próxima fatura (próximo ciclo mensal). A regra vale também no modo de fechamento manual: manter a fatura aberta não prolonga seu ciclo de compras.
 - Gerar meses por aritmética de calendário, sem somar 30 dias. Tratar meses sem dia 29/30/31 de acordo com configuração do cartão.
 - Persistir `cycle_start_on`, `closing_on` e `due_on` efetivos nas faturas.
 
@@ -390,14 +379,14 @@ Descontos, antecipações, cancelamentos, reembolsos e estornos devem preservar 
 ## 7. Cenários especiais e decisões de comportamento
 
 1. **Compra à vista no crédito:** plano com `installment_count=1`, um item na fatura selecionada.
-2. **Compra parcelada com várias categorias:** para cada item de fatura, permitir N `category_allocations`; soma das alocações daquele item = valor assinado correspondente.
+2. **Compra parcelada com várias categorias:** classificar o total da compra na transação original; soma das alocações = valor assinado integral, sem repetir por parcela.
 3. **Pagamento parcial:** fatura permanece parcialmente paga; nenhuma nova despesa.
-4. **Estorno antes de todas as parcelas:** registrar o crédito real do emissor e, se as parcelas futuras forem canceladas, ajustar/estornar o plano de forma explícita e auditável; não apagar histórico consolidado silenciosamente.
+4. **Estorno antes de todas as parcelas:** registrar crédito imediato no cartão, vinculado à compra e à categoria original, com item negativo na fatura aberta aplicável. Preservar as parcelas futuras; não cancelar parcelas nem creditar o valor novamente. Histórico encerrado permanece preservado.
 5. **Juros ou multa:** nova transação de despesa no cartão, com cobrança em `card_statement_items`; categorizar em Taxas/Juros.
 6. **Cashback na fatura:** nova transação de crédito (`account_entry` positiva no cartão), com item de fatura negativo.
 7. **Faturas encerradas:** preservar itens históricos; mudanças devem seguir um fluxo de ajuste/retificação identificável.
 8. **Parcelamento da fatura** é diferente de **parcelamento de uma compra**: envolve financiamento, encargos e novos prazos; **fora do MVP**, exige modelagem específica.
-9. **Contas multi-moeda:** uma moeda por conta. Transferência entre moedas registra valores reais dos dois lados e metadados de câmbio. Não agregar orçamento multi-moeda sem conversão explícita.
+9. **Moeda por conta:** cada conta tem uma moeda-base. No escopo atual, exibir saldos e relatórios separados por moeda; conversão, consolidação cambial e transferências entre moedas ficam fora do escopo.
 10. **Conta sem saldo suficiente:** não impedir por padrão operações legítimas de cartão/passivo; saldo negativo da conta corrente pode gerar aviso, dependendo da configuração.
 
 ## 8. Cálculos e consultas de domínio
@@ -406,7 +395,7 @@ Descontos, antecipações, cancelamentos, reembolsos e estornos devem preservar 
 
 **Patrimônio líquido consolidado:** soma dos saldos das contas de ativo e dos passivos assinados **após converter a uma moeda-base**; até haver FX histórico confiável, apresentar totais separados por moeda.
 
-**Despesa do orçamento em um mês:** soma do valor absoluto negativo de alocações de categoria de despesa daquele mês (menos estornos positivos na mesma categoria); para cartão, mês da fatura associada ao item.
+**Classificação de despesas:** categorias identificam a operação original; parcelas e pagamento de fatura não criam novas despesas categorizadas. Orçamento mensal não integra o escopo inicial.
 
 **Receita do mês:** alocações de receitas positivas cuja data econômica pertence ao mês; excluir transferências próprias.
 
@@ -414,7 +403,7 @@ Descontos, antecipações, cancelamentos, reembolsos e estornos devem preservar 
 
 **Próximas faturas:** somas de `card_statement_items` de faturas com fechamento/vencimento futuro, **sem** movimentar saldo novamente.
 
-**Limite disponível:** limite do cartão menos saldo de obrigações relevantes conforme política do emissor (incluindo compras futuras já comprometidas). Não tratar limite de crédito como ativo patrimonial. Emissor pode reservar autorizações pendentes; MVP pode informar cálculo estimado.
+**Limite disponível:** partir do limite configurado no cartão e descontar a dívida comprometida, incluindo o total das compras parceladas ainda não quitado. Pagamentos e créditos efetivos reduzem essa dívida. Não tratar limite como ativo; controle de autorizações pendentes do emissor fica fora do escopo atual.
 
 **Despesas em data da compra vs. despesas por fatura:** fornecer métricas separadas ou filtros explícitos, nunca misturar silenciosamente.
 
@@ -428,7 +417,7 @@ Descontos, antecipações, cancelamentos, reembolsos e estornos devem preservar 
 - Um plano deve ter exatamente N itens numerados `1..N`, sem duplicidade, cuja soma = total da compra.
 - Compra no crédito deve ter uma entrada negativa integral no passivo e **não N entradas negativas de parcela**.
 - Transferência local na mesma moeda deve ter duas entradas opostas; não pode transferir para a mesma conta sem uma operação de ajuste explicitamente diferenciada.
-- Toda despesa/receita categorizada deve ter alocações cujo total corresponda à movimentação econômica, contando uma vez a compra no crédito por suas parcelas e nunca por um total adicional.
+- Toda despesa/receita categorizada deve ter alocações cujo total corresponda à movimentação econômica, contando uma vez a compra no crédito pelo total original, sem novas alocações nas parcelas.
 - Item de fatura e conta/cartão de origem precisam coincidir.
 - Proibir `statement_payment` superior ao valor efetivamente transferido/atribuível; validar concorrência.
 - Em cada `agent_request` e operação com idempotency key, repetir a requisição deve devolver o mesmo resultado, **sem duplicar registros**.
@@ -439,11 +428,10 @@ Invariantes de soma entre diversas linhas são verificadas **dentro de transaç�
 
 - `account_entries(account_id, transaction_id)`.
 - `transactions(occurred_on)` e `(source, idempotency_key)` único parcial para chaves não nulas.
-- `category_allocations(category_id, statement_item_id)` e `(transaction_id)`.
+- `category_allocations(category_id)` e `(transaction_id)`.
 - `card_statements(card_account_id, closing_on)` único.
 - `card_statement_items(statement_id)` e único parcial `(installment_plan_id, installment_number)`.
 - `statement_payments(statement_id)` e `(transfer_transaction_id)`.
-- `budget_limits(category_id, period_month, currency)` único.
 - `agent_requests(source_channel, idempotency_key)` único.
 
 ## 10. MCP, API e agente
@@ -515,8 +503,8 @@ O servidor calcula primeiro vencimento, faturas futuras, distribuição dos cent
 1. **Entrada salário:** `+500000` em uma conta BRL; relatório mensal reconhece Salário uma vez.
 2. **Pix e débito:** ambos reduzem a **mesma** conta corrente; não criam contas auxiliares.
 3. **Compra crédito 1x:** diminui saldo assinado do cartão, aparece em uma fatura; conta corrente não muda.
-4. **Compra 100000 centavos em 3x:** alocações/itens `33333 + 33333 + 33334`, sem sobras, nos meses de fatura corretos.
-5. **Compra depois do fechamento:** entra na próxima fatura aberta; respeitar `posted_on` e override do usuário.
+4. **Compra 100000 centavos em 3x:** itens de fatura `33333 + 33333 + 33334`, sem sobras, nos meses de fatura corretos.
+5. **Compra no dia ou depois do fechamento:** entra no próximo ciclo; fechamento manual não estende o ciclo. Validar também a precedência de `posted_on` na conciliação.
 6. **Pagamento de 33333:** conta corrente `-33333`, cartão `+33333`; nenhuma despesa nova, fatura parcialmente/totamente paga conforme saldo.
 7. **Cashback na corrente:** receita única `+valor` sem crédito em fatura.
 8. **Cashback no cartão:** passivo diminui e fatura recebe item negativo sem contar renda duas vezes.
@@ -526,12 +514,12 @@ O servidor calcula primeiro vencimento, faturas futuras, distribuição dos cent
 12. **Operação concorrente:** duas tentativas de pagamento da mesma fatura não excedem saldo nem criam pagamentos duplicados.
 13. **Multimoeda:** PLN e BRL não são somados sem FX; transferências cruzadas preservam ambos os valores.
 14. **Histórico:** mudança no dia de fechamento não redistribui parcelas de faturas históricas encerradas.
-15. **Compra com duas categorias:** o orçamento por mês e por categoria soma o valor da parcela, e não a compra integral somada à parcela.
+15. **Compra com duas categorias:** alocações somam o total original uma única vez; parcelas e pagamento não duplicam a despesa categorizada.
 
 ## 12. Ordem de implementação recomendada
 
 1. **Schema e migrations:** `institutions`, `accounts`, `categories`, `transactions`, `account_entries`, `category_allocations`.
-2. **Serviços contábeis:** receita, despesa, transferência, estorno, cálculo de saldos e orçamentos, invariantes em transações SQL.
+2. **Serviços contábeis:** receita, despesa, transferência, estorno, cálculo de saldos, invariantes em transações SQL.
 3. **Cartões:** `credit_card_settings`, `card_statements`, `installment_plans`, `card_statement_items`, `statement_payments`.
 4. **Serviços de fatura:** fechar ciclo, alocar parcelas, créditos, pagar parcialmente, calcular pendência e compromissos futuros.
 5. **UI responsiva:** contas, lançamentos, cartão/faturas, relatórios e formulários manuais.
@@ -574,18 +562,18 @@ Evitar importar código de interface no serviço MCP e evitar lógica financeira
 
 **Nota:** este documento é **uma proposta original de modelagem**, inspirada em conceitos desses projetos, e **não** pretende reproduzir fielmente o schema de qualquer um deles.
 
-## 15. Decisões ainda abertas — não presumir silenciosamente
+## 15. Decisões de comportamento e pendências
 
-1. **Orçamento mensal:** por padrão as compras parceladas serão atribuídas ao **mês de vencimento** da fatura. Confirmar se o usuário deseja também alternar para mês de fechamento ou data da compra.
-2. **Compra no dia de fechamento:** decidir regra padrão; permitir override para refletir emissor.
-3. **Cartão parcelado internacional/FX:** o MVP terá uma moeda de liquidação por conta; verificar se o usuário exige faturas com duas linhas de moeda.
-4. **Fechamento de faturas:** confirmação manual vs. automática; no MVP permitir transição controlada de estado.
-5. **Estornos de compras parceladas:** política de crédito imediato vs. cancelamento das parcelas futuras, condicionada ao extrato do emissor.
-6. **Limite de crédito:** distinguir estimativa a partir da dívida do controle rigoroso de autorizações pendentes.
-7. **Recorrências:** quando desenvolver salário/despesas programadas, previsão nunca deve entrar no saldo antes do crédito/débito efetivo.
+1. **Orçamento mensal — fora do escopo:** não haverá essa métrica no início. Não há decisão de competência orçamentária pendente para o MVP.
+2. **Compra no dia de fechamento — definido:** próxima fatura, mesmo quando o fechamento operacional for manual.
+3. **Moedas — definido:** uma moeda-base por conta, sem câmbio ou faturas com múltiplas moedas no escopo atual.
+4. **Fechamento de faturas — definido:** modos manual e automático por cartão, com manual como padrão. A configuração pode ser alterada a qualquer momento, sem reabrir faturas encerradas nem mudar ciclos históricos. O mecanismo de execução automática e tratamento de ciclos já vencidos ao ativá-lo serão detalhados na implementação.
+5. **Estornos — definido:** crédito imediato; manter parcelas futuras, com vínculo à compra original e sem duplicar o crédito.
+6. **Limite de crédito — definido:** usar o limite configurado no cartão, descontando a dívida comprometida conforme §8.
+7. **Previsões — definido:** despesas previstas aparecem como débitos projetados nos próximos meses, separadas das movimentações efetivas. Não criam `account_entries` nem reduzem o saldo atual. Quando realizadas, substituir/conciliar a previsão com o lançamento efetivo para não duplicar valores. A estrutura de recorrência e geração das previsões será detalhada antes da implementação.
 8. **Correções de histórico:** definir estratégia append-only/reversals para itens encerrados; evitar exclusões irreversíveis de dados financeiros.
-9. **Moeda-base dos dashboards:** escolher padrão inicial e fonte/histórico de taxas de câmbio antes de reportar patrimônio convertido.
-10. **Login web:** decidir senha local simples vs. autenticação no reverse proxy; token MCP separado em ambos os casos.
+9. **Dashboards — definido:** totais separados por moeda; câmbio e patrimônio convertido ficam para evolução futura.
+10. **Login web — definido:** uma senha local e sessão web, para uma pessoa usuária, sem cadastro multiusuário ou login complexo. Armazenar apenas hash da senha; autenticação MCP separada. Ver ADR 0004.
 
 ---
 
@@ -620,7 +608,7 @@ Os `transactions.kind` atuais (§4.5) não devem ser reutilizados como `expense`
 
 ### 17.3 Classificação extensível
 
-Vocabulário conceitual inicial, separado de categorias de orçamento:
+Vocabulário conceitual inicial, separado de categorias de receitas/despesas:
 
 - `fixed_income`: `cdb`, `lci`, `lca`, `government_bond`, `debenture`.
 - `variable_income`: `stock`, `fii`, `etf`, `fund`.

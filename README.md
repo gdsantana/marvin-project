@@ -11,7 +11,7 @@ Aplicação web **self-hosted**, pessoal e mobile-first, com lançamentos manuai
 - Controlar múltiplas instituições, contas correntes, poupanças e cartões de crédito.
 - Registrar receitas (salário, rendimentos, cashback), despesas (Pix, débito, crédito), transferências e estornos.
 - Controlar compras parceladas e faturas: fechamento, vencimento, créditos e pagamentos parciais.
-- Oferecer orçamentos e relatórios por conta, categoria, período e moeda.
+- Oferecer consultas básicas de saldos, receitas, despesas e faturas por conta e moeda; sem orçamento no escopo inicial.
 - Permitir operações estruturadas via Hermes/MCP, com validação, confirmação quando necessário e idempotência.
 - Executar no homelab, com acesso restrito à rede local ou por VPN/Tailscale.
 
@@ -102,7 +102,7 @@ Criar `.env.example` com nomes de variáveis, **nunca credenciais reais**. Não 
 - Compra parcelada reconhece a dívida total **uma única vez** na compra; parcelas distribuem a cobrança por fatura, sem debitar o passivo novamente.
 - Pagamento de fatura é **transferência entre contas**, não nova despesa.
 - Receitas são separadas de reembolsos e transferências próprias.
-- Orçamento mensal e posição patrimonial são perspectivas diferentes; não misturar somatórios de compras integrais e parcelas.
+- Não duplicar despesas ao apresentar compra integral, parcelas e pagamento de fatura. Orçamentos ficam fora do escopo inicial.
 - O backend, e não o Hermes, determina os cálculos e validações finais.
 
 Ver especificações completas no handoff de modelagem.

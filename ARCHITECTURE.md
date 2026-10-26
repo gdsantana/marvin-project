@@ -30,7 +30,7 @@ flowchart TB
   DOMAIN --> POSTGRES[("PostgreSQL")]
 ```
 
-**Deploy definido, ainda a implementar:** Docker Compose em um único host do homelab, com um container por serviço permanente: `web` (frontend + API), `mcp` e `db` (PostgreSQL). Ver [ADR 0003](docs/adr/0003-homelab-deployment.md) e [plano de deploy](docs/deployment.md).
+**Deploy definido, ainda a implementar:** Docker Compose em uma VM no Proxmox do homelab, com um container por serviço permanente: `web` (frontend + API), `mcp` e `db` (PostgreSQL). Ver [ADR 0003](docs/adr/0003-homelab-deployment.md) e [plano de deploy](docs/deployment.md).
 
 **Implantação prevista:**
 
@@ -45,7 +45,7 @@ Como o Hermes e o Docker podem executar em hosts/containers distintos, o nome de
 
 As redes de aplicação (`web`/`mcp`) e banco (`web`/`db`) serão separadas; o DB não publicará porta no host. MCP chamará o web pelo DNS interno do Compose, sem acesso à rede ou credenciais DB. Somente o web terá acesso permanente ao banco pela aplicação; migrations usarão execução temporária controlada. Reverse proxy privado atenderá web e MCP, reutilizando infraestrutura existente se disponível.
 
-Health checks, política de reinício e reconexão serão configurados; migrations serão uma etapa explícita por deploy. PostgreSQL terá volume próprio e backups fora desse volume, com restauração testada. Imagens terão versões identificáveis e secrets serão fornecidos fora das imagens/Git. Um único host permanece ponto único de falha; proxy, host e política de backup finais ainda estão pendentes.
+Health checks, política de reinício e reconexão serão configurados; migrations serão uma etapa explícita por deploy. PostgreSQL terá volume próprio e backups fora desse volume, com restauração testada. Imagens terão versões identificáveis e secrets serão fornecidos fora das imagens/Git. Um único host permanece ponto único de falha; proxy, recursos da VM e política de backup finais ainda estão pendentes.
 
 ## 3. Topologia do código
 
@@ -82,6 +82,8 @@ Somente handlers e código de servidor podem instanciar repositórios. O fronten
 
 ### `apps/web`
 
+- Imagens e assets da aplicação pertencem ao projeto web e serão servidos por ele; sem serviço de assets ou CDN separado.
+
 - Next.js App Router/React/TypeScript, UI responsiva em pt-BR com Tailwind CSS e shadcn/ui. Adicionar somente componentes necessários em `apps/web`, preservando acessibilidade; seu código fará parte do projeto.
 - Endpoints HTTP internos para contas, categorias, transações, faturas e relatórios.
 - Validação de sessões, permissões, rate limits e idempotency keys.
@@ -104,7 +106,7 @@ Somente handlers e código de servidor podem instanciar repositórios. O fronten
 ### `packages/domain`
 
 - Casos de uso (`CreateIncome`, `CreateExpense`, `CreateTransfer`, `CreateCreditPurchase`, `PayStatement`, etc.).
-- Cálculo de parcelas, orçamento, fechamento, saldos e validações.
+- Cálculo de parcelas, fechamento, saldos e validações; sem orçamento no escopo inicial.
 - Portas/interfaces para repositórios e clock/configuração de fuso.
 - Operações financeiras multi-row agrupadas numa transação de persistência.
 
@@ -138,7 +140,7 @@ Web no navegador e MCP consumirão os mesmos endpoints HTTP e contratos de entra
 
 1. Compra no crédito cria transação econômica e **uma entrada negativa pelo total** no cartão.
 2. Plano de parcelas divide o valor inteiro em N linhas de faturas, com arredondamento exato.
-3. Itens de fatura e alocações de orçamento indicam o mês de competência; não criam novas entradas patrimoniais.
+3. Itens de fatura indicam o ciclo de cobrança; categorias classificam a compra original uma única vez. Parcelas não criam novas entradas patrimoniais.
 4. Pagamento cria uma transferência bancária para o cartão e registra atribuição à fatura.
 5. A interface mostra dívida total, fatura atual, próximas faturas e saldos sem dupla contagem.
 
@@ -158,13 +160,13 @@ O documento de modelagem (`docs/data-model.md`, handoff disponível no repositó
 3. Transferência entre contas próprias não compõe receita/despesa.
 4. Pagamento de fatura não é despesa nova.
 5. Compra parcelada aumenta dívida total uma vez; soma de parcelas = valor da compra.
-6. Data da compra, competência orçamentária e pagamento bancário são distintos.
-7. Orçamentos por moeda não são somados sem taxa de câmbio explícita.
+6. Data da compra, competência da fatura e pagamento bancário são distintos.
+7. Saldos de moedas distintas permanecem separados, sem conversão no escopo atual.
 8. Categorias, contas e faturas históricas devem ser preservadas, ajustadas com rastreabilidade.
 
 ## 7. Segurança e configuração
 
-- Acesso web restrito por rede privada e sessão/autenticação simples; VPN não substitui autenticação em operações de escrita.
+- Login web com uma senha local e sessão, para uma pessoa usuária na rede privada; guardar hash da senha e usar cookie de sessão protegido. Sem cadastro multiusuário ou provedor externo de identidade.
 - MCP com token independente, restrição de rede e possibilidade de rotação.
 - Sem PostgreSQL público e sem credenciais DB no processo MCP.
 - Variáveis de ambiente documentadas em `.env.example`; `.env` real fora do controle de versão.
@@ -198,15 +200,15 @@ ADRs iniciais sugeridos: escolha do monorepo/pnpm, PostgreSQL/Drizzle, MCP via A
 
 Ao modificar uma regra financeira, atualizar `docs/data-model.md` e cenários de validação. Ao modificar fronteiras de dependências ou infraestrutura, atualizar este documento e criar/substituir um ADR.
 
-## 10. Decisões ainda abertas
+## 10. Decisões de comportamento e pendências
 
-Não presumir silenciosamente:
+Situação atual (ver também ADR 0004):
 
-- Competência padrão do orçamento por mês de **vencimento**, fechamento ou compra (recomendação inicial: vencimento; configurável).
-- Regras específicas do emissor na data de fechamento, ajustes do calendário e estornos de parcelas.
-- Política de conversão de moedas para patrimônio consolidado.
-- Autenticação web final (sessão local vs. proxy), preservando token MCP separado.
-- Recorrências, sincronização bancária e parcelamento de fatura fora do MVP.
+- Orçamentos e sua competência mensal ficam fora do escopo inicial; foco no controle financeiro básico.
+- Ajustes de calendário para dias inexistentes no mês; compra no dia de fechamento vai para a próxima fatura. Fechamento manual (padrão) ou automático, alterável a qualquer momento; estorno por crédito imediato, preservando parcelas futuras.
+- Câmbio adiado: uma moeda por conta e totais separados por moeda no escopo atual.
+- Login definido por senha local e sessão; transporte e detalhes de autenticação MCP serão definidos na implementação. Sugestão inicial: transporte HTTP com suporte a streaming, validando compatibilidade com Hermes, e bearer token próprio, separado da sessão web.
+- Previsões devem mostrar débitos projetados nos próximos meses sem alterar saldo efetivo. Estrutura de recorrências ainda pendente; sincronização bancária e parcelamento de fatura fora do MVP.
 
 ## 11. Critério de sucesso da arquitetura
 

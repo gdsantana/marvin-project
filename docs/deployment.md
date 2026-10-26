@@ -6,7 +6,7 @@ Referências: [ADR 0003](adr/0003-homelab-deployment.md), [stack](adr/0002-appli
 
 ## Serviços e comunicação
 
-Docker Compose gerenciará três serviços permanentes em um único host, inicialmente um container por serviço:
+Docker Compose gerenciará três serviços permanentes em uma VM dentro do Proxmox, inicialmente um container por serviço:
 
 - `web`: Next.js com frontend e API HTTP, composição do domínio e acesso ao PostgreSQL.
 - `mcp`: servidor MCP Node.js/TypeScript, recebendo chamadas autenticadas do Hermes e chamando a API do `web` com credencial própria.
@@ -24,6 +24,10 @@ Internamente, MCP → web usará o DNS do serviço (exemplo conceitual: `http://
 - Reverse proxy à frente de web e MCP, com HTTPS e limites de requisição; preferir reutilizar o proxy do homelab, se disponível. Não há acesso público à internet previsto.
 - Se o proxy estiver no mesmo Docker, conectá-lo à rede apropriada de entrada, sem acesso à rede DB. Se estiver fora, definir portas do host vinculadas à interface privada adequada e firewall. Evitar exposição irrestrita por padrão.
 - Validar encaminhamento e timeouts necessários ao transporte MCP escolhido, sem interromper respostas longas/streaming quando aplicável.
+
+## Assets da aplicação
+
+Imagens e assets ficam em `apps/web` e são entregues pelo próprio web, incluídos em sua imagem de container. Não há serviço separado de arquivos ou CDN previsto. Essa decisão trata de assets da aplicação; uploads de usuário não foram definidos.
 
 ## Persistência, configuração e credenciais
 
@@ -59,9 +63,9 @@ Definir frequência e retenção conforme perda de dados tolerável. Antes do us
 
 ## Decisões pendentes e limites
 
-- Host/VM onde o Docker rodará, recursos e caminhos/volumes de armazenamento.
+- Recursos da VM no Proxmox e caminhos/volumes de armazenamento; hospedagem na VM já definida.
 - Proxy existente, DNS, certificados, portas e interfaces de entrada para navegador e Hermes.
-- Entrega/rotação de secrets e autenticação web final.
+- Entrega/rotação de secrets; login web já definido por senha local e sessão.
 - Build local ou CI/registry, tags/digests e política de atualização das imagens.
 - Frequência, retenção, destino protegido dos backups e objetivos de recuperação.
 - Comandos de health check, limites de recursos e rotação de logs na implementação.
