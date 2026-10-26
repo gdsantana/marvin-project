@@ -1,4 +1,4 @@
-# Prompt para agente — Bootstrap do monorepo tars-project
+# Prompt para agente — Bootstrap do monorepo marvin-project
 
 Você é um engenheiro full-stack sênior responsável por **inicializar a estrutura de um monorepo TypeScript** para um aplicativo de controle financeiro pessoal self-hosted. Execute as alterações no repositório recebido.
 

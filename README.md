@@ -1,6 +1,6 @@
-# tars-project — Controle Financeiro Pessoal
+# marvin-project — Controle Financeiro Pessoal
 
-Repositório: [gdsantana/tars-project](https://github.com/gdsantana/tars-project).
+Repositório remoto atual: [gdsantana/daiko-project](https://github.com/gdsantana/daiko-project). O nome local é `marvin-project`.
 
 Aplicação web **self-hosted**, pessoal e mobile-first, com lançamentos manuais e integração com um **Hermes Agent** por meio de um servidor **MCP**. A interface web e o agente utilizam a mesma API e as mesmas regras financeiras.
 
@@ -19,11 +19,12 @@ Aplicação web **self-hosted**, pessoal e mobile-first, com lançamentos manuai
 
 Planejar contas de investimento, aplicações, posições, resgates, vencimentos, proventos e avaliações patrimoniais, com consultas e lançamentos via Hermes. **Não implementado e fora do bootstrap/MVP atual.** Aportes não são despesas; retorno do principal não é receita; caixa e posições são separados para evitar dupla contagem. Ver [modelagem, §17](docs/data-model.md#17-investimentos--proposta-futura) e [ADR](docs/adr/0001-investment-accounting.md).
 
-## Stack planejada
+## Stack definida (a implementar)
 
 | Área | Tecnologia |
 |---|---|
-| Frontend e API | Next.js, TypeScript |
+| Frontend | Next.js App Router, React, TypeScript |
+| Backend/API | Node.js, Next.js Route Handlers |
 | UI | Tailwind CSS, shadcn/ui |
 | Banco de dados | PostgreSQL |
 | ORM e migrations | Drizzle ORM / Drizzle Kit |
@@ -32,6 +33,12 @@ Planejar contas de investimento, aplicações, posições, resgates, vencimentos
 | Hospedagem | Docker Compose no homelab |
 
 **Não há necessidade inicial de Turborepo**, autenticação multiusuário, sincronização bancária automática ou dependências para investimentos. Essas decisões poderão mudar mediante ADR.
+
+A decisão está registrada no [ADR 0002](docs/adr/0002-application-stack.md). Web e MCP utilizarão os mesmos contratos HTTP; as regras financeiras permanecerão no domínio compartilhado. A stack está definida, mas ainda não instalada.
+
+## Deploy definido (a implementar)
+
+Docker Compose no homelab, com três serviços permanentes em containers separados: `web` (frontend + API Next.js), `mcp` e `db` (PostgreSQL). Banco sem porta publicada, redes separadas, reverse proxy privado e volume persistente com backup externo. Migrations serão executadas uma vez por deploy, em etapa temporária. Ver [plano de deploy](docs/deployment.md) e [ADR 0003](docs/adr/0003-homelab-deployment.md). Configuração e deploy ainda não implementados.
 
 ## Organização do repositório (alvo)
 
@@ -48,7 +55,7 @@ Planejar contas de investimento, aplicações, posições, resgates, vencimentos
 │   ├── data-model.md        # Handoff de modelagem financeira
 │   ├── api.md               # Contratos da API (quando existirem)
 │   ├── mcp.md               # Ferramentas MCP (quando existirem)
-│   ├── deployment.md        # Deploy e backup (quando existirem)
+│   ├── deployment.md        # Plano de deploy e backup
 │   ├── flows/               # Fluxos de negócio complexos
 │   └── adr/                 # Architecture Decision Records
 ├── infra/

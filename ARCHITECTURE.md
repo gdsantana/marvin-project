@@ -1,11 +1,13 @@
-# Arquitetura — tars-project
+# Arquitetura — marvin-project
 
 > **Status:** arquitetura-alvo para o bootstrap; componentes descritos aqui ainda podem não existir.  
 > **Princípio central:** monorepo ≠ processo único. Há aplicações executáveis separadas, pacotes compartilhados e **uma única autoridade de escrita financeira**.
 
+A stack foi definida no [ADR 0002](docs/adr/0002-application-stack.md): Next.js App Router/React/TypeScript, Tailwind CSS e shadcn/ui, API em Node.js com Route Handlers, PostgreSQL e Drizzle. Trata-se de uma decisão para implementação, sem alterar o status de planejamento.
+
 ## 1. Contexto
 
-O tars-project é uma aplicação financeira pessoal self-hosted. O usuário interage pelo navegador (desktop/mobile) ou envia mensagens a um Hermes Agent na rede do homelab. O Hermes interpreta a intenção e aciona ferramentas MCP, mas não executa cálculos contábeis nem acessa o banco diretamente.
+O marvin-project é uma aplicação financeira pessoal self-hosted. O usuário interage pelo navegador (desktop/mobile) ou envia mensagens a um Hermes Agent na rede do homelab. O Hermes interpreta a intenção e aciona ferramentas MCP, mas não executa cálculos contábeis nem acessa o banco diretamente.
 
 ### Requisitos arquiteturais
 
@@ -28,6 +30,8 @@ flowchart TB
   DOMAIN --> POSTGRES[("PostgreSQL")]
 ```
 
+**Deploy definido, ainda a implementar:** Docker Compose em um único host do homelab, com um container por serviço permanente: `web` (frontend + API), `mcp` e `db` (PostgreSQL). Ver [ADR 0003](docs/adr/0003-homelab-deployment.md) e [plano de deploy](docs/deployment.md).
+
 **Implantação prevista:**
 
 | Componente | Unidade de deploy | Rede |
@@ -38,6 +42,10 @@ flowchart TB
 | Hermes Agent | Serviço existente no LXC | Cliente do endpoint MCP, fora do monorepo |
 
 Como o Hermes e o Docker podem executar em hosts/containers distintos, o nome de serviço Docker não será necessariamente resolvido no LXC. Configurar endpoint por DNS/IP alcançável, firewall e autenticação. O reverse proxy e VPN já existentes no homelab podem ser reutilizados.
+
+As redes de aplicação (`web`/`mcp`) e banco (`web`/`db`) serão separadas; o DB não publicará porta no host. MCP chamará o web pelo DNS interno do Compose, sem acesso à rede ou credenciais DB. Somente o web terá acesso permanente ao banco pela aplicação; migrations usarão execução temporária controlada. Reverse proxy privado atenderá web e MCP, reutilizando infraestrutura existente se disponível.
+
+Health checks, política de reinício e reconexão serão configurados; migrations serão uma etapa explícita por deploy. PostgreSQL terá volume próprio e backups fora desse volume, com restauração testada. Imagens terão versões identificáveis e secrets serão fornecidos fora das imagens/Git. Um único host permanece ponto único de falha; proxy, host e política de backup finais ainda estão pendentes.
 
 ## 3. Topologia do código
 
@@ -74,7 +82,7 @@ Somente handlers e código de servidor podem instanciar repositórios. O fronten
 
 ### `apps/web`
 
-- Next.js App Router, UI responsiva em pt-BR com Tailwind e shadcn/ui.
+- Next.js App Router/React/TypeScript, UI responsiva em pt-BR com Tailwind CSS e shadcn/ui. Adicionar somente componentes necessários em `apps/web`, preservando acessibilidade; seu código fará parte do projeto.
 - Endpoints HTTP internos para contas, categorias, transações, faturas e relatórios.
 - Validação de sessões, permissões, rate limits e idempotency keys.
 - Composição dos serviços de domínio com implementações dos repositórios.
@@ -124,6 +132,8 @@ Somente handlers e código de servidor podem instanciar repositórios. O fronten
 4. API aplica domínio + persistência; ferramenta retorna resultado estruturado.
 5. Hermes confirma ao usuário os dados realmente salvos. Requisições repetidas com a mesma chave não duplicam lançamentos.
 
+Web no navegador e MCP consumirão os mesmos endpoints HTTP e contratos de entrada, saída e erro de `packages/contracts`, com schemas de validação em runtime. Sessão web e credencial MCP serão distintas. Código de servidor do Next.js poderá chamar os mesmos casos de uso diretamente, sem HTTP para si próprio, preservando autenticação, validação e idempotência aplicáveis; não haverá regras financeiras paralelas.
+
 ### 5.3 Compra parcelada
 
 1. Compra no crédito cria transação econômica e **uma entrada negativa pelo total** no cartão.
@@ -168,7 +178,7 @@ O documento de modelagem (`docs/data-model.md`, handoff disponível no repositó
 - **Sem Turborepo inicialmente:** scripts pnpm por workspace são suficientes na primeira fase; avaliar quando houver gargalo real.
 - Next.js pode consumir pacotes internos TypeScript, com `transpilePackages` quando a configuração exigir.
 - Construir imagens separadas para `web` e `mcp`; ambos compartilham código em build-time, **não** banco/código em runtime sem limites claros.
-- `infra/compose.yml` inclui web, mcp, postgres, redes privadas, volumes e health checks; ambiente final do homelab depende de configuração.
+- `infra/compose.yml` deverá definir `web`, `mcp` e `db` (PostgreSQL), redes privadas, volume DB e health checks; arquivo ainda não criado. O ambiente final seguirá `docs/deployment.md`.
 
 ## 9. Documentação e ADRs
 

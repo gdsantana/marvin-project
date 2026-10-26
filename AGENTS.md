@@ -1,4 +1,4 @@
-# Instruções para agentes de programação — tars-project
+# Instruções para agentes de programação — marvin-project
 
 Este arquivo governa contribuições de agentes neste monorepo. Aplica-se a toda a árvore, salvo instruções mais específicas explicitamente fornecidas pelo mantenedor.
 

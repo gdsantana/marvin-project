@@ -1,4 +1,4 @@
-# tars-project — Modelagem de Dados e Handoff Técnico
+# marvin-project — Modelagem de Dados e Handoff Técnico
 
 > **Status:** proposta arquitetural para implementação, ainda sem migrations executadas  
 > **Versão:** 1.0 — 2026-10-25  
@@ -22,7 +22,7 @@ Este documento define **o modelo de domínio, os dados e os invariantes**; não 
 7. A API é autoridade para cálculo de parcelas, datas, saldos e invariantes; o LLM nunca escreve SQL nem decide valores contábeis finais.
 8. O aplicativo é privado, mas o MCP exige autenticação própria e idempotência.
 
-## 1. Escopo e stack proposta
+## 1. Escopo e stack definida
 
 ### 1.1 Escopo do MVP
 
@@ -35,11 +35,13 @@ Este documento define **o modelo de domínio, os dados e os invariantes**; não 
 - Ferramentas MCP para consulta, validação, lançamento e correção via Hermes.
 - Auditoria mínima, tratamento de duplicatas e backup.
 
-### 1.2 Stack sugerida, não mandatória
+### 1.2 Stack definida para implementação
 
-| Camada | Escolha sugerida | Observação |
+Decisão registrada no [ADR 0002](adr/0002-application-stack.md); ainda não implementada. Contratos HTTP compartilhados por web e MCP pertencem a `packages/contracts`; regras e validações financeiras pertencem a `packages/domain`.
+
+| Camada | Escolha definida | Observação |
 |---|---|---|
-| UI | Next.js, TypeScript, Tailwind, shadcn/ui | Mobile-first; layout de desktop também completo |
+| UI | Next.js App Router, React, TypeScript, Tailwind CSS, shadcn/ui | Mobile-first; layout de desktop também completo |
 | API | Next.js Route Handlers + camada `domain/services` | Concentrar validação e persistência |
 | Banco | PostgreSQL | Uma instância no Docker/homelab |
 | ORM/migrations | Drizzle ORM + Drizzle Kit | Preservar constraints SQL explícitas |
