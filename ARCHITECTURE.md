@@ -208,3 +208,23 @@ Um agente deve ser capaz de:
 4. Executar `build`, `typecheck` e `lint` por workspace após o bootstrap.
 5. Documentar novas decisões sem contradizer o handoff de modelagem.
 
+
+## 12. Módulo de investimentos — arquitetura futura
+
+**Somente planejamento; fora do bootstrap e do MVP atual.** A modelagem detalhada está em [docs/data-model.md §17](docs/data-model.md#17-investimentos--proposta-futura); a decisão de separar caixa, posições e avaliações está no [ADR 0001](docs/adr/0001-investment-accounting.md).
+
+Uma conta `investment` pertence a uma instituição e representa somente caixa disponível. Aportes reutilizam transferências entre contas próprias. Compras convertem caixa em lotes de ativos; vendas, resgates e vencimentos liberam custo e reconhecem o resultado realizado separadamente. Avaliações alteram a visão patrimonial, sem criar movimentação monetária. O consolidado soma caixa, posições avaliadas e passivos assinados, com conversão explícita de moedas; nunca soma custo e avaliação da mesma posição.
+
+Organização futura, **sem criar diretórios ou código nesta etapa**:
+
+- `packages/contracts/src/investments/`: entradas, saídas, schemas de runtime e erros públicos.
+- `packages/domain/src/investments/`: operações, custo, posições, valorização e portas de persistência; sem Drizzle, Next.js ou imports de apps.
+- `packages/db/src/schema/investments/`: schema e persistência futura; repositórios implementam portas do domínio.
+
+`apps/web` comporá os serviços e exporá a API autenticada. `apps/mcp` será adaptador HTTP tipado, sem SQL, dependência de DB ou cálculos próprios. O cliente web não terá acesso ao banco ou secrets. Transação financeira, caixa, consumo de lotes e classificação de resultado devem ser persistidos atomicamente, com idempotência e proteção contra resgates concorrentes. A extensão dos contratos existentes será revisada antes da implementação, sem reclassificar operações atuais.
+
+Ferramentas apenas candidatas: `get_investment_accounts`, `get_investment_portfolio`, `create_investment_transfer`, `create_investment_purchase`, `register_investment_redemption`, `register_investment_income`, `get_upcoming_maturities`. Todas passarão pela API HTTP e validação do domínio; escritas exigirão autenticação própria e chave de idempotência. Hermes deverá confirmar ambiguidades e nunca inferir taxas, retornos ou vencimentos sem dados fornecidos/verificados.
+
+Relatórios separarão saldo bancário, caixa da corretora, custo investido, valor atual das posições, resultados realizados, valorização não realizada, rendimentos recebidos, patrimônio, distribuição por classe e próximos vencimentos. Avaliações terão data e origem explícitas, inicialmente manuais; automação é evolução futura.
+
+Permanecem abertas: método de custo, fonte e critérios de avaliação, reconhecimento de rendimentos, eventos corporativos e reconciliação de taxas/impostos. Não estão autorizados nesta fase integrações com corretoras, cotações automáticas, cálculo de CDI/IPCA ou tributação avançada.

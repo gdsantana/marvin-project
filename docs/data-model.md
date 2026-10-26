@@ -590,3 +590,85 @@ Evitar importar código de interface no serviço MCP e evitar lógica financeira
 ## 16. Critério de conclusão para o agente
 
 Uma implementação baseada neste handoff está pronta para uso inicial quando o usuário consegue criar contas e cartões, lançar salários e gastos por Pix/débito, criar uma compra parcelada com faturas futuras corretas, pagar faturas sem duplicar despesas, receber cashback e estornos, consultar saldos coerentes por moeda e repetir as mesmas operações via Hermes/MCP com segurança e idempotência. Os cenários de §11 devem ser demonstráveis.
+
+## 17. Investimentos — proposta futura
+
+**Planejamento apenas, fora do MVP e sem schema ou migrations.** Complementa §§2, 4, 8 e 9 sem alterar as regras atuais. Ver [ADR 0001](adr/0001-investment-accounting.md) e `ARCHITECTURE.md` §12. Antes da implementação, resolver §17.7 e revisar contratos, constraints e cenários transacionais.
+
+### 17.1 Caixa, posições e precisão
+
+Prever `accounts.type = investment`, vinculado a `institutions`. Seu saldo continua sendo saldo inicial + `account_entries`, mas representa **somente dinheiro disponível**, nunca o total da carteira. Posição é a quantidade remanescente de um ativo em uma conta, derivada dos lotes e operações; não é outra conta monetária. Aportes usam transferência entre contas próprias, sem receita/despesa.
+
+Compra transforma caixa em posição; venda/resgate transforma posição em caixa, com resultado separado do custo liberado. Não criar uma entrada positiva de caixa para representar o valor do ativo adquirido. A classificação `asset_class`/`asset_type` não utiliza `categories`; categorias financeiras se aplicam apenas ao resultado, proventos, taxas e impostos conforme política a definir.
+
+Dinheiro em inteiros de unidades mínimas com moeda. Quantidades fracionárias, preços unitários e taxas precisam de decimal exato ou inteiros escalados, com precisão e arredondamento definidos antes da implementação; nunca `float`. Quantidade × preço deve reconciliar com o valor monetário efetivo, preservando resíduos de arredondamento.
+
+### 17.2 Entidades e relacionamentos conceituais
+
+- **`investment_assets`**: `id`, `name`, `symbol` opcional, `asset_class`, `asset_type`, `currency`, `is_active`. Um instrumento pode ter vários lotes e operações, em diferentes contas. Símbolo não deve ser presumido identificador global único; desativar preserva histórico.
+- **`investment_operations`**: `id`, `asset_id`, `investment_account_id`, tipo (`buy`, `sell`, `redemption`, `maturity`, `dividend`, `interest`, `fee`, `tax`, `adjustment`), quantidade quando aplicável, valores bruto/líquido, custo liberado, resultado, moeda, data econômica e de liquidação, origem, autoria e timestamps. Relacionar às `transactions` e às `account_entries` efetivas, sem replicar essas movimentações como nova fonte de saldo. Uma transação pode agrupar várias operações; uma operação pode ter várias linhas de caixa. Avaliação sem caixa pertence a `investment_valuations`, não exige entrada monetária fictícia.
+- **`investment_lots`**: `id`, `asset_id`, `investment_account_id`, operação de aquisição, data de aquisição, quantidade original/remanescente, valor aplicado original, custo de aquisição original/remanescente, moeda e status (aberto, parcialmente liquidado, encerrado; nomes finais pendentes). Um ativo/conta pode ter vários lotes. A compra origina lote(s); venda ou resgate pode consumir vários lotes e cada lote pode sofrer várias saídas parciais.
+- **Alocação operação–lote**: prever relação N:N com quantidade e custo liberados por lote, para reconstruir cada saída parcial. Nome e representação física pendentes; não guardar apenas o saldo remanescente mutável sem histórico que o explique.
+- **`investment_valuations`**: `id`, escopo (instrumento ou posição de ativo/conta), referência temporal, quantidade coberta quando aplicável, preço unitário ou valor total claramente discriminados, moeda, origem e registro temporal. Avaliação por instrumento fornece preço; avaliação por posição fornece total para aquela quantidade/data. Não somar ambas para a mesma posição. Suporte manual inicial; fontes automáticas futuras. Avaliações são históricas, sem alterar caixa ou custo.
+- **`fixed_income_terms`**: associado ao lote/aplicação, com indexador (CDI, IPCA, prefixado etc.), taxa contratada e sua unidade/base, data de aplicação, vencimento, liquidez e demais condições relevantes. Mesmo produto pode ter condições diferentes em cada lote; não atribuir termos variáveis exclusivamente ao ativo. Preservar versões/correções rastreáveis; taxa contratada não autoriza cálculo automático de retorno.
+
+Vínculos devem validar conta de tipo `investment`, titularidade própria, correspondência entre ativo, lote e conta, e moedas compatíveis. Operações sem liquidação ainda não devem alterar caixa disponível; a representação de pendências e vínculo com transações será decidida antes de suportá-las.
+
+Os `transactions.kind` atuais (§4.5) não devem ser reutilizados como `expense` para uma compra nem `income` para um resgate integral. Será necessária extensão explícita dos contratos para movimentos de investimento e sua composição com linhas de resultado; granularidade e cardinalidades físicas serão definidas antes das migrations. Transações monetárias existentes mantêm suas regras. Eventos sem caixa não devem violar a exigência atual de entradas para transações, nem gerar transações fictícias.
+
+### 17.3 Classificação extensível
+
+Vocabulário conceitual inicial, separado de categorias de orçamento:
+
+- `fixed_income`: `cdb`, `lci`, `lca`, `government_bond`, `debenture`.
+- `variable_income`: `stock`, `fii`, `etf`, `fund`.
+- `crypto`: `cryptocurrency`, `token`.
+
+Permitir novas classes/tipos com validação da associação entre ambos, preservando classificações históricas. Não presumir que todo fundo tenha a mesma exposição; taxonomia final e eventual classificação adicional ficam abertas.
+
+### 17.4 Invariantes e rastreabilidade
+
+1. Aporte não é despesa e principal resgatado não é receita. Transferências próprias na mesma moeda preservam patrimônio, exceto taxas explicitamente registradas.
+2. Compra reduz caixa e aumenta posição pelo custo correspondente, sem despesa pelo principal. O ativo não permanece contado como caixa disponível.
+3. Quantidades/custos remanescentes nunca excedem os originais nem ficam negativos no escopo inicial, sem posições vendidas a descoberto. Saídas não podem consumir o mesmo saldo de lote duas vezes.
+4. Custos liberados + custo remanescente reconciliam com o custo original e ajustes documentados. No encerramento, liberar os resíduos exatos de custo/quantidade, sem perdas de centavos.
+5. Resultado realizado separa contraprestação bruta e custo liberado. Taxas/impostos são identificados uma vez: se integrarem o custo ou o resultado líquido, relatórios não os deduzem novamente. A política final deve explicar a reconciliação bruto → líquido.
+6. Rendimentos realizados podem gerar receita financeira; valorização não realizada não é recebimento. Valores já reconhecidos não geram nova receita no pagamento/resgate. Reinvestimento exige distinguir reconhecimento e aquisição subsequente.
+7. Alterações preservam origem, autoria, datas e vínculos com operações originais; correções usam reversão/ajuste rastreável, sem apagar histórico. `adjustment` exige motivo e não substitui uma reconciliação.
+8. Operação composta, caixa, consumo de lotes e classificação financeira devem ser atômicos. Escritas por agentes usam chave de idempotência, verificam repetição com payload divergente e protegem concorrência no consumo de lotes.
+9. Valores em moedas diferentes permanecem separados até conversão explícita com taxa, fonte e data; câmbio não pode ser presumido pelo agente.
+
+### 17.5 Exemplos e futura validação
+
+Exemplos em BRL, sem taxas/impostos e sem rendimentos previamente reconhecidos, salvo indicação. Valores persistidos em centavos; nenhum exemplo define algoritmo tributário.
+
+- **Aporte de R$ 1.000**: corrente `-100000`, caixa da corretora `+100000`, transação de transferência sem categoria. Patrimônio inalterado.
+- **Aplicação em CDB de R$ 1.000**: caixa da corretora `-100000`, lote com custo `100000` e quantidade contratual explícita. Não há despesa. Caixa da corretora fica zero; posição inicial vale R$ 1.000, sem dupla contagem.
+- **Avaliação para R$ 1.100**: registrar avaliação da posição `110000`. Caixa permanece zero, custo `100000`; valorização não realizada `10000`, sem receita recebida.
+- **Resgate total líquido de R$ 1.100**: caixa `+110000`, liberar custo `100000`, zerar quantidade/custo do lote e reconhecer resultado `+10000` uma vez. Remover a posição encerrada do valor atual, preservando avaliações históricas. Transferir depois o caixa à corrente é outra transferência interna.
+- **Resgate parcial**: lote ilustrativo de 10 unidades por `100000`; saída de 4 unidades por `44000` libera `40000` de custo, gera `4000` de ganho e deixa 6 unidades/custo `60000`. Este lote único não escolhe FIFO ou custo médio para múltiplos lotes.
+- **Vencimento**: obrigação prevista não credita caixa antecipadamente. Na liquidação efetiva de `110000`, uma operação `maturity` encerra o lote de custo `100000` e reconhece `10000`, sem registrar também um resgate duplicado. Crédito posterior deve manter datas e vínculo com o evento; modelo de valores a receber pendente.
+- **Provento pago de R$ 20**: caixa `+2000`, receita financeira `2000`, sem vender quantidade nem reconhecer novamente na retirada para a corrente. Amortização/devolução de capital exige classificação distinta, ainda a definir.
+- **Perda realizada**: saída total por `90000` contra custo `100000` resulta em perda de `10000`, sem classificar o principal de `90000` como receita.
+
+Antes da implementação, validar também taxas/impostos retidos, rendimento já reconhecido, reinvestimento, múltiplos lotes, arredondamento final, repetição idempotente, saídas concorrentes, avaliação desatualizada e consolidação multimoeda. Esses são cenários previstos, não testes executados.
+
+### 17.6 Relatórios futuros
+
+Exibir separadamente saldo bancário disponível, caixa da corretora, valor atual das posições, total investido, ganhos/perdas realizados, valorização não realizada, rendimentos recebidos, patrimônio líquido, distribuição por classe e próximos vencimentos. Diferenciar custo remanescente de aportes históricos acumulados ao nomear “total investido”. Proventos e ganhos realizados podem se sobrepor em algumas visões; não somá-los sem uma definição que elimine dupla contagem.
+
+`patrimônio líquido = saldos monetários de ativos + valor atual das posições - valor das obrigações`
+
+Na convenção existente de passivos assinados: somar seus saldos negativos em vez de subtraí-los novamente. Incluir caixa da corretora uma única vez; para cada posição usar uma avaliação aplicável, nunca custo + avaliação. Usar uma mesma data de corte, mostrar data/origem da avaliação e distinguir ausência de avaliação de valor zero. Fallback ao custo, se adotado, precisa de indicação explícita e política aprovada. Consolidar moedas somente com FX explícito; sem isso, totais separados por moeda.
+
+### 17.7 Decisões abertas antes da implementação
+
+- Método de custo: FIFO, médio ou identificação específica; por classe/tipo, tratamento de resíduos e custos de aquisição.
+- Critérios de valorização: preço versus valor total, fonte, frequência, valor bruto/líquido, avaliações ausentes/desatualizadas e precedência de avaliações manuais/automáticas.
+- Reconhecimento de rendimentos: caixa versus competência, juros acumulados, reinvestimentos e controle de valores já reconhecidos para não duplicar resultado no resgate.
+- Taxas/impostos: capitalização ou despesa, retenção na fonte, ligação às operações e apresentação bruto/líquido; sem cálculo tributário avançado nesta fase.
+- Eventos corporativos: desdobramentos, grupamentos, bonificações, amortizações, devolução de capital e transferências de custódia com preservação de custo.
+- Extensão de `transactions.kind`, granularidade de composição, liquidação em data diferente, valores a receber, posições de abertura e reconciliação inicial.
+- Precisão de quantidades/preços/taxas por instrumento e política de arredondamento; identidade global de ativos e evolução da taxonomia.
+
+Não implementar agora schema Drizzle, migrations, API, ferramentas MCP, UI, integrações com corretoras, cotações automáticas ou cálculo de CDI/IPCA. A proposta prepara fronteiras e vínculos; o schema definitivo ainda exigirá revisão e migrations versionadas quando houver implementação autorizada.

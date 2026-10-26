@@ -15,6 +15,10 @@ Aplicação web **self-hosted**, pessoal e mobile-first, com lançamentos manuai
 - Permitir operações estruturadas via Hermes/MCP, com validação, confirmação quando necessário e idempotência.
 - Executar no homelab, com acesso restrito à rede local ou por VPN/Tailscale.
 
+## Investimentos — evolução futura
+
+Planejar contas de investimento, aplicações, posições, resgates, vencimentos, proventos e avaliações patrimoniais, com consultas e lançamentos via Hermes. **Não implementado e fora do bootstrap/MVP atual.** Aportes não são despesas; retorno do principal não é receita; caixa e posições são separados para evitar dupla contagem. Ver [modelagem, §17](docs/data-model.md#17-investimentos--proposta-futura) e [ADR](docs/adr/0001-investment-accounting.md).
+
 ## Stack planejada
 
 | Área | Tecnologia |

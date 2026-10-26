@@ -117,3 +117,15 @@ Quando a solicitação for apenas **organizar diretórios e configurar o monorep
 - Preserve estes documentos e prepare `docs/` com referências e ADRs iniciais.
 - **Não implemente lançamentos, faturas, integrações bancárias, login complexo ou deploy real nesta fase.**
 
+
+## 12. Investimentos — regras para implementação futura
+
+- Antes de alterar regras financeiras, consultar `docs/data-model.md`, incluindo §17, `ARCHITECTURE.md` §12 e o ADR `docs/adr/0001-investment-accounting.md`; resolver as decisões pertinentes antes de implementar.
+- Aporte entre contas próprias não é despesa; resgate integral não é integralmente receita. Separar principal, resultado realizado, taxas e impostos.
+- Compra de ativo converte caixa em posição; nunca somar o ativo novamente ao saldo disponível da conta `investment`.
+- Preservar quantidade e custo de aquisição remanescentes em vendas/resgates parciais. Não escolher silenciosamente método de custo, valorização ou reconhecimento de rendimentos.
+- Valorização não realizada não gera recebimento; rendimentos previamente reconhecidos não podem ser reconhecidos novamente no resgate.
+- Preservar vínculos entre operações, lotes, transações e movimentações, com origem, datas, autoria e correções rastreáveis. Operações compostas devem ser atômicas, com idempotência e controle de concorrência.
+- Classificação de ativos é independente das categorias de receitas/despesas; dinheiro permanece inteiro e quantidades/taxas usam precisão decimal explícita, nunca ponto flutuante binário.
+- Hermes usa somente API HTTP autenticada via MCP; não inventar taxas, rendimentos ou vencimentos. Confirmar ambiguidades antes de escrever.
+- Esta preparação documental não autoriza schema, migrations, endpoints, ferramentas MCP, UI, cotações, integrações ou cálculos automáticos de índices/tributos.
