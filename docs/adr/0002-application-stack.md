@@ -9,7 +9,7 @@ Aplicativo pessoal, privado e self-hosted, com interface responsiva em pt-BR e i
 
 ## Decisão
 
-- Frontend: Next.js App Router, React e TypeScript; Tailwind CSS e shadcn/ui para componentes.
+- Frontend: Next.js App Router, React e TypeScript; Tailwind CSS e shadcn/ui para componentes. Desenvolvimento mobile first obrigatório: classes Tailwind sem prefixo para a base mobile, com variantes responsivas para expandir a interface em telas maiores.
 - Backend: Node.js com API HTTP em Next.js Route Handlers, dentro de `apps/web`; monólito modular, sem servidor de API separado inicialmente.
 - Banco: PostgreSQL, com Drizzle ORM e Drizzle Kit; migrations SQL versionadas e revisadas.
 - Integração: servidor MCP Node.js/TypeScript em `apps/mcp`, separado, chamando a API HTTP autenticada.

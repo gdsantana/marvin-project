@@ -66,6 +66,13 @@ Este arquivo governa contribuições de agentes neste monorepo. Aplica-se a toda
 - Não altere arquitetura de deploy, banco ou autenticação sem ADR e aprovação quando relevante.
 - Nomes de funções/tipos claros; tipos de dinheiro e datas explícitos.
 
+### Frontend mobile first
+
+- Projetar e implementar primeiro para telas mobile; expandir o layout para tablet e desktop em seguida.
+- Em Tailwind CSS, classes sem prefixo definem o layout mobile. Usar variantes responsivas como `sm:`, `md:` e `lg:` para adaptar progressivamente às telas maiores.
+- Não partir de um layout desktop para depois corrigir o mobile com overrides.
+- Validar as telas em viewport mobile e desktop, preservando legibilidade, navegação por toque e ausência de rolagem horizontal involuntária.
+
 ## 7. Procedimento para novas funcionalidades
 
 1. Localize e cite a seção relevante em `docs/data-model.md` e `ARCHITECTURE.md`.

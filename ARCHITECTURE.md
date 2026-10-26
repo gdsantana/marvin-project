@@ -84,6 +84,7 @@ Somente handlers e código de servidor podem instanciar repositórios. O fronten
 
 - Imagens e assets da aplicação pertencem ao projeto web e serão servidos por ele; sem serviço de assets ou CDN separado.
 
+- Frontend obrigatoriamente mobile first: desenhar e implementar primeiro em telas mobile; classes Tailwind sem prefixo definem a base, com `sm:`, `md:` e `lg:` expandindo o layout para telas maiores. Validar mobile e desktop.
 - Next.js App Router/React/TypeScript, UI responsiva em pt-BR com Tailwind CSS e shadcn/ui. Adicionar somente componentes necessários em `apps/web`, preservando acessibilidade; seu código fará parte do projeto.
 - Endpoints HTTP internos para contas, categorias, transações, faturas e relatórios.
 - Validação de sessões, permissões, rate limits e idempotency keys.

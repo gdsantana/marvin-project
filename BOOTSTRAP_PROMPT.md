@@ -6,7 +6,7 @@ Você é um engenheiro full-stack sênior responsável por **inicializar a estru
 
 O projeto terá:
 
-- Aplicação Next.js responsiva (desktop/mobile), UI em pt-BR, Tailwind CSS e shadcn/ui.
+- Aplicação Next.js responsiva e mobile first, UI em pt-BR, Tailwind CSS e shadcn/ui. Implementar mobile com classes sem prefixo e expandir para tablet/desktop com breakpoints responsivos.
 - Servidor MCP Node.js/TypeScript integrado posteriormente a um Hermes Agent no homelab.
 - API HTTP como **única porta de escrita** do domínio financeiro.
 - PostgreSQL + Drizzle ORM e migrations versionadas.
