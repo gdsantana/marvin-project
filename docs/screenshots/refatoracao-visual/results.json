@@ -1,0 +1,242 @@
+[
+  {
+    "scenario": "390-light-P1-P4-login",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P1-P4-overview",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P1-P4-accounts",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P1-P4-cards",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P1-P4-entries",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P1-P4-statements",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P1-P4-reports",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P4-navigation",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P4-dialogs",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P2-out-of-order",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P2-card-settings",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P3-preview-retry",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P5-values-capabilities",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P2-empty-error-retry",
+    "passed": true
+  },
+  {
+    "scenario": "390-light-P4-auth",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P1-P4-login",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P1-P4-overview",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P1-P4-accounts",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P1-P4-cards",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P1-P4-entries",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P1-P4-statements",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P1-P4-reports",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P4-navigation",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P4-dialogs",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P2-out-of-order",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P2-card-settings",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P3-preview-retry",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P5-values-capabilities",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P2-empty-error-retry",
+    "passed": true
+  },
+  {
+    "scenario": "390-dark-P4-auth",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P1-P4-login",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P1-P4-overview",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P1-P4-accounts",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P1-P4-cards",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P1-P4-entries",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P1-P4-statements",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P1-P4-reports",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P4-navigation",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P4-dialogs",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P2-out-of-order",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P2-card-settings",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P3-preview-retry",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P5-values-capabilities",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P2-empty-error-retry",
+    "passed": true
+  },
+  {
+    "scenario": "1440-light-P4-auth",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P1-P4-login",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P1-P4-overview",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P1-P4-accounts",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P1-P4-cards",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P1-P4-entries",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P1-P4-statements",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P1-P4-reports",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P4-navigation",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P4-dialogs",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P2-out-of-order",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P2-card-settings",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P3-preview-retry",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P5-values-capabilities",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P2-empty-error-retry",
+    "passed": true
+  },
+  {
+    "scenario": "1440-dark-P4-auth",
+    "passed": true
+  }
+]

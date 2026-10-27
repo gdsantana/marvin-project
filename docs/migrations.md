@@ -1,0 +1,38 @@
+# PostgreSQL e migrations
+
+O workspace `@finance/db` guarda o schema Drizzle, o adapter de `FinanceRepository` e migrations SQL versionadas. As migrations iniciais cobrem as entidades monetárias, cartões, previsões de despesa e revisões de transação do MVP descritas em `docs/data-model.md` §§4–11. Investimentos não fazem parte delas.
+
+## Configuração e comandos
+
+Use PostgreSQL real e defina `DATABASE_URL` no ambiente do comando. Não há banco em memória nem URL padrão de fallback.
+
+```bash
+DATABASE_URL='postgresql://<user>:<password>@<host>:5432/<database>' pnpm --filter @finance/db db:migrate
+```
+
+`db:migrate` aplica migrations pendentes via Drizzle Kit; esse fluxo foi validado neste checkpoint. As migrations `0000_mvp_financial_schema.sql` e `0001_forecasts_revisions.sql` são SQL versionado, registradas em `migrations/meta/_journal.json` na ordem correspondente. Migrations já aplicadas não devem ser reescritas.
+
+Para uma mudança de schema, crie uma nova migration SQL incremental, atribua a próxima versão e mantenha o journal consistente. Revise e teste o upgrade em PostgreSQL de desenvolvimento e a aplicação em uma base/schema vazio antes de qualquer deploy. Não gere nem aplique uma migration cegamente: o diretório `migrations/meta` contém apenas `_journal.json`, sem snapshots Drizzle. Embora o script `db:generate` exista, seu uso requer preparar e revisar os snapshots/baseline adequados primeiro; sem isso, a geração pode propor recriar o schema inicial. Esse fluxo de geração não foi validado neste gate. A suíte de integração aplica as migrations a um schema descartável; não houve migration em banco persistente nem implantação.
+
+## Integridade e concorrência
+
+- Todas as FKs financeiras usam `ON DELETE RESTRICT`; histórico não é apagado em cascata.
+- Valores monetários usam `BIGINT`; o adapter os entrega como `bigint` JavaScript.
+- Cada valor persistido continua limitado ao `BIGINT` assinado. Agregações SQL usam `SUM(BIGINT)` sem cast de volta a `BIGINT` (PostgreSQL retorna `numeric` para essa soma); derivados no domínio e DTOs de leitura aceitam inteiros maiores como strings. Isso cobre saldos, crédito disponível, relatórios e totais de cobrança/pagamento sem ampliar valores graváveis.
+- Entradas de conta, itens de fatura, pagamentos, transações, alocações e revisões são append-only. Correções financeiras exigem revisões ou lançamentos compensatórios rastreáveis.
+- Cada operação de domínio roda em transação PostgreSQL `SERIALIZABLE`, com retry limitado para `serialization_failure` e deadlock.
+- A tabela `idempotency_claims` reserva a chave dentro da mesma transação que grava os resultados. Guarda hash SHA-256 de payload canônico e o resultado serializado, não o payload original. Repetições iguais recebem o resultado persistido; payloads divergentes retornam `IDEMPOTENCY_CONFLICT`.
+- Pagamentos bloqueiam a transferência e a fatura antes de somar alocações existentes. Reembolsos bloqueiam a despesa original antes de somar créditos existentes.
+- Ciclos de fatura bloqueiam a linha do cartão antes de verificar sobreposição. A constraint de vencimento exige `due_on >= closing_on`.
+
+Constraints entre tabelas e triggers também protegem escritas SQL diretas para pagamentos, reembolsos, ciclos sobrepostos, tipo/moeda de previsão, realização coerente, reversão única e transições de previsão. Previsões preservam valor/datas, não podem ser apagadas e só saem de `projected` para `realized` ou `cancelled`. Escritas financeiras pela aplicação devem usar `FinanceRepository.transaction`; clientes SQL diretos não substituem validações do domínio. A migration não provisiona a base nem executa automaticamente em deploy.
+
+## Testes
+
+```bash
+DATABASE_URL_TEST='postgresql://<user>:<password>@<host>:5432/<database_descartavel>' pnpm --filter @finance/db test
+```
+
+O teste exige uma base PostgreSQL descartável com permissão para criar e remover schemas. Cria um schema aleatório isolado, aplica todas as migrations SQL em ordem (sem reescrever `0000`, já aplicada em ambientes anteriores) e o remove ao terminar. Exercita o `FinanceService` real, concorrência de realizações/reversões, ordenação de revisões, migração sequencial e triggers append-only de lançamentos/alocações/previsões. Não configure `DATABASE_URL_TEST` para uma base com dados de usuário. Sem essa variável, o teste de integração é marcado como skipped.
+
+Validação executada neste checkpoint: PostgreSQL 18.6 descartável sob `/tmp`, acessível somente por loopback, e teste de integração aplicado a schema isolado, removido ao fim. `DATABASE_URL_TEST=... pnpm --filter @finance/db test` passou com 1 integração e 0 skipped. Nenhuma base de usuário foi usada. Nenhuma migration foi aplicada a banco persistente; deploy não foi validado aqui. O ensaio descartável de backup/restore passou, conforme [docs/recovery-validation.md](recovery-validation.md); backup/restore em produção ou no homelab continuam não validados.

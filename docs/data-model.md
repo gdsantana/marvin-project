@@ -93,6 +93,9 @@ erDiagram
   TRANSACTIONS ||--|{ ACCOUNT_ENTRIES : creates
   CATEGORIES ||--o{ CATEGORY_ALLOCATIONS : classifies
   TRANSACTIONS ||--o{ CATEGORY_ALLOCATIONS : allocates
+  ACCOUNTS ||--o{ EXPENSE_FORECASTS : projects
+  TRANSACTIONS o|--o| EXPENSE_FORECASTS : realizes
+  TRANSACTIONS ||--o{ TRANSACTION_REVISIONS : revises
   TRANSACTIONS ||--o| INSTALLMENT_PLANS : purchase
   ACCOUNTS ||--o{ CARD_STATEMENTS : issues
   INSTALLMENT_PLANS o|--o{ CARD_STATEMENT_ITEMS : schedules
@@ -133,7 +136,7 @@ Não armazenar credenciais bancárias nesta tabela.
 | `is_archived` | BOOLEAN | padrão `false` |
 | `created_at`, `updated_at` | TIMESTAMPTZ | obrigatórios |
 
-Saldo assinado em uma data = `opening_balance_minor + SUM(account_entries.amount_minor para transactions.occurred_on entre opening_date e data de corte)`; operações anteriores ao saldo de abertura devem ser recusadas ou exigir redefinição da data-base. **Não guardar saldo atual como fonte primária.**
+Saldo assinado em uma data = `opening_balance_minor + SUM(account_entries.amount_minor para transactions.occurred_on entre opening_date e data de corte)`; operações anteriores ao saldo de abertura devem ser recusadas ou exigir redefinição da data-base. Cada entrada/saldo inicial gravado cabe em `BIGINT`, mas o agregado pode ultrapassar esse intervalo: manter `SUM(BIGINT)` como `numeric` no PostgreSQL e transportar derivados como `bigint`/string sem cast ou validação de `BIGINT`. **Não guardar saldo atual como fonte primária.**
 
 ### 4.3 `credit_card_settings`
 
@@ -143,7 +146,7 @@ Saldo assinado em uma data = `opening_balance_minor + SUM(account_entries.amount
 | `credit_limit_minor` | BIGINT NULL | >= 0 |
 | `closing_day` | SMALLINT | 1–31, respeitando fim do mês |
 | `due_day` | SMALLINT | 1–31; não assumir mesmo mês de fechamento |
-| `billing_timezone` | TEXT | fuso configurado para o cartão |
+| `billing_timezone` | TEXT | fuso IANA válido configurado para o cartão; validar antes de persistir |
 | `updated_at` | TIMESTAMPTZ | obrigatório |
 
 Esses dias são **templates para gerar faturas futuras**. Datas reais de faturas persistidas não devem ser recalculadas automaticamente se a configuração mudar. Alterações de vencimento por feriados/regra do emissor podem ser feitas na fatura concreta.
@@ -244,7 +247,7 @@ Toda compra em cartão pode possuir um plano de 1 ou N parcelas. A transação o
 | `status` | TEXT | `open`, `closed`, `paid`, `partially_paid`, `overdue` |
 | `created_at`, `updated_at` | TIMESTAMPTZ | obrigatórios |
 
-Não usar apenas o mês da compra para determinar a fatura. A atribuição leva em conta ciclo real e, quando disponível, `posted_on` do emissor. Os ciclos de um mesmo cartão não podem se sobrepor. Status monetário deve ser **derivado/validado** pelos pagamentos; `status` persistido, se houver, é apenas estado operacional/cache coerente.
+Não usar apenas o mês da compra para determinar a fatura. A atribuição leva em conta ciclo real e, quando disponível, `posted_on` do emissor. Para estorno de cartão, usar `posted_on ?? occurred_on` tanto ao escolher fatura aberta quanto ao calcular o ciclo. O preview deve expor a fatura existente ou as datas planejadas (`cycleStartOn`, `closingOn`, `dueOn`) quando o commit criar uma. Os ciclos de um mesmo cartão não podem se sobrepor. Status monetário deve ser **derivado/validado** pelos pagamentos; `status` persistido, se houver, é apenas estado operacional/cache coerente.
 
 ### 4.11 `card_statement_items`
 
@@ -289,6 +292,18 @@ Uma fatura pode ter vários pagamentos parciais. Um pagamento pode, mediante vin
 | `created_at`, `updated_at` | TIMESTAMPTZ | obrigatórios |
 
 Uma entrada natural pode criar várias `transactions`; relacionamento de 1 request para N operações. Persistir identificadores das operações retornadas e não reinterpretar o mesmo request quando o Hermes repetir a chamada.
+
+### 4.14 `expense_forecasts` — previsão avulsa
+
+Uma previsão é uma despesa **não recorrente**, prevista para uma conta que não seja cartão de crédito. É distinta de `card_statement_items`, que são compromissos de compra já reconhecida no passivo do cartão. Campos: `id`, `account_id`, `expected_on`, `amount_minor` positivo, `category_id` opcional, `description`, `currency` copiada da conta, `status` (`projected`, `realized`, `cancelled`), `realized_transaction_id` opcional e `created_at`. `realized_transaction_id` é único quando preenchido. Previsões são consultadas por período de `expected_on` e moeda.
+
+Criar ou manter uma projeção não cria `transactions`, `account_entries` nem alocações e não participa de saldo ou relatório realizado. A única transição permitida parte de `projected`: realização cria a mesma despesa avulsa usada pelo lançamento manual, associa uma única transação e muda o status atomicamente; cancelamento muda o status sem apagar a previsão. Valores, data esperada e descrição são imutáveis depois da criação. Não há templates nem geração recorrente neste MVP.
+
+### 4.15 `transaction_revisions` — correções não financeiras
+
+Cada revisão append-only pertence a uma transação e contém `revision_number` crescente por transação, `reason`, `actor`, `source`, `created_at`, patch de metadados não financeiros e, opcionalmente, uma substituição completa das alocações de categoria. A leitura efetiva aplica patches em ordem e usa a substituição de alocações da revisão mais recente que as contenha. Uma nova classificação deve somar o mesmo valor assinado da operação e cada categoria precisa manter o tipo (`income` ou `expense`) da transação. A linha e as alocações originais permanecem preservadas.
+
+Valores, contas e datas financeiras não podem ser corrigidos por revisão. Use `reverseTransaction`: grava movimento compensatório `adjustment` com `related_transaction_id`, motivo, ator e origem; pode gravar uma nova receita, despesa avulsa ou transferência na mesma operação atômica. O relatório omite o original revertido e o ajuste compensatório; se houver substituição, contabiliza somente o novo lançamento. Pagamentos de fatura, transações de cartão/parcelamentos e estornos encadeados não aceitam esta reversão. Para crédito de compra, use o fluxo de estorno vinculado, que reduz a despesa e mantém as parcelas; não apagar nem reescrever faturas encerradas.
 
 ## 5. Operações e efeitos contábeis
 
@@ -433,6 +448,10 @@ Invariantes de soma entre diversas linhas são verificadas **dentro de transaç�
 - `card_statement_items(statement_id)` e único parcial `(installment_plan_id, installment_number)`.
 - `statement_payments(statement_id)` e `(transfer_transaction_id)`.
 - `agent_requests(source_channel, idempotency_key)` único.
+- `expense_forecasts(expected_on)`, status/período/moeda e `realized_transaction_id` único.
+- `transaction_revisions(transaction_id, revision_number)` único; `transactions.related_transaction_id` único para reversão `adjustment`.
+
+`transactions`, `category_allocations`, `transaction_revisions`, previsões (exclusão) e os livros de movimentos/faturas/pagamentos são append-only no banco. A transição de previsão só permite `projected → realized|cancelled`; cancelamento mantém o registro.
 
 ## 10. MCP, API e agente
 
@@ -567,11 +586,11 @@ Evitar importar código de interface no serviço MCP e evitar lógica financeira
 1. **Orçamento mensal — fora do escopo:** não haverá essa métrica no início. Não há decisão de competência orçamentária pendente para o MVP.
 2. **Compra no dia de fechamento — definido:** próxima fatura, mesmo quando o fechamento operacional for manual.
 3. **Moedas — definido:** uma moeda-base por conta, sem câmbio ou faturas com múltiplas moedas no escopo atual.
-4. **Fechamento de faturas — definido:** modos manual e automático por cartão, com manual como padrão. A configuração pode ser alterada a qualquer momento, sem reabrir faturas encerradas nem mudar ciclos históricos. O mecanismo de execução automática e tratamento de ciclos já vencidos ao ativá-lo serão detalhados na implementação.
+4. **Fechamento de faturas — definido:** modos manual e automático por cartão, com manual como padrão. A configuração pode ser alterada a qualquer momento, sem reabrir faturas encerradas nem mudar ciclos históricos. `closeDueAutomaticStatements(nowIso)` usa a data civil em `billing_timezone` e fecha em catch-up ciclos automáticos abertos com `closing_on` até hoje. É idempotente por estado e segura sob chamadas concorrentes; não cria movimentação nem dívida. Não há scheduler no domínio; o invocador operacional pertence à aplicação web.
 5. **Estornos — definido:** crédito imediato; manter parcelas futuras, com vínculo à compra original e sem duplicar o crédito.
 6. **Limite de crédito — definido:** usar o limite configurado no cartão, descontando a dívida comprometida conforme §8.
-7. **Previsões — definido:** despesas previstas aparecem como débitos projetados nos próximos meses, separadas das movimentações efetivas. Não criam `account_entries` nem reduzem o saldo atual. Quando realizadas, substituir/conciliar a previsão com o lançamento efetivo para não duplicar valores. A estrutura de recorrência e geração das previsões será detalhada antes da implementação.
-8. **Correções de histórico:** definir estratégia append-only/reversals para itens encerrados; evitar exclusões irreversíveis de dados financeiros.
+7. **Previsões avulsas — implementadas no domínio/DB:** despesa não recorrente em conta não cartão, consultada por período/moeda. Projeção não afeta saldo nem relatório realizado; realização atômica reutiliza o fluxo da despesa e concilia uma única transação; cancelamento preserva a linha. Não há recorrência. Ver ADR 0006.
+8. **Correções — implementadas no domínio/DB:** metadados e categorias recebem revisões append-only com motivo, ator, origem e sequência; leitura efetiva aplica a revisão sem substituir a origem. `actor` e `source` são contexto confiável do caller, não campos públicos da requisição. Alterações de valor/conta/data exigem reversão compensatória vinculada, opcionalmente seguida de receita/despesa avulsa/transferência no mesmo commit. Reversões de pagamentos de fatura, qualquer conta de cartão, despesa reembolsada e estorno encadeado são recusadas; crédito de compra usa estorno vinculado, preservando parcelas. Ver ADR 0006.
 9. **Dashboards — definido:** totais separados por moeda; câmbio e patrimônio convertido ficam para evolução futura.
 10. **Login web — definido:** uma senha local e sessão web, para uma pessoa usuária, sem cadastro multiusuário ou login complexo. Armazenar apenas hash da senha; autenticação MCP separada. Ver ADR 0004.
 

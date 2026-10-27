@@ -1,243 +1,118 @@
 # Arquitetura — marvin-project
 
-> **Status:** arquitetura-alvo para o bootstrap; componentes descritos aqui ainda podem não existir.  
-> **Princípio central:** monorepo ≠ processo único. Há aplicações executáveis separadas, pacotes compartilhados e **uma única autoridade de escrita financeira**.
+> **Estado:** implementação web/API/MCP/domínio/DB presente. Typecheck, lint, 35 testes sem skips, build, recovery, E2E dev/produção e validação visual passaram. Docker build e deploy no homelab não foram executados porque o socket Docker está inacessível. Ver [matriz de verificação](docs/verification.md).
 
-A stack foi definida no [ADR 0002](docs/adr/0002-application-stack.md): Next.js App Router/React/TypeScript, Tailwind CSS e shadcn/ui, API em Node.js com Route Handlers, PostgreSQL e Drizzle. Trata-se de uma decisão para implementação, sem alterar o status de planejamento.
+## 1. Contexto e topologia atual
 
-## 1. Contexto
-
-O marvin-project é uma aplicação financeira pessoal self-hosted. O usuário interage pelo navegador (desktop/mobile) ou envia mensagens a um Hermes Agent na rede do homelab. O Hermes interpreta a intenção e aciona ferramentas MCP, mas não executa cálculos contábeis nem acessa o banco diretamente.
-
-### Requisitos arquiteturais
-
-- Implantação privada em Docker/homelab; acesso por LAN/VPN/Tailscale.
-- Uma pessoa usuária inicialmente; autenticação simples na web e credencial separada para MCP.
-- PostgreSQL como fonte de verdade.
-- API, interface e agente compartilham regras de negócio, sem duplicação.
-- Histórico e valores financeiros íntegros; transações atômicas, idempotência e recuperação via backup.
-- Desenvolvimento organizado em monorepo TypeScript/`pnpm Workspaces`.
-
-## 2. Visão de execução (container-level)
+O projeto é uma aplicação financeira pessoal self-hosted, inicialmente para uma pessoa. A UI e API HTTP estão em `apps/web`; `apps/mcp` é um processo separado que chama a API; os pacotes compartilhados separam contratos, domínio e PostgreSQL.
 
 ```mermaid
-flowchart TB
-  USER["Usuário"] --> WEB["Next.js Web + API"]
-  USER --> HERMES["Hermes Agent"]
-  HERMES --> MCP["MCP Server"]
-  MCP -->|"HTTP autenticado"| WEB
-  WEB --> DOMAIN["Domain Services"]
-  DOMAIN --> POSTGRES[("PostgreSQL")]
+flowchart LR
+  Browser["Navegador"] --> Web["Next.js: UI + API"]
+  Hermes["Hermes"] --> MCP["MCP HTTP Streamable"]
+  MCP -->|"HTTP + token de serviço"| Web
+  Web --> Domain["FinanceService"]
+  Domain --> Repository["FinanceRepository"]
+  Repository --> PostgreSQL[("PostgreSQL")]
 ```
 
-**Deploy definido, ainda a implementar:** Docker Compose em uma VM no Proxmox do homelab, com um container por serviço permanente: `web` (frontend + API), `mcp` e `db` (PostgreSQL). Ver [ADR 0003](docs/adr/0003-homelab-deployment.md) e [plano de deploy](docs/deployment.md).
+Dockerfiles e `infra/compose.yml` estão no checkout. Compose define `web`, `mcp`, `db` e `migrate` sob profile `ops`; o serviço de migration é executado explicitamente. Deploy real, proxy, backup e restauração não foram verificados no homelab. Ver [ADR 0003](docs/adr/0003-homelab-deployment.md) e [docs/deployment.md](docs/deployment.md).
 
-**Implantação prevista:**
+## 2. Workspaces e limites
 
-| Componente | Unidade de deploy | Rede |
+| Workspace | Papel no código atual | Fronteira pretendida |
 |---|---|---|
-| `apps/web` | Container web/API Next.js | Acessível via reverse proxy privado |
-| `apps/mcp` | Container servidor MCP Node.js | Endpoint acessível pelo Hermes, com bearer token |
-| PostgreSQL | Container DB e volume persistente | Apenas rede interna de serviços |
-| Hermes Agent | Serviço existente no LXC | Cliente do endpoint MCP, fora do monorepo |
+| `apps/web` | Next.js UI, handlers HTTP, auth e composição de `FinanceService` + repositório | Único acesso permanente da aplicação ao DB; sem regras financeiras em componentes |
+| `apps/mcp` | SDK MCP Streamable HTTP, bearer auth, schemas de entrada e cliente HTTP da API | Sem SQL, `packages/db` ou cálculos financeiros próprios |
+| `packages/contracts` | Schemas Zod, DTOs e envelopes públicos | Sem persistência ou dependência de apps |
+| `packages/domain` | `FinanceService`, regras monetárias e interface `FinanceRepository` | Sem Drizzle, Next.js ou dependências de apps |
+| `packages/db` | Schema Drizzle, cliente PostgreSQL e implementação do repositório | Implementa a porta de persistência do domínio |
 
-Como o Hermes e o Docker podem executar em hosts/containers distintos, o nome de serviço Docker não será necessariamente resolvido no LXC. Configurar endpoint por DNS/IP alcançável, firewall e autenticação. O reverse proxy e VPN já existentes no homelab podem ser reutilizados.
+O web compõe diretamente domínio e DB no servidor. MCP encaminha operações por HTTP e envia `Idempotency-Key` nas escritas. O Compose não fornece `DATABASE_URL` ao MCP; a rede do banco é interna e somente web/migration participam dela.
 
-As redes de aplicação (`web`/`mcp`) e banco (`web`/`db`) serão separadas; o DB não publicará porta no host. MCP chamará o web pelo DNS interno do Compose, sem acesso à rede ou credenciais DB. Somente o web terá acesso permanente ao banco pela aplicação; migrations usarão execução temporária controlada. Reverse proxy privado atenderá web e MCP, reutilizando infraestrutura existente se disponível.
+Os limites descrevem a estrutura pretendida e a organização observada. Compilação, testes dos workspaces e fluxos HTTP/MCP de dev e produção passaram no gate local. Não há suíte de teste automatizada específica de fronteiras de importação.
 
-Health checks, política de reinício e reconexão serão configurados; migrations serão uma etapa explícita por deploy. PostgreSQL terá volume próprio e backups fora desse volume, com restauração testada. Imagens terão versões identificáveis e secrets serão fornecidos fora das imagens/Git. Um único host permanece ponto único de falha; proxy, recursos da VM e política de backup finais ainda estão pendentes.
+## 3. API, contratos e autenticação
 
-## 3. Topologia do código
+`packages/contracts` centraliza schemas runtime e contratos de entradas/saídas. A API web oferece leituras de contas, categorias, transações, resumo, faturas, configurações de cartão e previsões; escritas de instituição, contas, categorias, receitas, despesas, transferências, compras no crédito, cashback, estornos, pagamentos/fechamento de faturas, previsões, correções e reversões. Toda escrita POST exige chave de idempotência e valida os corpos com Zod.
 
-```text
-apps/web
-  ├── Next.js App Router / componentes UI
-  └── API HTTP / composição dos casos de uso
-        ├── packages/contracts
-        ├── packages/domain
-        └── packages/db ── PostgreSQL
+Limites atuais da API:
 
-apps/mcp
-  ├── SDK MCP / validação de chamadas / auth
-  ├── packages/contracts
-  └── HTTP client ── apps/web API
+- API expõe criação e alteração idempotente das configurações de cartão; mudanças não reescrevem faturas históricas encerradas.
+- Fechamento manual de fatura usa rota idempotente. O web também executa catch-up periódico de fechamento automático no runtime Node.
+- Preview transacional está exposto em `POST /api/v1/transactions/preview`, sem gravar movimentações; previsões avulsas têm rotas de criar/listar/realizar/cancelar.
+- Correções não financeiras são revisões append-only; alterações financeiras usam reversão compensatória e substituição atômica. A rota de contas também retorna limite disponível do cartão quando configurado.
+
+Web usa cookie de sessão assinado, token CSRF e proteção básica de tentativas no login. MCP usa bearer token próprio para Hermes e token de serviço distinto para a API. `.env.example` e Compose incluem `APP_ORIGIN` e `WEB_PASSWORD_HASH`, nomes lidos pela rota de login.
+
+## 4. Domínio financeiro e persistência
+
+`FinanceService` trabalha com `bigint` e `packages/contracts` transmite valores monetários como strings inteiras. O serviço implementa operações idempotentes, saldos derivados de entradas, validação de categorias/moedas, alocação de compra parcelada, cashback, estorno proporcional e pagamentos parciais. O repositório PostgreSQL usa transações serializáveis com retry limitado para falhas de serialização/deadlock; claims idempotentes guardam hash do payload e resultado.
+
+O schema/migration atual inclui instituições, contas, configurações de cartão, categorias, transações, entradas, alocações, previsões, revisões, planos de parcelas, faturas, itens, pagamentos, solicitações de agente e claims de idempotência. Constraints e triggers cobrem limites entre linhas; tabelas de histórico financeiro são protegidas conforme as migrations. As migrations foram aplicadas nos testes PostgreSQL e em clusters descartáveis de recovery; não houve acesso a banco de usuário. Ver [docs/migrations.md](docs/migrations.md) e [docs/verification.md](docs/verification.md).
+
+Decisões operacionais observáveis no código: dias de calendário curtos limitam ao último dia do mês; o restante do estorno entre categorias é distribuído centavo a centavo em ordem estável das alocações efetivas; alterações históricas usam novas operações rastreáveis. `closeAutomaticStatements(throughDate)` é invocado pelo processo periódico do web. Detalhes em [ADR 0005](docs/adr/0005-mvp-operational-behavior.md) e [ADR 0007](docs/adr/0007-automatic-statement-closing.md).
+
+## 5. MCP
+
+O servidor responde em `/mcp` via Streamable HTTP e expõe `/healthz`. Ferramentas incluem consultas, preview, escritas financeiras, configurações de cartão, previsões avulsas, correções e reversões; a lista atual e contratos estão em [docs/mcp.md](docs/mcp.md).
+
+As escritas financeiras são encaminhadas sem acesso direto ao banco. `close_statement` usa a rota idempotente da API; `preview_transaction` não persiste dados. A suíte MCP passou com quatro testes, incluindo chamada Streamable HTTP e replay de cancelamento de previsão. E2E dev e produção passaram pelos fluxos HTTP/MCP; os cenários e limites estão em [docs/integration-validation.md](docs/integration-validation.md).
+
+## 6. UI
+
+`apps/web` implementa a identidade visual escura nas seis áreas existentes (resumo, contas, cartões, lançamentos, faturas e relatórios), no login e nos diálogos. A decisão aceita está no [ADR 0008](docs/adr/0008-web-visual-system.md), apoiada nos [requisitos](specs/refatoracao-visual/requirements.md) e no [design](specs/refatoracao-visual/design.md) da refatoração visual.
+
+O tema é exclusivamente escuro: `.dark` na raiz e `color-scheme: dark`, sem paleta clara, seletor ou adaptação à aparência do dispositivo. `globals.css` centraliza tokens CSS semânticos de superfície/conteúdo, ações, estados, borda, foco e navegação, mapeados por `@theme inline` no Tailwind 4. Esses papéis permitem um tema claro futuro, ainda não implementado. Geist e JetBrains Mono são servidas localmente pelos pacotes `@fontsource-variable`, sob SIL OFL 1.1, sem buscar fontes em serviço externo.
+
+`components.json` configura shadcn/ui `base-nova`; `components/ui` contém os componentes reais de composição e primitivas Base UI onde aplicável, incluindo botão e diálogo. `app-shell.tsx` concentra navegação lateral desktop, navegação móvel e cabeçalho; `action-dialog.tsx` concentra a apresentação dos formulários, prévias e revisões. `workspace.tsx` mantém coordenação de sessão, consultas e operações. O fluxo de envio preserva corpos HTTP, CSRF, prévia, revisão e reutilização de chave idempotente. Consultas de relatório e configuração de cartão descartam respostas obsoletas para evitar associação de dados à seleção errada.
+
+A refatoração não altera domínio, contratos, persistência, API, MCP ou autenticação. Valores continuam usando formatação inteira e moedas separadas. Recursos sem suporte real no Figma são omitidos, inclusive gráficos sem séries completas, metas, sincronização e análises por IA; previsões e demais operações existentes permanecem disponíveis. A organização é mobile first, com estados de carregamento, vazio, erro e sucesso e suporte de foco e movimento reduzido no código.
+
+Typecheck, lint, build, 35 testes sem skips e integração de produção passaram nesta refatoração. As evidências e limitações dos cenários de navegador, capturas e medições de contraste estão em [docs/ui-validation.md](docs/ui-validation.md).
+
+## 7. Desenvolvimento e validação
+
+Gerenciador: pnpm Workspaces, lockfile na raiz, sem Turborepo. Comandos disponíveis nos manifests:
+
+```bash
+pnpm --filter @finance/web dev
+pnpm --filter @finance/mcp dev
+pnpm --filter @finance/db db:migrate
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
 ```
 
-### Regras de dependência
+`pnpm test` executa os workspaces configurados; o gate `bash scripts/test-postgres.sh` passou com 35 testes e zero skips. `pnpm typecheck`, `pnpm lint`, build serial, recovery e E2E dev/produção passaram. Compose config passou, mas Docker build não pôde ser executado por falta de acesso ao socket. Nenhum deploy no homelab foi realizado. Veja [docs/integration-validation.md](docs/integration-validation.md) para comandos e evidências.
 
-| Módulo | Pode importar | Não deve importar |
-|---|---|---|
-| `apps/web` (somente servidor) | `domain`, `db`, `contracts` | Código interno de `apps/mcp` |
-| `apps/web` (client components) | Componentes UI, tipos seguros de `contracts` | `db`, código server-only, secrets |
-| `apps/mcp` | `contracts`, SDK MCP, cliente HTTP | `db`, repositórios, regras financeiras duplicadas |
-| `packages/domain` | `contracts`, interfaces próprias | `apps/*`, Drizzle, Next.js |
-| `packages/db` | Drizzle, implementações de portas definidas no domínio | `apps/*`, SDK MCP |
-| `packages/contracts` | Dependências mínimas de schemas/tipos | `domain`, `db`, `apps/*` |
+## 8. Segurança e dados
 
-**Sem dependência circular `domain` ↔ `db`:** `domain` declara interfaces/portas de persistência; `db` as implementa; `apps/web` faz a composição/injeção.
+- Não expor PostgreSQL à rede externa; MCP deve conversar apenas com API HTTP autenticada.
+- Dinheiro sempre em unidades mínimas inteiras; moedas permanecem separadas sem FX.
+- Transferência interna e pagamento de fatura não criam receita/despesa nova.
+- Compra parcelada reconhece a obrigação integral uma vez; itens das faturas não movimentam saldo.
+- Escritas compostas devem ser atômicas e idempotentes. Não enviar segredos, payloads financeiros ou mensagens privadas a logs.
+- Correções financeiras preservam a operação original e acrescentam lançamentos vinculados; não apagar ou editar histórico encerrado.
 
-Somente handlers e código de servidor podem instanciar repositórios. O frontend nunca recebe credenciais ou clientes do PostgreSQL.
+A modelagem detalhada e os casos de aceite permanecem em [docs/data-model.md](docs/data-model.md). Estado por requisito está em [docs/verification.md](docs/verification.md).
 
-## 4. Responsabilidades dos workspaces
+## 9. Arquivos de documentação
 
-### `apps/web`
-
-- Imagens e assets da aplicação pertencem ao projeto web e serão servidos por ele; sem serviço de assets ou CDN separado.
-
-- Frontend obrigatoriamente mobile first: desenhar e implementar primeiro em telas mobile; classes Tailwind sem prefixo definem a base, com `sm:`, `md:` e `lg:` expandindo o layout para telas maiores. Validar mobile e desktop.
-- Next.js App Router/React/TypeScript, UI responsiva em pt-BR com Tailwind CSS e shadcn/ui. Adicionar somente componentes necessários em `apps/web`, preservando acessibilidade; seu código fará parte do projeto.
-- Endpoints HTTP internos para contas, categorias, transações, faturas e relatórios.
-- Validação de sessões, permissões, rate limits e idempotency keys.
-- Composição dos serviços de domínio com implementações dos repositórios.
-- Nunca incluir regras financeiras dispersas em componentes React ou handlers diferentes.
-
-### `apps/mcp`
-
-- Servidor MCP TypeScript, com transporte HTTP compatível com o Hermes.
-- Ferramentas tipadas, ex.: `get_accounts`, `get_categories`, `preview_transaction`, `create_income`, `create_credit_purchase`, `create_transfer`, `get_card_statements`.
-- Autenticação específica (bearer token), validação de entrada, logs sem dados sensíveis.
-- Transformar chamadas MCP em requisições HTTP à API; **não escrever no banco**.
-
-### `packages/contracts`
-
-- Tipos/schemas de DTOs, enums públicos, códigos de erro e respostas compartilhadas.
-- Não contém acesso a dados, regras de saldo nem dependências de frameworks.
-- Evitar expor internals de banco e segredos em contratos reutilizados no browser.
-
-### `packages/domain`
-
-- Casos de uso (`CreateIncome`, `CreateExpense`, `CreateTransfer`, `CreateCreditPurchase`, `PayStatement`, etc.).
-- Cálculo de parcelas, fechamento, saldos e validações; sem orçamento no escopo inicial.
-- Portas/interfaces para repositórios e clock/configuração de fuso.
-- Operações financeiras multi-row agrupadas numa transação de persistência.
-
-### `packages/db`
-
-- Definições Drizzle, migrations versionadas, índices, constraints, repositórios e transações SQL.
-- PostgreSQL como fonte de verdade; evitar `current_balance` mutável e duplicado.
-- Sem regras de negócio específicas de MCP, UI ou roteamento.
-
-## 5. Fluxos fundamentais
-
-### 5.1 Lançamento manual
-
-1. Usuário envia formulário pelo `apps/web`.
-2. API autentica e valida o DTO de `contracts`.
-3. `domain` aplica regras financeiras e idempotência.
-4. `db` persiste todas as linhas em transação atômica.
-5. API retorna IDs, valores efetivos e resumo do lançamento.
-
-### 5.2 Hermes/MCP
-
-1. Usuário conversa com Hermes (ex.: Discord).
-2. Hermes extrai uma intenção, consulta ferramentas de contas/categorias e chama `preview` se necessário.
-3. `apps/mcp` autentica a ferramenta e chama a **mesma API HTTP** utilizada pela web.
-4. API aplica domínio + persistência; ferramenta retorna resultado estruturado.
-5. Hermes confirma ao usuário os dados realmente salvos. Requisições repetidas com a mesma chave não duplicam lançamentos.
-
-Web no navegador e MCP consumirão os mesmos endpoints HTTP e contratos de entrada, saída e erro de `packages/contracts`, com schemas de validação em runtime. Sessão web e credencial MCP serão distintas. Código de servidor do Next.js poderá chamar os mesmos casos de uso diretamente, sem HTTP para si próprio, preservando autenticação, validação e idempotência aplicáveis; não haverá regras financeiras paralelas.
-
-### 5.3 Compra parcelada
-
-1. Compra no crédito cria transação econômica e **uma entrada negativa pelo total** no cartão.
-2. Plano de parcelas divide o valor inteiro em N linhas de faturas, com arredondamento exato.
-3. Itens de fatura indicam o ciclo de cobrança; categorias classificam a compra original uma única vez. Parcelas não criam novas entradas patrimoniais.
-4. Pagamento cria uma transferência bancária para o cartão e registra atribuição à fatura.
-5. A interface mostra dívida total, fatura atual, próximas faturas e saldos sem dupla contagem.
-
-### 5.4 Entradas de dinheiro
-
-- Salário, rendimentos e cashback depositado na corrente: receita com `account_entry` positiva.
-- Pix recebido **não é automaticamente receita**: pode ser transferência, reembolso ou presente.
-- Estorno de despesa credita a conta e reduz a categoria original.
-- Cashback/estorno aplicado no cartão reduz dívida e pode gerar item negativo na fatura.
-
-## 6. Invariantes financeiros
-
-O documento de modelagem (`docs/data-model.md`, handoff disponível no repositório) é a **fonte de verdade detalhada**. Resumo das regras que não podem ser violadas:
-
-1. Valor monetário em inteiro de unidades mínimas; nunca `float`.
-2. Saldo da conta = saldo de abertura + soma de `account_entries` relevantes.
-3. Transferência entre contas próprias não compõe receita/despesa.
-4. Pagamento de fatura não é despesa nova.
-5. Compra parcelada aumenta dívida total uma vez; soma de parcelas = valor da compra.
-6. Data da compra, competência da fatura e pagamento bancário são distintos.
-7. Saldos de moedas distintas permanecem separados, sem conversão no escopo atual.
-8. Categorias, contas e faturas históricas devem ser preservadas, ajustadas com rastreabilidade.
-
-## 7. Segurança e configuração
-
-- Login web com uma senha local e sessão, para uma pessoa usuária na rede privada; guardar hash da senha e usar cookie de sessão protegido. Sem cadastro multiusuário ou provedor externo de identidade.
-- MCP com token independente, restrição de rede e possibilidade de rotação.
-- Sem PostgreSQL público e sem credenciais DB no processo MCP.
-- Variáveis de ambiente documentadas em `.env.example`; `.env` real fora do controle de versão.
-- Logs sem credenciais e, por padrão, sem texto financeiro bruto do usuário.
-- As ferramentas de IA executam somente operações restritas e tipadas; jamais SQL arbitrário.
-- Backups PostgreSQL e restauração testada antes do uso com dados reais.
-
-## 8. Monorepo: ferramentas e entrega
-
-- **pnpm Workspaces:** gerencia `apps/*` e `packages/*` e um lockfile único.
-- **Sem Turborepo inicialmente:** scripts pnpm por workspace são suficientes na primeira fase; avaliar quando houver gargalo real.
-- Next.js pode consumir pacotes internos TypeScript, com `transpilePackages` quando a configuração exigir.
-- Construir imagens separadas para `web` e `mcp`; ambos compartilham código em build-time, **não** banco/código em runtime sem limites claros.
-- `infra/compose.yml` deverá definir `web`, `mcp` e `db` (PostgreSQL), redes privadas, volume DB e health checks; arquivo ainda não criado. O ambiente final seguirá `docs/deployment.md`.
-
-## 9. Documentação e ADRs
-
-| Arquivo | Responsabilidade |
+| Arquivo | Conteúdo |
 |---|---|
-| `README.md` | Visão do projeto e comandos de desenvolvimento |
-| `ARCHITECTURE.md` | Topologia, workspaces e limites de dependência |
-| `AGENTS.md` | Políticas de trabalho para agentes programadores |
-| `docs/data-model.md` | Entidades, contas, faturas, parcelamentos e invariantes |
-| `docs/api.md` | Endpoints HTTP e contratos versionados |
-| `docs/mcp.md` | Ferramentas e autenticação MCP |
-| `docs/deployment.md` | Docker, rede, backup/restauração, configuração |
-| `docs/flows/*` | Sequências financeiras complexas |
-| `docs/adr/*` | Contexto, decisão, alternativas e consequências |
+| `README.md` | Estado atual e comandos de desenvolvimento |
+| `AGENTS.md` | Regras de contribuição e invariantes |
+| `docs/data-model.md` | Handoff financeiro e requisitos do MVP |
+| `docs/verification.md` | Evidências, lacunas e validação executada |
+| `docs/implementation-decisions.md` | Regras já implementadas no domínio |
+| `docs/migrations.md` | Banco, migration, constraints e testes |
+| `docs/api.md` | Contratos e endpoints HTTP documentados |
+| `docs/mcp.md` | Transporte, auth e ferramentas MCP |
+| `docs/deployment.md` | Compose, variáveis e operação planejada |
+| `docs/adr/` | Decisões arquiteturais e de comportamento |
 
-ADRs iniciais sugeridos: escolha do monorepo/pnpm, PostgreSQL/Drizzle, MCP via API HTTP, reconhecimento de compra parcelada e estratégia de múltiplas moedas.
+## 10. Investimentos — futuro, fora do MVP
 
-Ao modificar uma regra financeira, atualizar `docs/data-model.md` e cenários de validação. Ao modificar fronteiras de dependências ou infraestrutura, atualizar este documento e criar/substituir um ADR.
-
-## 10. Decisões de comportamento e pendências
-
-Situação atual (ver também ADR 0004):
-
-- Orçamentos e sua competência mensal ficam fora do escopo inicial; foco no controle financeiro básico.
-- Ajustes de calendário para dias inexistentes no mês; compra no dia de fechamento vai para a próxima fatura. Fechamento manual (padrão) ou automático, alterável a qualquer momento; estorno por crédito imediato, preservando parcelas futuras.
-- Câmbio adiado: uma moeda por conta e totais separados por moeda no escopo atual.
-- Login definido por senha local e sessão; transporte e detalhes de autenticação MCP serão definidos na implementação. Sugestão inicial: transporte HTTP com suporte a streaming, validando compatibilidade com Hermes, e bearer token próprio, separado da sessão web.
-- Previsões devem mostrar débitos projetados nos próximos meses sem alterar saldo efetivo. Estrutura de recorrências ainda pendente; sincronização bancária e parcelamento de fatura fora do MVP.
-
-## 11. Critério de sucesso da arquitetura
-
-Um agente deve ser capaz de:
-
-1. Identificar onde colocar um novo endpoint, serviço de domínio, tabela ou ferramenta MCP.
-2. Explicar por que MCP não fala com PostgreSQL diretamente.
-3. Reproduzir os mesmos resultados financeiros via web e Hermes.
-4. Executar `build`, `typecheck` e `lint` por workspace após o bootstrap.
-5. Documentar novas decisões sem contradizer o handoff de modelagem.
-
-
-## 12. Módulo de investimentos — arquitetura futura
-
-**Somente planejamento; fora do bootstrap e do MVP atual.** A modelagem detalhada está em [docs/data-model.md §17](docs/data-model.md#17-investimentos--proposta-futura); a decisão de separar caixa, posições e avaliações está no [ADR 0001](docs/adr/0001-investment-accounting.md).
-
-Uma conta `investment` pertence a uma instituição e representa somente caixa disponível. Aportes reutilizam transferências entre contas próprias. Compras convertem caixa em lotes de ativos; vendas, resgates e vencimentos liberam custo e reconhecem o resultado realizado separadamente. Avaliações alteram a visão patrimonial, sem criar movimentação monetária. O consolidado soma caixa, posições avaliadas e passivos assinados, com conversão explícita de moedas; nunca soma custo e avaliação da mesma posição.
-
-Organização futura, **sem criar diretórios ou código nesta etapa**:
-
-- `packages/contracts/src/investments/`: entradas, saídas, schemas de runtime e erros públicos.
-- `packages/domain/src/investments/`: operações, custo, posições, valorização e portas de persistência; sem Drizzle, Next.js ou imports de apps.
-- `packages/db/src/schema/investments/`: schema e persistência futura; repositórios implementam portas do domínio.
-
-`apps/web` comporá os serviços e exporá a API autenticada. `apps/mcp` será adaptador HTTP tipado, sem SQL, dependência de DB ou cálculos próprios. O cliente web não terá acesso ao banco ou secrets. Transação financeira, caixa, consumo de lotes e classificação de resultado devem ser persistidos atomicamente, com idempotência e proteção contra resgates concorrentes. A extensão dos contratos existentes será revisada antes da implementação, sem reclassificar operações atuais.
-
-Ferramentas apenas candidatas: `get_investment_accounts`, `get_investment_portfolio`, `create_investment_transfer`, `create_investment_purchase`, `register_investment_redemption`, `register_investment_income`, `get_upcoming_maturities`. Todas passarão pela API HTTP e validação do domínio; escritas exigirão autenticação própria e chave de idempotência. Hermes deverá confirmar ambiguidades e nunca inferir taxas, retornos ou vencimentos sem dados fornecidos/verificados.
-
-Relatórios separarão saldo bancário, caixa da corretora, custo investido, valor atual das posições, resultados realizados, valorização não realizada, rendimentos recebidos, patrimônio, distribuição por classe e próximos vencimentos. Avaliações terão data e origem explícitas, inicialmente manuais; automação é evolução futura.
-
-Permanecem abertas: método de custo, fonte e critérios de avaliação, reconhecimento de rendimentos, eventos corporativos e reconciliação de taxas/impostos. Não estão autorizados nesta fase integrações com corretoras, cotações automáticas, cálculo de CDI/IPCA ou tributação avançada.
+Investimentos continuam fora do escopo explicitamente autorizado. A proposta está em [docs/data-model.md §17](docs/data-model.md#17-investimentos--proposta-futura) e [ADR 0001](docs/adr/0001-investment-accounting.md). Não há código, schema ou migrations de investimentos nesta entrega.

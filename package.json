@@ -1,0 +1,18 @@
+{
+  "name": "marvin-project",
+  "private": true,
+  "packageManager": "pnpm@12.15.0",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint apps packages --max-warnings=0",
+    "test": "pnpm -r --if-present test",
+    "build": "pnpm -r build",
+    "dev:web": "pnpm --filter @finance/web dev",
+    "dev:mcp": "pnpm --filter @finance/mcp dev",
+    "db:migrate": "pnpm --filter @finance/db db:migrate"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "typescript-eslint": "^8.72.0"
+  }
+}

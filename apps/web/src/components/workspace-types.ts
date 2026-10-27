@@ -1,0 +1,15 @@
+export type Section = "overview" | "accounts" | "cards" | "entries" | "statements" | "reports";
+export type Action = "institution" | "account" | "configureCard" | "category" | "income" | "expense" | "transfer" | "purchase" | "cashback" | "refund" | "payment" | "close" | "forecast" | "realizeForecast" | "cancelForecast" | "correct" | "reverse";
+export type AccountOption = { id: string; name: string; type: string; currency: string; balanceMinor: string; availableCreditMinor?: string | null };
+export type CategoryOption = { id: string; name: string; type: "income" | "expense"; isArchived: boolean };
+export type TransactionOption = { id: string; description: string; kind: string; occurredOn: string; postedOn?: string | null; counterpartyName?: string | null; notes?: string | null; reviewStatus?: "confirmed" | "needs_review"; paymentMethod?: string | null; relatedTransactionId?: string | null; entries?: { accountId: string; accountName: string; accountType: string; amountMinor: string; currency: string }[]; allocations?: { categoryId: string | null; categoryName: string | null; amountMinor: string }[]; revisions?: { id: string; revisionNumber: number; reason: string; actor: string; source: string; createdAt: string }[]; reversalOfTransactionId?: string | null; reversedByTransactionIds?: string[] };
+export type ExpenseForecastOption = { id: string; accountId: string; expectedOn: string; amountMinor: string; categoryId: string | null; description: string; currency: string; status: "projected" | "realized" | "cancelled"; realizedTransactionId: string | null; createdAt: string };
+export type StatementOption = { id: string; cardAccountId: string; cardAccountName: string; currency: string; dueOn: string; status: string; remainingMinor?: string; items?: { id: string; amountMinor: string; description: string }[] };
+export type References = { accounts: AccountOption[]; categories: CategoryOption[]; transactions: TransactionOption[]; statements: StatementOption[]; institutions: { id: string; name: string }[] };
+export type ReportData = { from: string; to: string; balancesByCurrency: Record<string, string>; incomeMinorByCurrency: Record<string, string>; expenseMinorByCurrency: Record<string, string> };
+
+export const actionLabels: Record<Action, string> = {
+  institution: "Nova instituição", account: "Nova conta ou cartão", configureCard: "Configurar cartão", category: "Nova categoria", income: "Registrar receita", expense: "Registrar despesa", transfer: "Transferir entre contas", purchase: "Compra parcelada", cashback: "Registrar cashback", refund: "Registrar reembolso", payment: "Pagar fatura", close: "Fechar fatura", forecast: "Nova previsão de despesa", realizeForecast: "Realizar previsão", cancelForecast: "Cancelar previsão", correct: "Corrigir lançamento", reverse: "Reverter lançamento",
+};
+export const primaryActions: Action[] = ["institution", "account", "configureCard", "category", "income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "close", "forecast"];
+

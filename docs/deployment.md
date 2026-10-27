@@ -1,78 +1,111 @@
-# Deploy no homelab — plano aprovado
+# Deploy no homelab
 
-> **Status:** decisão documentada, ainda sem Compose/Dockerfiles implementados ou deploy validado. Este documento não é um runbook executável.
+Deploy via Docker Compose em uma VM. Esta infraestrutura implementa os serviços e comandos abaixo; ainda não houve deploy no homelab nem restauração de backup validada.
 
-Referências: [ADR 0003](adr/0003-homelab-deployment.md), [stack](adr/0002-application-stack.md) e [arquitetura, §2](../ARCHITECTURE.md#2-visão-de-execução-container-level).
+## Topologia
 
-## Serviços e comunicação
+- `web`: Next.js, único serviço permanente com acesso à rede PostgreSQL.
+- `mcp`: MCP HTTP Streamable, rede de aplicação e API HTTP autenticada; não recebe `DATABASE_URL` nem participa da rede DB.
+- `db`: PostgreSQL com volume persistente, sem porta publicada.
+- `migrate`: serviço temporário no profile `ops`, criado somente ao executar a migration explicitamente.
 
-Docker Compose gerenciará três serviços permanentes em uma VM dentro do Proxmox, inicialmente um container por serviço:
+O Compose cria uma rede `application` para web/MCP e outra rede interna `database` para web/DB. Web e MCP publicam portas no loopback do host por padrão; um reverse proxy privado instalado no host pode encaminhá-las. Para outro proxy dentro de container, configure os endereços de bind e a rede privada do proxy de modo explícito. Não exponha as portas à internet.
 
-- `web`: Next.js com frontend e API HTTP, composição do domínio e acesso ao PostgreSQL.
-- `mcp`: servidor MCP Node.js/TypeScript, recebendo chamadas autenticadas do Hermes e chamando a API do `web` com credencial própria.
-- `db`: PostgreSQL com volume persistente; sem porta publicada no host.
+## Configuração e primeira subida
 
-O navegador usa o endereço do web via proxy. O Hermes usa um endereço MCP alcançável na LAN/VPN, também via proxy. Nomes de serviço Docker não são endereços para navegador ou Hermes fora do Compose.
+Requer Docker com Compose plugin. No diretório raiz do repositório:
 
-Internamente, MCP → web usará o DNS do serviço (exemplo conceitual: `http://web:3000`, porta ainda a configurar). Web → banco usará `db` e a porta interna do PostgreSQL. Os contratos de entrada, saída e erro são os mesmos para web e MCP; a autenticação de cada cliente é distinta.
+```bash
+cp .env.example .env
+```
 
-## Redes e entrada
+Edite `.env` no host, substitua todos os placeholders e restrinja suas permissões (`chmod 600 .env`). Gere valores aleatórios distintos para `SESSION_SECRET`, `MCP_API_TOKEN`, `MCP_HERMES_BEARER_TOKEN` e `POSTGRES_PASSWORD`; não use o mesmo segredo entre serviços. `WEB_PASSWORD_HASH` deve seguir o formato `scrypt$<salt>$<128 caracteres hex>` usado pelo login web. `DATABASE_URL` deve usar o mesmo usuário/senha/base configurado por `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB`; o exemplo usa a senha URL-safe definida no arquivo.
 
-- Rede de aplicação compartilhada por `web` e `mcp`.
-- Rede de banco compartilhada somente por `web` e `db`, isolada dos demais serviços.
-- Apenas o web recebe credenciais de acesso ao banco em execução normal; MCP não recebe credenciais DB nem participa da rede do banco.
-- Reverse proxy à frente de web e MCP, com HTTPS e limites de requisição; preferir reutilizar o proxy do homelab, se disponível. Não há acesso público à internet previsto.
-- Se o proxy estiver no mesmo Docker, conectá-lo à rede apropriada de entrada, sem acesso à rede DB. Se estiver fora, definir portas do host vinculadas à interface privada adequada e firewall. Evitar exposição irrestrita por padrão.
-- Validar encaminhamento e timeouts necessários ao transporte MCP escolhido, sem interromper respostas longas/streaming quando aplicável.
+`APP_ORIGIN` deve ser a origem HTTPS usada pelo navegador e definida na configuração do proxy confiável. Preserve os nomes de variáveis consumidos pelo web (`SESSION_SECRET`, `WEB_PASSWORD_HASH`, `MCP_API_TOKEN`, `DATABASE_URL`). `MCP_API_TOKEN` aparece nos ambientes de web e MCP e os valores devem ser idênticos; `MCP_HERMES_BEARER_TOKEN` só é entregue ao MCP. Variáveis do banco são entregues somente ao serviço `db` e o comando temporário `migrate` recebe apenas `DATABASE_URL`.
 
-## Assets da aplicação
+Depois de preencher o `.env`:
 
-Imagens e assets ficam em `apps/web` e são entregues pelo próprio web, incluídos em sua imagem de container. Não há serviço separado de arquivos ou CDN previsto. Essa decisão trata de assets da aplicação; uploads de usuário não foram definidos.
+```bash
+docker compose --env-file .env -f infra/compose.yml config
+docker compose --env-file .env -f infra/compose.yml build web mcp
+docker compose --env-file .env -f infra/compose.yml up -d db
+docker compose --env-file .env -f infra/compose.yml run --rm migrate
+docker compose --env-file .env -f infra/compose.yml up -d web mcp
+docker compose --env-file .env -f infra/compose.yml ps
+```
 
-## Persistência, configuração e credenciais
+O serviço `migrate` é uma execução única sob demanda, não é iniciado em `up`. Execute-o após o backup e antes de atualizar web/MCP. A migration usa o `DATABASE_URL` e os arquivos versionados de `packages/db`. Não prossiga se ela falhar; revise logs sem copiar valores sensíveis.
 
-O volume PostgreSQL deve sobreviver à substituição dos containers. Não remover o volume durante atualizações. Não persistir dados financeiros apenas na camada gravável do container.
+Health checks consultam `pg_isready`, `/api/health` e `/healthz`, sem retornar dados privados. `unhealthy` não reinicia container por si só; `unless-stopped` reinicia processos que saírem. Web depende de DB saudável e MCP depende de web saudável.
 
-Configuração será documentada em `.env.example` no bootstrap, sem valores reais. Prever conexão DB somente no web (e na execução temporária de migrations), endereço interno da API no MCP, credenciais distintas para Hermes → MCP e MCP → API, configuração de sessão web e endereços externos. Nomes finais das variáveis serão definidos na implementação.
+## Atualização
 
-Secrets serão fornecidos no runtime, fora do Git, das imagens e dos logs. O mecanismo concreto (arquivos protegidos/secrets do Compose ou configuração protegida no host) está pendente. Não enviar secrets para variáveis públicas do Next.js ou ao bundle do navegador. A imagem DB terá configuração administrativa própria, sem compartilhá-la com o MCP.
+Faça backup antes de atualizar schema ou imagem. Revise tags de imagem e compatibilidade; imagens web/MCP são construídas do código local. Em seguida, suba DB, execute migration e atualize aplicações:
 
-## Inicialização e recuperação
+```bash
+docker compose --env-file .env -f infra/compose.yml build web mcp
+docker compose --env-file .env -f infra/compose.yml up -d db
+docker compose --env-file .env -f infra/compose.yml run --rm migrate
+docker compose --env-file .env -f infra/compose.yml up -d web mcp
+docker compose --env-file .env -f infra/compose.yml ps
+```
 
-Configurar health checks para os três serviços e dependências com espera por estado saudável quando necessárias: web depende de DB disponível; MCP depende de API pronta. Definir verificações de disponibilidade sem dados privados; endpoints e comandos ainda não existem.
+Não use atualização automática irrestrita. Voltar a uma imagem antiga não desfaz migration aplicada; restauração é um procedimento controlado, que pode descartar gravações posteriores.
 
-Configurar política de reinício, inicialmente `unless-stopped`. Um health check marcado `unhealthy` não reinicia por si só um container; política de reinício trata saída do processo. Web e MCP devem tratar perda posterior de dependências, reconexão e erros temporários; retries de escritas preservam idempotência.
+## Backup PostgreSQL
 
-## Atualizações e migrations
+Salve o dump fora do volume PostgreSQL e do repositório, em armazenamento com acesso restrito. O exemplo cria dump custom-format em um caminho de backup no host:
 
-Procedimento futuro a transformar em comandos validados no bootstrap:
+```bash
+mkdir -p /srv/backups/marvin
+chmod 700 /srv/backups/marvin
+docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "/srv/backups/marvin/marvin-$(date -u +%Y%m%dT%H%M%SZ).dump"
+```
 
-1. Identificar a versão de destino de web/MCP/DB e revisar compatibilidade de contratos, migrations e possibilidade de rollback.
-2. Garantir backup recuperável antes de alterações de banco; bloquear escritas quando a migration exigir janela de manutenção.
-3. Executar migrations versionadas uma única vez, via comando ou container temporário com acesso controlado à rede DB. Não iniciar um migrador permanente nem executar migrations simultâneas ao subir cada aplicação.
-4. Atualizar web/MCP com imagens de versão identificável e verificar saúde e comunicação autenticada. Não usar atualização automática irrestrita de imagens.
-5. Em falha, avaliar compatibilidade antes de voltar a imagem. Migrations aplicadas não são desfeitas automaticamente; restauração de backup é recuperação controlada e pode perder escritas posteriores.
+Copie o arquivo para outro destino/host e aplique a política de retenção aprovada. Dumps contêm dados financeiros: não os envie a Git, logs ou serviços sem proteção. O projeto ainda não agenda backups nem define retenção.
 
-Atualizações de versão major do PostgreSQL terão procedimento próprio, validado antes de produção. Não trocar a versão major apenas reutilizando o volume sem planejar a migração.
+## Restauração isolada
 
-## Backup e restauração
+Faça primeiro um restore em base nova para validar o arquivo, sem sobrescrever a base em uso. Abaixo, substitua o caminho pelo dump desejado; `marvin_restore` deve ainda não existir:
 
-Prever backup lógico periódico do PostgreSQL, com ferramenta compatível com sua versão, armazenamento fora do volume do banco e cópia fora do host para recuperação de falha do servidor. Proteger os arquivos por conterem dados financeiros e restringir acesso às credenciais necessárias. Não versionar dumps.
+```bash
+cat /srv/backups/marvin/arquivo.dump | docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'createdb -U "$POSTGRES_USER" marvin_restore && pg_restore --no-owner -U "$POSTGRES_USER" -d marvin_restore'
+docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d marvin_restore -c "select count(*) from accounts"'
+```
 
-Definir frequência e retenção conforme perda de dados tolerável. Antes do uso real e periodicamente, restaurar em ambiente isolado e verificar integridade e cenários financeiros. Volume persistente ou snapshot isolado não substitui uma estratégia de backup validada.
+O segundo comando depende da tabela `accounts` existir após a migration incluída no dump. Confirme integridade adicional antes de qualquer recuperação. Para usar o restore, pare escritas, altere `DATABASE_URL` para `marvin_restore`, suba o web e confira o sistema pelo proxy; preserve a base anterior até a revisão terminar. Este procedimento precisa de ensaio no homelab antes de dados reais.
 
-## Decisões pendentes e limites
+### Ensaio descartável de recuperação
 
-- Recursos da VM no Proxmox e caminhos/volumes de armazenamento; hospedagem na VM já definida.
-- Proxy existente, DNS, certificados, portas e interfaces de entrada para navegador e Hermes.
-- Entrega/rotação de secrets; login web já definido por senha local e sessão.
-- Build local ou CI/registry, tags/digests e política de atualização das imagens.
-- Frequência, retenção, destino protegido dos backups e objetivos de recuperação.
-- Comandos de health check, limites de recursos e rotação de logs na implementação.
+Para validar migrations, dump/restauração e replay idempotente sem tocar no banco persistente, execute na raiz do repositório:
 
-Um host único é ponto único de falha. Não há Kubernetes, replicação ou alta disponibilidade previstos. Não há Compose, Dockerfiles, endpoints de health check ou automação de backup criados por esta documentação.
+```bash
+bash scripts/validate-recovery.sh
+```
 
-## Referências
+O script usa dois clusters temporários PostgreSQL 18.6 em loopback, uma fixture criada pelo domínio e remove apenas seus próprios processos/diretório no encerramento. Requisitos e limites estão em [Validação de backup e restauração](recovery-validation.md). Esse ensaio não substitui o restore periódico do dump real em ambiente isolado.
 
-- [Next.js: self-hosting e reverse proxy](https://nextjs.org/docs/app/guides/self-hosting).
-- [Docker Compose: ordem de inicialização e saúde das dependências](https://docs.docker.com/compose/how-tos/startup-order/).
+## Fechamento automático de faturas
+
+O `apps/web` inicia um timer no runtime Node do Next.js. Ele executa catch-up ao iniciar e tenta novamente periodicamente; se o web estiver parado, não há execução até a próxima inicialização. Cada cartão usa seu `billingTimezone`, e ciclos abertos com `closingOn` na data local ou anterior são fechados. Somente cartões configurados como `automatic` participam; o padrão continua `manual`. A rotina não cria lançamentos nem altera faturas encerradas. Detalhes em [ADR 0007](adr/0007-automatic-statement-closing.md).
+
+## Variáveis
+
+| Variável | Consumidor | Finalidade |
+|---|---|---|
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `db` | Inicialização do PostgreSQL |
+| `DATABASE_URL` | `web`, execução `migrate` | Conexão de aplicação/migration |
+| `SESSION_SECRET`, `WEB_PASSWORD_HASH` | `web` | Sessão e login local |
+| `APP_ORIGIN` | `web` | Origem confiável configurada para o proxy |
+| `MCP_API_TOKEN` | `web`, `mcp` | Autenticação MCP → API web |
+| `MCP_HERMES_BEARER_TOKEN` | `mcp` | Autenticação Hermes → MCP |
+| `MCP_API_URL` | `mcp` | Base da API HTTP interna |
+| `WEB_BIND_ADDRESS`, `WEB_HOST_PORT` | Compose | Bind local da porta web |
+| `MCP_BIND_ADDRESS`, `MCP_HOST_PORT` | Compose | Bind local da porta MCP |
+| `POSTGRES_IMAGE_TAG` | Compose | Tag da imagem PostgreSQL |
+
+Não passe secrets como argumentos de build. O `.env` é carregado pelo Compose em runtime, não copiado para imagens. Mantenha o arquivo fora do controle de versão e use canal protegido para provisioná-lo no host.
+
+## Limites pendentes
+
+O deploy, proxy, rotação de credenciais, política de retenção e teste periódico de restore não foram validados no homelab. A entrega de secrets por Compose environment também depende da segurança do host; usar Docker secrets/file mounts poderá ser apropriado conforme o ambiente.

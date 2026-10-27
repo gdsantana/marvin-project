@@ -1,0 +1,346 @@
+"use client";
+
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { ArrowDownLeftIcon, ArrowUpRightIcon, WalletIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Empty, EmptyDescription } from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { AppShell } from "./app-shell";
+import { ActionDialog } from "./action-dialog";
+import { actionLabels, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
+import { useRouter } from "next/navigation";
+import { formatDate, formatMinor, parseMajorToMinor } from "./finance-format";
+
+const titles: Record<Section, { title: string; intro: string }> = {
+  overview: { title: "Visão geral", intro: "Uma visão simples do que está acontecendo nas suas contas." },
+  accounts: { title: "Contas", intro: "Instituições e contas que fazem parte da sua vida financeira." },
+  cards: { title: "Cartões", intro: "Acompanhe limites, compras e próximos vencimentos." },
+  entries: { title: "Lançamentos", intro: "Histórico registrado e previsões avulsas em áreas separadas." },
+  statements: { title: "Faturas", intro: "Fechamentos, parcelas e pagamentos dos seus cartões." },
+  reports: { title: "Relatórios", intro: "Receitas e despesas por período, sempre separadas por moeda." },
+};
+function periodRange(range: string) {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), range === "year" ? 0 : now.getMonth() + (range === "last-month" ? -1 : 0), 1);
+  const to = range === "last-month" ? new Date(now.getFullYear(), now.getMonth(), 0) : range === "year" ? new Date(now.getFullYear(), 11, 31) : new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const fmt = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return { from: fmt(from), to: fmt(to) };
+}
+
+function transactionKindLabel(kind: string) {
+  switch (kind) {
+    case "income": return "Receita";
+    case "expense": return "Despesa";
+    case "transfer": return "Transferência";
+    case "refund": return "Estorno";
+    case "adjustment": return "Ajuste";
+    default: return kind;
+  }
+}
+
+function statementStatusLabel(status: string) {
+  switch (status) {
+    case "open": return "Aberta";
+    case "closed": return "Fechada";
+    case "paid": return "Paga";
+    case "partially_paid": return "Parcialmente paga";
+    case "overdue": return "Vencida";
+    default: return status;
+  }
+}
+
+export function Workspace({ section }: { section: Section }) {
+  const router = useRouter();
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [csrf, setCsrf] = useState("");
+  const [form, setForm] = useState<Action | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [range, setRange] = useState("month");
+  const [references, setReferences] = useState<References>({ accounts: [], categories: [], transactions: [], statements: [], institutions: [] });
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState("");
+  const [report, setReport] = useState<{ range: string; data: ReportData } | null>(null);
+  const [reportError, setReportError] = useState("");
+  const [reportLoading, setReportLoading] = useState(true);
+  const [reportReload, setReportReload] = useState(0);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [pendingRequest, setPendingRequest] = useState<{ signature: string; key: string } | null>(null);
+  const [pendingPreview, setPendingPreview] = useState<{ signature: string; data: Record<string, unknown> } | null>(null);
+  const [forecasts, setForecasts] = useState<ExpenseForecastOption[]>([]);
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionOption | null>(null);
+  const [selectedForecast, setSelectedForecast] = useState<ExpenseForecastOption | null>(null);
+  const [pendingReverseReview, setPendingReverseReview] = useState<{ signature: string; reason: string; replacement: Record<string, unknown> | null } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/session", { cache: "no-store" }).then(response => response.json()).then(result => {
+      setAuthenticated(result.data.authenticated); setCsrf(result.data.csrfToken ?? "");
+      if (!result.data.authenticated) router.replace("/login");
+    }).catch(() => { setAuthenticated(false); router.replace("/login"); });
+  }, [router]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    let cancelled = false;
+    setDataLoading(true); setDataError("");
+    const today = new Date().toISOString().slice(0, 10);
+    const statementFrom = `${new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 7)}-01`;
+    const statementTo = `${new Date(Date.now() + 730 * 86400000).toISOString().slice(0, 7)}-28`;
+    const transactionFrom = `${new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 4)}-01-01`;
+    const forecastFrom = `${new Date().getFullYear()}-01-01`;
+    const forecastTo = `${new Date().getFullYear() + 1}-12-31`;
+    Promise.all([
+      fetch("/api/v1/accounts", { cache: "no-store" }), fetch("/api/v1/categories", { cache: "no-store" }),
+      fetch(`/api/v1/transactions?from=${transactionFrom}&to=${today}`, { cache: "no-store" }),
+      fetch(`/api/v1/statements?from=${statementFrom}&to=${statementTo}`, { cache: "no-store" }),
+      fetch("/api/v1/institutions", { cache: "no-store" }),
+      fetch(`/api/v1/expense-forecasts?from=${forecastFrom}&to=${forecastTo}`, { cache: "no-store" }),
+    ]).then(async ([accounts, categories, transactions, statements, institutions, expenseForecasts]) => {
+      const responses = await Promise.all([accounts.json(), categories.json(), transactions.json(), statements.json(), institutions.json(), expenseForecasts.json()]);
+      if ([accounts, categories, transactions, statements, institutions, expenseForecasts].some(response => response.status === 401)) { router.replace("/login"); return; }
+      if ([accounts, categories, transactions, statements, institutions, expenseForecasts].some(response => response.status === 403)) throw new Error("Você não tem permissão para consultar estes dados.");
+      if (!accounts.ok || !categories.ok || !transactions.ok || !statements.ok || !institutions.ok || !expenseForecasts.ok) throw new Error("Não foi possível carregar os dados. Tente novamente.");
+      if (cancelled) return;
+      setReferences({ accounts: responses[0].data, categories: responses[1].data, transactions: responses[2].data, statements: responses[3].data, institutions: responses[4].data });
+      setForecasts(responses[5].data);
+    }).catch(error => { if (!cancelled) setDataError(error instanceof Error && error.message.startsWith("Você não tem permissão") ? error.message : "Não foi possível carregar os dados. Tente novamente."); })
+      .finally(() => { if (!cancelled) setDataLoading(false); });
+    return () => { cancelled = true; };
+  }, [authenticated, reloadToken, router]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    const controller = new AbortController();
+    const { from, to } = periodRange(range);
+    setReportLoading(true); setReportError("");
+    fetch(`/api/v1/reports/summary?from=${from}&to=${to}`, { cache: "no-store", signal: controller.signal })
+      .then(async response => {
+        if (response.status === 401) { router.replace("/login"); return null; }
+        if (!response.ok) throw new Error(response.status === 403 ? "Você não tem permissão para consultar este relatório." : "Não foi possível carregar o relatório. Tente novamente.");
+        const result = await response.json();
+        return result.data as ReportData;
+      })
+      .then(data => { if (!controller.signal.aborted && data) setReport({ range, data }); })
+      .catch(error => { if (!controller.signal.aborted) setReportError(error instanceof Error && error.message.startsWith("Você não tem permissão") ? error.message : "Não foi possível carregar o relatório. Tente novamente."); })
+      .finally(() => { if (!controller.signal.aborted) setReportLoading(false); });
+    return () => controller.abort();
+  }, [authenticated, range, reloadToken, reportReload, router]);
+
+  const currentReport = report?.range === range && !reportError ? report.data : null;
+
+  const current = titles[section];
+  const openTransactionAction = (action: "correct" | "reverse", transaction: TransactionOption) => { setSelectedTransaction(transaction); setSelectedForecast(null); setPendingReverseReview(null); setPendingPreview(null); setForm(action); };
+  const openForecastAction = (action: "realizeForecast" | "cancelForecast", forecast: ExpenseForecastOption) => { setSelectedForecast(forecast); setSelectedTransaction(null); setPendingPreview(null); setForm(action); };
+  const closeDialog = useCallback(() => { setForm(null); setMessage(""); setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null); }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!form) return;
+    setBusy(true); setMessage("");
+    const formData = new FormData(event.currentTarget);
+    const entries = Object.fromEntries(formData.entries());
+    const body: Record<string, unknown> = { ...entries };
+    for (const key of ["amountMinor", "totalAmountMinor", "openingBalanceMinor", "creditLimitMinor"]) {
+      const value = body[key];
+      if (typeof value === "string" && value) {
+        const minor = parseMajorToMinor(value);
+        if (minor === null) { setBusy(false); setMessage("Use um valor válido, com até duas casas decimais e sem separador de milhar."); return; }
+        body[key] = minor;
+      } else if (key === "creditLimitMinor") body[key] = null;
+    }
+    const readAllocations = () => {
+      const categoryIds = formData.getAll("allocationCategoryId").map(value => String(value));
+      const splitAmounts = formData.getAll("allocationAmount").map(value => String(value));
+      const allocations = categoryIds.map((categoryId, index) => ({ categoryId: categoryId || null, amountMinor: parseMajorToMinor(splitAmounts[index] ?? "") }));
+      if (allocations.some(allocation => allocation.amountMinor === null || BigInt(allocation.amountMinor) <= 0n)) return null;
+      return allocations.map(allocation => ({ categoryId: allocation.categoryId, amountMinor: allocation.amountMinor }));
+    };
+    const needsAllocations = form === "expense" || form === "purchase"
+      || (form === "correct" && formData.get("replaceCategories") === "on")
+      || (form === "reverse" && formData.get("replacementKind") === "expense");
+    const allocations = needsAllocations ? readAllocations() : null;
+    if (needsAllocations && !allocations) { setBusy(false); setMessage("Informe valores positivos para cada categoria."); return; }
+    if (form === "expense" || form === "purchase") body.allocations = allocations;
+    if (form === "correct") {
+      const metadata = Object.fromEntries(["description", "counterpartyName", "notes", "reviewStatus"].map(key => [key, key === "counterpartyName" || key === "notes" ? (body[key] || null) : body[key]]));
+      body.transactionId = selectedTransaction?.id;
+      body.reason = entries.reason;
+      body.metadata = metadata;
+      if (formData.get("replaceCategories") === "on") body.allocations = allocations;
+      else delete body.allocations;
+      for (const key of ["description", "counterpartyName", "notes", "reviewStatus", "replaceCategories"]) delete body[key];
+    }
+    if (form === "reverse") {
+      const replacementKind = String(body.replacementKind ?? "");
+      const replacement: Record<string, unknown> | null = replacementKind ? {
+        kind: replacementKind, occurredOn: body.replacementOn, description: body.replacementDescription,
+        source: "manual", reviewStatus: body.replacementReviewStatus,
+        ...(replacementKind === "income" ? { accountId: body.replacementAccountId, amountMinor: body.amountMinor, categoryId: body.replacementCategoryId || null } : {}),
+        ...(replacementKind === "expense" ? { accountId: body.replacementAccountId, amountMinor: body.amountMinor, paymentMethod: body.replacementPaymentMethod, allocations } : {}),
+        ...(replacementKind === "transfer" ? { fromAccountId: body.replacementFromAccountId, toAccountId: body.replacementToAccountId, amountMinor: body.amountMinor } : {}),
+      } : null;
+      const amountIsRequired = replacementKind !== "";
+      if (amountIsRequired && (typeof body.amountMinor !== "string" || !/^[1-9]\d*$/.test(body.amountMinor))) { setBusy(false); setMessage("Informe um valor positivo para a substituição."); return; }
+      Object.assign(body, { transactionId: selectedTransaction?.id, reason: entries.reason, occurredOn: entries.occurredOn, ...(replacement ? { replacement } : {}) });
+      for (const key of ["replacementKind", "replacementOn", "replacementDescription", "replacementReviewStatus", "replacementAccountId", "replacementCategoryId", "replacementPaymentMethod", "replacementFromAccountId", "replacementToAccountId", "amountMinor", "allocationCategoryId", "allocationAmount"]) delete body[key];
+      if (pendingReverseReview?.signature !== JSON.stringify({ path: `/api/v1/transactions/reverse`, body })) {
+        const signature = JSON.stringify({ path: "/api/v1/transactions/reverse", body });
+        setPendingReverseReview({ signature, reason: String(entries.reason ?? ""), replacement }); setBusy(false); return;
+      }
+    }
+    if (["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "realizeForecast"].includes(form)) body.source = "manual";
+    for (const key of ["institutionId", "parentId", "categoryId"]) if (body[key] === "") body[key] = null;
+    for (const key of ["postedOn", "counterpartyName", "notes"]) if (body[key] === "") body[key] = null;
+    if (body.cardStatementId === "") delete body.cardStatementId;
+    delete body.allocationCategoryId; delete body.allocationAmount;
+    if (form === "institution") Object.assign(body, { name: entries.name });
+    if (form === "category") Object.assign(body, { name: entries.name, type: entries.type, parentId: entries.parentId || null });
+    for (const key of ["installmentCount", "closingDay", "dueDay"]) if (typeof body[key] === "string" && body[key] !== "") body[key] = Number(body[key]);
+    if (form === "account" && body.type === "credit_card") {
+      body.cardSettings = {
+        creditLimitMinor: body.creditLimitMinor ?? null,
+        closingDay: body.closingDay === "" ? undefined : body.closingDay,
+        dueDay: body.dueDay === "" ? undefined : body.dueDay,
+        billingTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo",
+        billingMode: "manual",
+      };
+      delete body.creditLimitMinor; delete body.closingDay; delete body.dueDay;
+    }
+    if (form === "configureCard") delete body.description;
+    const endpoint: Record<Action, string> = {
+      institution: "/api/v1/institutions", account: "/api/v1/accounts", configureCard: "/api/v1/cards/configuration", category: "/api/v1/categories",
+      income: "/api/v1/transactions/income", expense: "/api/v1/transactions/expense", transfer: "/api/v1/transactions/transfer",
+      purchase: "/api/v1/transactions/credit-purchase", cashback: "/api/v1/transactions/cashback", refund: "/api/v1/transactions/refund",
+      payment: "/api/v1/statements/payment", close: "/api/v1/statements/close",
+      forecast: "/api/v1/expense-forecasts", realizeForecast: `/api/v1/expense-forecasts/${selectedForecast?.id}/realize`,
+      cancelForecast: `/api/v1/expense-forecasts/${selectedForecast?.id}/cancel`, correct: "/api/v1/transactions/correct", reverse: "/api/v1/transactions/reverse",
+    };
+    const path = endpoint[form];
+    const operation: Record<string, string> = { income: "income", expense: "expense", transfer: "transfer", purchase: "credit_purchase", cashback: "cashback", refund: "refund", payment: "statement_payment" };
+    const previewBody = operation[form] ? { ...body, operation: operation[form] } : null;
+    const signature = JSON.stringify({ path, body });
+    if (previewBody && pendingPreview?.signature !== signature) {
+      try {
+        const response = await fetch("/api/v1/transactions/preview", { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": csrf }, body: JSON.stringify(previewBody) });
+        const result = await response.json().catch(() => null);
+        if (!response.ok) { setMessage(result?.error?.message ?? "Não foi possível validar esta operação."); return; }
+        setPendingPreview({ signature, data: result.data });
+        return;
+      } catch { setMessage("Falha de conexão ao validar. Revise os dados e tente novamente."); return; }
+      finally { setBusy(false); }
+    }
+    const idempotencyKey = pendingRequest?.signature === signature ? pendingRequest.key : crypto.randomUUID();
+    setPendingRequest({ signature, key: idempotencyKey });
+    try {
+      const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": csrf, "idempotency-key": idempotencyKey }, body: JSON.stringify(body) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) { setMessage(result?.error?.message ?? "Não foi possível salvar."); return; }
+      setPendingRequest(null); setPendingPreview(null); setPendingReverseReview(null); setForm(null); setSelectedForecast(null); setSelectedTransaction(null); setMessage("Registro salvo."); setReloadToken(value => value + 1); router.refresh();
+    } catch { setMessage("Falha de conexão. Tente novamente; a mesma chave de idempotência será reutilizada."); }
+    finally { setBusy(false); }
+  }
+
+  if (!authenticated) return <main className="grid min-h-dvh place-items-center text-sm text-muted-foreground">Preparando seu espaço…</main>;
+
+  return <AppShell createDisabled={dataLoading || Boolean(dataError)} section={section} title={current.title} description={current.intro}
+    onCreate={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }}
+    onSignOut={async () => { await fetch("/api/auth/session", { method: "DELETE", headers: { "x-csrf-token": csrf } }); router.replace("/login"); }}>
+        {dataError && <Alert variant="destructive" className="mb-5"><AlertDescription>{dataError}{!dataError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReloadToken(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
+        {message && !form && <Alert role="status" className="mb-5"><AlertDescription>{message}</AlertDescription></Alert>}
+        {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
+        {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="mb-3 text-sm text-muted-foreground">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
+        {dataLoading ? <div role="status" className="grid gap-4"><span className="sr-only">Carregando seus dados</span><Skeleton className="h-36 w-full" /><Skeleton className="h-52 w-full" /></div> : dataError ? null : <>
+          {section === "overview" && <Overview setForm={setForm} range={range} setRange={setRange} references={references} report={currentReport} reportError={Boolean(reportError)} />}
+          {section === "accounts" && <ResourceSection title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." action="account" setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} />}
+          {section === "cards" && <ResourceSection title="Seus cartões" detail="Cartões, limites disponíveis e configurações de fechamento." action="account" secondaryAction="configureCard" setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
+          {section === "entries" && <>
+            <ResourceSection title="Histórico registrado" detail="Movimentações efetivas. Correções acrescentam revisões; reversões criam lançamentos compensatórios vinculados." action="income" setForm={setForm} rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
+            <ExpenseForecasts forecasts={forecasts} references={references} setForm={setForm} onRealize={forecast => openForecastAction("realizeForecast", forecast)} onCancel={forecast => openForecastAction("cancelForecast", forecast)} />
+          </>}
+          {section === "statements" && <ResourceSection title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={setForm} rows={references.statements} />}
+          {section === "reports" && !reportError && <Reports range={range} setRange={setRange} report={currentReport} />}
+        </>}
+    {form && <ActionDialog action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} />}
+  </AppShell>;
+}
+
+function PeriodSelect({ range, setRange, label }: { range: string; setRange: (range: string) => void; label: string }) {
+  return <NativeSelect aria-label={label} value={range} onChange={event => setRange(event.target.value)}><NativeSelectOption value="month">Este mês</NativeSelectOption><NativeSelectOption value="last-month">Mês passado</NativeSelectOption><NativeSelectOption value="year">Este ano</NativeSelectOption></NativeSelect>;
+}
+
+function Overview({ setForm, range, setRange, references, report, reportError }: { setForm: (action: Action) => void; range: string; setRange: (range: string) => void; references: References; report: ReportData | null; reportError: boolean }) {
+  const balances = Object.entries(report?.balancesByCurrency ?? {});
+  return <div className="flex flex-col gap-6">
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-medium">Resumo financeiro</h2><PeriodSelect range={range} setRange={setRange} label="Período do resumo" /></div>
+    <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr_1fr]">
+      <SummaryTile label="Saldo nas contas" values={balances} note="Saldos registrados, separados por moeda" kind="balance" loading={!report && !reportError} unavailable={reportError} />
+      <div className="grid grid-cols-2 gap-4 lg:col-span-2">
+        <SummaryTile label="Receitas no período" values={Object.entries(report?.incomeMinorByCurrency ?? {})} note="Entradas classificadas" kind="income" loading={!report && !reportError} unavailable={reportError} />
+        <SummaryTile label="Despesas no período" values={Object.entries(report?.expenseMinorByCurrency ?? {})} note="Compras e gastos classificados" kind="expense" loading={!report && !reportError} unavailable={reportError} />
+      </div>
+    </div>
+    <div className="grid items-start gap-6 lg:grid-cols-[1.45fr_1fr]">
+      <Card><CardHeader><CardTitle><h2>Movimentações recentes</h2></CardTitle><CardDescription>Seu histórico mais recente</CardDescription></CardHeader><CardContent><Rows rows={references.transactions.slice(-5).reverse()} empty="Seus lançamentos aparecerão aqui depois de registrados." /></CardContent><CardFooter><Link href="/entries" className="inline-flex min-h-11 items-center text-sm text-primary">Ver lançamentos</Link></CardFooter></Card>
+      <Card><CardHeader><CardTitle><h2>Próximas faturas</h2></CardTitle><CardDescription>Parcelas e pagamentos</CardDescription></CardHeader><CardContent><Rows rows={references.statements.filter(statement => statement.status !== "paid").slice(0, 4)} empty="Cadastre um cartão para acompanhar suas faturas." /></CardContent><CardFooter><Link href="/statements" className="inline-flex min-h-11 items-center text-sm text-primary">Ver faturas</Link></CardFooter></Card>
+    </div>
+    <Card><CardHeader><CardTitle><h2>Organize suas finanças</h2></CardTitle><CardDescription>Contas e categorias para seus registros</CardDescription></CardHeader><CardContent className="grid gap-3 sm:grid-cols-3"><Button variant="outline" onClick={() => setForm("account")}>Adicionar conta</Button><Button variant="outline" onClick={() => setForm("category")}>Criar categoria</Button><Button onClick={() => setForm("income")}>Registrar receita</Button></CardContent></Card>
+  </div>;
+}
+
+function SummaryTile({ label, values, note, kind, loading, unavailable }: { label: string; values: [string, string][]; note: string; kind: "balance" | "income" | "expense"; loading?: boolean; unavailable?: boolean }) {
+  const Icon = kind === "income" ? ArrowDownLeftIcon : kind === "expense" ? ArrowUpRightIcon : WalletIcon;
+  return <Card className="h-full"><CardHeader><div className="flex items-start justify-between gap-2"><p className="font-mono text-xs text-muted-foreground">{label}</p><Icon aria-hidden="true" className={cn("size-4 shrink-0", kind === "income" ? "text-success" : kind === "expense" ? "text-destructive" : "text-primary")} /></div></CardHeader><CardContent className="min-w-0 flex-1">{loading ? <Skeleton className="h-10 w-3/4" /> : unavailable ? <p className="text-sm text-muted-foreground">Indisponível</p> : values.length ? <div className="flex flex-col gap-2">{values.map(([currency, amount]) => <p key={currency} className={cn("break-words font-mono text-lg font-medium tracking-tight tabular-nums sm:text-2xl", kind === "balance" ? "text-foreground lg:text-3xl" : kind === "income" ? "text-success" : "text-destructive")}>{formatMinor(amount, currency)}</p>)}</div> : <p className="text-sm text-muted-foreground">Sem movimentações</p>}</CardContent><CardFooter><p className="text-xs text-muted-foreground">{note}</p></CardFooter></Card>;
+}
+
+function EmptyInline({ text }: { text: string }) { return <Empty><EmptyDescription>{text}</EmptyDescription></Empty>; }
+
+function ResourceSection({ title, detail, action, secondaryAction, setForm, rows, transactionActions }: { title: string; detail: string; action: Action; secondaryAction?: Action; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
+  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{secondaryAction && <Button variant="outline" onClick={() => setForm(secondaryAction)}>{actionLabels[secondaryAction]}</Button>}<Button onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button></div></div></CardHeader><CardContent><Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} /></CardContent></Card>;
+}
+
+function Rows({ rows, empty, transactionActions }: { rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; empty: string; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
+  if (!rows.length) return <EmptyInline text={empty} />;
+  const refundedTransactionIds = new Set(rows.filter((row): row is TransactionOption => "occurredOn" in row && row.kind === "refund").map(row => row.relatedTransactionId).filter((id): id is string => Boolean(id)));
+  return <ul className="divide-y divide-border">{rows.map(row => {
+    let title: string, detail: string, amount = "";
+    if ("balanceMinor" in row) { title = row.name; detail = `${row.type === "credit_card" ? "Cartão" : "Conta"} · ${row.currency}${row.type === "credit_card" && row.availableCreditMinor !== undefined ? ` · disponível ${row.availableCreditMinor === null ? "sem limite definido" : formatMinor(row.availableCreditMinor, row.currency)}` : ""}`; amount = formatMinor(row.balanceMinor, row.currency); }
+    else if ("dueOn" in row) { title = row.cardAccountName; detail = `Vence em ${formatDate(row.dueOn)} · ${statementStatusLabel(row.status)}`; amount = row.remainingMinor ? formatMinor(row.remainingMinor, row.currency) : ""; }
+    else if ("occurredOn" in row) { title = row.description; detail = [formatDate(row.occurredOn), transactionKindLabel(row.kind), row.counterpartyName].filter(Boolean).join(" · "); amount = row.entries?.map(entry => entry.currency ? formatMinor(entry.amountMinor, entry.currency) : entry.amountMinor).join(" / ") ?? ""; }
+    else { title = row.name; detail = row.type === "income" ? "Categoria de receita" : "Categoria de despesa"; }
+    return <li id={"occurredOn" in row ? `transaction-${row.id}` : undefined} key={row.id} className="py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1 basis-36"><p className="break-words text-sm font-medium">{title}</p><p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{detail}</p>{"occurredOn" in row && <>{row.reviewStatus && row.reviewStatus !== "confirmed" && <Badge variant="outline" className="mt-2">Precisa revisar</Badge>}{row.notes && <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">{row.notes}</p>}</>}</div>{amount && <span className="max-w-full break-words font-mono text-sm font-medium tabular-nums">{amount}</span>}</div>
+      {transactionActions && "occurredOn" in row && <details className="mt-3 rounded-lg bg-muted px-3 py-2 text-sm"><summary className="flex min-h-11 cursor-pointer items-center text-xs font-medium text-primary">Detalhes, revisões e vínculos</summary><div className="mt-3 grid gap-3 text-xs text-muted-foreground">
+        <p>O histórico preserva as revisões deste lançamento.</p>
+        <div><p className="font-medium text-foreground">Contas movimentadas</p>{row.entries?.map((entry, index) => <p key={`${entry.accountId}-${index}`} className="mt-1 flex flex-wrap justify-between gap-2 [&>span]:min-w-0 [&>span]:max-w-full [&>span]:break-words"><span>{entry.accountName}</span><span className="tabular-nums">{formatMinor(entry.amountMinor, entry.currency)}</span></p>)}</div>
+        {row.allocations?.length ? <div><p className="font-medium text-foreground">Categorias atuais</p>{row.allocations.map((allocation, index) => <p key={`${allocation.categoryId}-${index}`} className="mt-1 flex flex-wrap justify-between gap-2 [&>span]:min-w-0 [&>span]:max-w-full [&>span]:break-words"><span>{allocation.categoryName ?? "Sem categoria"}</span><span className="tabular-nums">{formatMinor(allocation.amountMinor, row.entries?.[0]?.currency ?? "BRL")}</span></p>)}</div> : null}
+        {(row.reversalOfTransactionId || row.reversedByTransactionIds?.length) && <div><p className="font-medium text-foreground">Vínculos</p>{row.reversalOfTransactionId && <a className="inline-flex min-h-11 items-center font-medium text-primary underline-offset-4 hover:underline" href={`#transaction-${row.reversalOfTransactionId}`}>Reverte o lançamento {row.reversalOfTransactionId.slice(0, 8)}</a>}{row.reversedByTransactionIds?.map(id => <a key={id} className="mt-1 block inline-flex min-h-11 items-center font-medium text-primary underline-offset-4 hover:underline" href={`#transaction-${id}`}>Revertido pelo lançamento {id.slice(0, 8)}</a>)}</div>}
+        {!!row.revisions?.length && <div><p className="font-medium text-foreground">Revisões registradas</p><ol className="mt-1 grid gap-2">{row.revisions.map(revision => <li key={revision.id} className="border-l-2 border-primary/30 pl-2"><strong>Revisão {revision.revisionNumber}</strong> · {revision.reason}<br />Por {revision.actor} ({revision.source}) em {new Date(revision.createdAt).toLocaleString("pt-BR")}</li>)}</ol><p className="mt-2 text-muted-foreground">Consulte o motivo e a autoria de cada revisão acima.</p></div>}
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => transactionActions.correct(row)}>Corrigir dados ou categoria</Button>{["income", "expense", "transfer"].includes(row.kind) && row.paymentMethod !== "credit" && !row.entries?.some(entry => entry.accountType === "credit_card") && !row.reversedByTransactionIds?.length && !refundedTransactionIds.has(row.id) && <Button variant="outline" onClick={() => transactionActions.reverse(row)}>Reverter lançamento</Button>}</div>
+      </div></details>}
+    </li>;
+  })}</ul>;
+}
+
+function ExpenseForecasts({ forecasts, references, setForm, onRealize, onCancel }: { forecasts: ExpenseForecastOption[]; references: References; setForm: (action: Action) => void; onRealize: (forecast: ExpenseForecastOption) => void; onCancel: (forecast: ExpenseForecastOption) => void }) {
+  const groups: [ExpenseForecastOption["status"], string][] = [["projected", "Projetadas"], ["realized", "Realizadas"], ["cancelled", "Canceladas"]];
+  return <Card className="mt-6"><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>Previsões avulsas</h2></CardTitle><CardDescription>Compromissos esperados. Só alteram o saldo e as despesas quando realizados.</CardDescription></div><Button onClick={() => setForm("forecast")}>Nova previsão</Button></div></CardHeader>
+    <CardContent className="grid gap-5">{groups.map(([status, title]) => {
+      const items = forecasts.filter(forecast => forecast.status === status).sort((a, b) => a.expectedOn.localeCompare(b.expectedOn));
+      return <section key={status} aria-labelledby={`forecast-${status}`}><div className="flex items-baseline justify-between gap-2"><h3 id={`forecast-${status}`} className="font-medium">{title}</h3><span className="text-xs text-muted-foreground">{items.length}</span></div>{items.length ? <ul className="mt-2 divide-y divide-border">{items.map(forecast => {
+        const account = references.accounts.find(item => item.id === forecast.accountId);
+        const category = references.categories.find(item => item.id === forecast.categoryId);
+        return <li key={forecast.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{forecast.description}</p><p className="mt-1 text-xs text-muted-foreground">{formatDate(forecast.expectedOn)} · {account?.name ?? "Conta"} · {category?.name ?? "Sem categoria"}</p>{forecast.realizedTransactionId && <a className="mt-1 inline-block inline-flex min-h-11 items-center font-medium text-primary underline-offset-4 hover:underline text-xs" href={`/entries#transaction-${forecast.realizedTransactionId}`}>Ver despesa realizada</a>}</div><div className="flex max-w-full flex-wrap items-center gap-3"><strong className="break-words font-mono text-sm tabular-nums">{formatMinor(forecast.amountMinor, forecast.currency)}</strong>{status === "projected" && <div className="flex gap-1"><Button variant="outline" onClick={() => onRealize(forecast)}>Realizar</Button><Button variant="outline" onClick={() => onCancel(forecast)}>Cancelar</Button></div>}</div></li>;
+      })}</ul> : <p className="mt-2 text-sm text-muted-foreground">Nenhuma previsão {status === "projected" ? "projetada" : status === "realized" ? "realizada" : "cancelada"} neste período.</p>}</section>;
+    })}</CardContent>
+  </Card>;
+}
+
+function Reports({ range, setRange, report }: { range: string; setRange: (range: string) => void; report: ReportData | null }) {
+  const currencies = new Set([...Object.keys(report?.incomeMinorByCurrency ?? {}), ...Object.keys(report?.expenseMinorByCurrency ?? {})]);
+  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-col gap-1"><CardTitle><h2>Receitas e despesas</h2></CardTitle><CardDescription>Totais por moeda, sem conversão cambial.</CardDescription></div><PeriodSelect range={range} setRange={setRange} label="Período do relatório" /></div></CardHeader><CardContent>{!report ? <div role="status" className="grid gap-4 sm:grid-cols-2"><span className="sr-only">Carregando relatório</span><Skeleton className="h-36 w-full" /><Skeleton className="h-36 w-full" /></div> : <div className="grid gap-4 sm:grid-cols-2">{[...currencies].map(currency => <section key={currency} className="rounded-lg border border-border p-4"><h3 className="font-mono text-sm">{currency}</h3><dl className="mt-4 grid gap-4"><div><dt className="text-sm text-muted-foreground">Receitas</dt><dd className="mt-1 break-words font-mono text-xl text-success">{formatMinor(report.incomeMinorByCurrency[currency] ?? "0", currency)}</dd></div><div><dt className="text-sm text-muted-foreground">Despesas</dt><dd className="mt-1 break-words font-mono text-xl text-destructive">{formatMinor(report.expenseMinorByCurrency[currency] ?? "0", currency)}</dd></div></dl></section>)}{!currencies.size && <EmptyInline text="Não há movimentações classificadas neste período." />}</div>}</CardContent></Card>;
+}

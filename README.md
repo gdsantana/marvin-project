@@ -1,85 +1,43 @@
 # marvin-project — Controle Financeiro Pessoal
 
-Repositório remoto atual: [gdsantana/daiko-project](https://github.com/gdsantana/daiko-project). O nome local é `marvin-project`.
+Aplicação pessoal de finanças, com UI web em pt-BR, API HTTP e servidor MCP separado para Hermes. O monorepo pnpm contém domínio, persistência PostgreSQL, UI, API, MCP, migrations e Compose. O gate local aprovou typecheck, lint, 35 testes sem skips, build, E2E dev/produção, recovery e validação visual. Docker build e deploy no homelab não foram executados porque o Docker socket está inacessível neste ambiente. Consulte a [auditoria do MVP](docs/verification.md).
 
-Aplicação web **self-hosted**, pessoal e mobile-first, com lançamentos manuais e integração com um **Hermes Agent** por meio de um servidor **MCP**. A interface web e o agente utilizam a mesma API e as mesmas regras financeiras.
+O modelo financeiro e seus invariantes estão em [docs/data-model.md](docs/data-model.md). As decisões aceitas de acesso e comportamento do MVP estão em [ADR 0004](docs/adr/0004-mvp-behavior-and-access.md); decisões operacionais implementadas estão em [ADR 0005](docs/adr/0005-mvp-operational-behavior.md).
 
-> **Estado do projeto:** planejamento e preparação do monorepo. Este documento é o README inicial, **não uma afirmação de que a aplicação já está implementada**.
+## O que existe hoje
 
-## Objetivos
+- Workspaces pnpm: `apps/web`, `apps/mcp`, `packages/contracts`, `packages/domain` e `packages/db`.
+- UI responsiva inicial, login por senha local e sessão, API HTTP autenticada para sessão web ou token de serviço MCP.
+- Domínio com dinheiro em `bigint`, validação Zod nos contratos, receitas, despesas, transferências, compras parceladas, cashback, estornos, pagamentos/fechamento de faturas, previsões, revisões, reversões, relatórios e idempotência.
+- Schema Drizzle e migration PostgreSQL versionada, com constraints e append-only para entradas de conta, itens de fatura e pagamentos.
+- MCP HTTP Streamable autenticado, com ferramentas de consulta, preview e escrita — incluindo previsão, correção e reversão — que encaminham operações à API web.
+- Compose para `web`, `mcp`, `db` e um serviço temporário de migration.
 
-- Controlar múltiplas instituições, contas correntes, poupanças e cartões de crédito.
-- Registrar receitas (salário, rendimentos, cashback), despesas (Pix, débito, crédito), transferências e estornos.
-- Controlar compras parceladas e faturas: fechamento, vencimento, créditos e pagamentos parciais.
-- Oferecer consultas básicas de saldos, receitas, despesas e faturas por conta e moeda; sem orçamento no escopo inicial.
-- Permitir operações estruturadas via Hermes/MCP, com validação, confirmação quando necessário e idempotência.
-- Executar no homelab, com acesso restrito à rede local ou por VPN/Tailscale.
+Isso descreve funcionalidades implementadas; E2E dev e produção passaram pelos fluxos HTTP/MCP registrados no harness. Evidências por requisito e limitações operacionais estão em [docs/verification.md](docs/verification.md). Investimentos permanecem fora do MVP, conforme [§17 do modelo](docs/data-model.md#17-investimentos--proposta-futura) e [ADR 0001](docs/adr/0001-investment-accounting.md).
 
-## Investimentos — evolução futura
+## UI
 
-Planejar contas de investimento, aplicações, posições, resgates, vencimentos, proventos e avaliações patrimoniais, com consultas e lançamentos via Hermes. **Não implementado e fora do bootstrap/MVP atual.** Aportes não são despesas; retorno do principal não é receita; caixa e posições são separados para evitar dupla contagem. Ver [modelagem, §17](docs/data-model.md#17-investimentos--proposta-futura) e [ADR](docs/adr/0001-investment-accounting.md).
+A interface em pt-BR usa exclusivamente tema escuro, tokens CSS semânticos, shadcn/ui `base-nova` com Base UI e fontes locais Geist e JetBrains Mono via `@fontsource-variable` (SIL OFL 1.1). A navegação e os formulários têm apresentação separada, preservando os fluxos existentes; funcionalidades do Figma sem suporte real são omitidas. Tema claro e seletor de aparência ficam para uma entrega futura. Veja o [ADR 0008](docs/adr/0008-web-visual-system.md) e a [arquitetura §6](ARCHITECTURE.md#6-ui).
 
-## Stack definida (a implementar)
+A refatoração passou por typecheck, lint, build, 35 testes sem skips e integração de produção. Evidências e limites da validação de interface estão em [docs/ui-validation.md](docs/ui-validation.md).
 
-| Área | Tecnologia |
-|---|---|
-| Frontend | Next.js App Router, React, TypeScript |
-| Backend/API | Node.js, Next.js Route Handlers |
-| UI | Tailwind CSS, shadcn/ui |
-| Banco de dados | PostgreSQL |
-| ORM e migrations | Drizzle ORM / Drizzle Kit |
-| Integração de agentes | Servidor MCP em Node.js/TypeScript |
-| Workspace | pnpm Workspaces |
-| Hospedagem | Docker Compose no homelab |
-
-**Não há necessidade inicial de Turborepo**, autenticação multiusuário, sincronização bancária automática ou dependências para investimentos. Essas decisões poderão mudar mediante ADR.
-
-A decisão está registrada no [ADR 0002](docs/adr/0002-application-stack.md). Web e MCP utilizarão os mesmos contratos HTTP; as regras financeiras permanecerão no domínio compartilhado. A stack está definida, mas ainda não instalada.
-
-## Deploy definido (a implementar)
-
-Docker Compose no homelab, com três serviços permanentes em containers separados: `web` (frontend + API Next.js), `mcp` e `db` (PostgreSQL). Banco sem porta publicada, redes separadas, reverse proxy privado e volume persistente com backup externo. Migrations serão executadas uma vez por deploy, em etapa temporária. Ver [plano de deploy](docs/deployment.md) e [ADR 0003](docs/adr/0003-homelab-deployment.md). Configuração e deploy ainda não implementados.
-
-## Organização do repositório (alvo)
+## Estrutura
 
 ```text
-.
-├── apps/
-│   ├── web/                  # Next.js: UI + API HTTP
-│   └── mcp/                  # Adaptador MCP → API HTTP
-├── packages/
-│   ├── contracts/            # Tipos/schemas de API compartilhados
-│   ├── domain/               # Casos de uso e regras financeiras
-│   └── db/                   # Drizzle, migrations e repositórios PostgreSQL
-├── docs/
-│   ├── data-model.md        # Handoff de modelagem financeira
-│   ├── api.md               # Contratos da API (quando existirem)
-│   ├── mcp.md               # Ferramentas MCP (quando existirem)
-│   ├── deployment.md        # Plano de deploy e backup
-│   ├── flows/               # Fluxos de negócio complexos
-│   └── adr/                 # Architecture Decision Records
-├── infra/
-│   ├── compose.yml          # Serviços web, mcp e postgres
-│   └── docker/
-├── ARCHITECTURE.md
-├── AGENTS.md
-├── package.json
-├── pnpm-workspace.yaml
-└── pnpm-lock.yaml
+apps/web       Next.js: UI e API HTTP
+apps/mcp       Adaptador MCP → API web autenticada
+packages/contracts  Schemas Zod e contratos públicos
+packages/domain     Regras financeiras e porta de persistência
+packages/db         Drizzle, PostgreSQL, migration e repositório
+infra               Dockerfiles e Compose
+docs                Modelo, decisões e operação
 ```
 
-## Documentação
+Ver [ARCHITECTURE.md](ARCHITECTURE.md) para dependências e [docs/deployment.md](docs/deployment.md) para topologia e comandos de operação.
 
-1. [ARCHITECTURE.md](./ARCHITECTURE.md): visão de execução, limites dos pacotes e decisões estruturais.
-2. [AGENTS.md](./AGENTS.md): instruções para agentes de programação.
-3. [docs/data-model.md](./docs/data-model.md): handoff de modelagem e fonte de verdade dos modelos e invariantes financeiros; revisar **antes da implementação das entidades**.
-4. `docs/adr/`: motivos e consequências de decisões técnicas.
+## Desenvolvimento
 
-Os documentos específicos de API, MCP e deploy só devem descrever comportamentos efetivamente implementados, distinguindo claramente contratos **propostos** de contratos **ativos**.
-
-## Como desenvolver (após o bootstrap)
-
-O agente de bootstrap deverá fornecer scripts reais no `package.json`. Os comandos-alvo são:
+Requer Node.js, pnpm 12 e, para os fluxos da aplicação, PostgreSQL configurado por `DATABASE_URL`. Scripts e nomes de comandos abaixo correspondem aos `package.json` atuais:
 
 ```bash
 pnpm install
@@ -87,36 +45,20 @@ pnpm dev:web
 pnpm dev:mcp
 pnpm typecheck
 pnpm lint
+pnpm test
 pnpm build
 ```
 
-O agente deverá revisar os nomes dos scripts e garantir que os comandos acima correspondam à configuração criada. Se uma etapa ainda for indisponível, documentar o motivo em vez de apresentar um comando que falha silenciosamente.
+`pnpm test` percorre os workspaces que têm script de teste. O gate atual executou `bash scripts/test-postgres.sh` (35 aprovados, 0 skips), `pnpm typecheck`, `pnpm lint`, `bash scripts/validate-recovery.sh`, E2E dev, build serial e E2E produção; todos passaram. A ordem E2E dev → build → produção é necessária porque Next dev substitui `.next`. Veja [docs/integration-validation.md](docs/integration-validation.md) e [docs/verification.md](docs/verification.md) para evidências e comandos.
 
-Criar `.env.example` com nomes de variáveis, **nunca credenciais reais**. Não versionar `.env`, tokens, senhas ou dumps financeiros.
+Variáveis para Compose estão exemplificadas em [.env.example](.env.example), incluindo `APP_ORIGIN` e `WEB_PASSWORD_HASH` consumidos pelo login. Nunca comite `.env`, segredos ou dumps.
 
-## Regras financeiras resumidas
+## Invariantes principais
 
-- Armazenar dinheiro em unidades mínimas inteiras (`BIGINT`), nunca `float`.
-- Pix e débito na mesma conta bancária movimentam o mesmo saldo.
-- Cartão de crédito é uma conta de passivo, com saldo assinado negativo quando existe dívida.
-- Compra parcelada reconhece a dívida total **uma única vez** na compra; parcelas distribuem a cobrança por fatura, sem debitar o passivo novamente.
-- Pagamento de fatura é **transferência entre contas**, não nova despesa.
-- Receitas são separadas de reembolsos e transferências próprias.
-- Não duplicar despesas ao apresentar compra integral, parcelas e pagamento de fatura. Orçamentos ficam fora do escopo inicial.
-- O backend, e não o Hermes, determina os cálculos e validações finais.
+- Dinheiro é inteiro em unidades mínimas; saldo deriva do saldo inicial e de `account_entries`.
+- Transferências próprias e pagamento de fatura não são despesas novas.
+- Compra parcelada cria uma dívida integral e parcelas de fatura que somam exatamente o total.
+- Receitas, despesas, projeções de fatura e saldos são separados por moeda; não há câmbio.
+- MCP não acessa PostgreSQL nem mantém regras contábeis próprias.
 
-Ver especificações completas no handoff de modelagem.
-
-## Escopo da primeira etapa
-
-O primeiro trabalho de um agente implementador é **criar o scaffolding do monorepo, instalar/configurar ferramentas de desenvolvimento, copiar a documentação e validar que os pacotes compilam**. Não criar migrations financeiras ou entregar o produto como funcional até que o modelo e as decisões abertas sejam revisados.
-
-## Status de documentação
-
-- [x] Visão e arquitetura propostas
-- [x] Handoff de modelagem produzido separadamente
-- [ ] Monorepo inicializado
-- [ ] Migrations revisadas
-- [ ] Interface web funcional
-- [ ] MCP conectado ao Hermes
-- [ ] Deploy validado no homelab
+O conjunto exigido de cenários está em [docs/data-model.md §11](docs/data-model.md#11-testes-de-aceitação-de-domínio--obrigatórios-antes-de-produção); evidências e lacunas estão em [docs/verification.md](docs/verification.md).
