@@ -3,7 +3,7 @@ import {
   accountsResponseSchema, categoriesResponseSchema, creditCardSettingsSchema, createAccountSchema, createCashbackSchema, domainErrorCodeSchema,
   createCategorySchema, createCreditPurchaseSchema, createExpenseForecastSchema, createExpenseSchema, createIncomeSchema,
   createInstitutionSchema, createRefundSchema, createTransferSchema, createdIdResponseSchemaEnvelope,
-  creditPurchaseCreatedResponseSchema, institutionsResponseSchema, monthlySummaryResponseSchema, categoryReportResponseSchema,
+  creditPurchaseCreatedResponseSchema, institutionsResponseSchema, monthlySummaryResponseSchema, monthlySeriesResponseSchema, categoryReportResponseSchema,
   correctTransactionSchema, expenseForecastCreatedResponseSchema, expenseForecastResponseSchema, expenseForecastSchema,
   payStatementSchema, previewTransactionResponseEnvelopeSchema, previewTransactionSchema, realizeExpenseForecastSchema, responseSchema,
   reportQuerySchema, reverseTransactionSchema, persistedResultSchema, statementCloseResponseSchema, statementPaymentCreatedResponseSchema,
@@ -51,17 +51,20 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
       return json(await service.transactionHistory(dates.from, dates.to), 200, transactionsResponseSchema);
     }
     if (route === "expense-forecasts") {
-      const parsed = reportQuerySchema.safeParse({
+      const parsed = reportQuerySchema.safeExtend({ includePending: z.enum(["true", "false"]).default("false") }).safeParse({
+        includePending: url.searchParams.get("includePending") ?? undefined,
         from: url.searchParams.get("from"), to: url.searchParams.get("to"),
         ...(url.searchParams.has("currency") ? { currency: url.searchParams.get("currency") } : {}),
       });
       if (!parsed.success) return validationError(parsed.error);
-      return json(await service.listExpenseForecasts(parsed.data.from, parsed.data.to, parsed.data.currency), 200, expenseForecastResponseSchema);
+      return json(await service.listExpenseForecasts(parsed.data.from, parsed.data.to, parsed.data.currency, parsed.data.includePending === "true"), 200, expenseForecastResponseSchema);
     }
     if (route === "statements") {
       const dates = parsePeriod(url);
       if (!dates.success) return dates.response;
-      const forecast = await service.statementForecast(dates.from, dates.to);
+      const includePending = z.enum(["true", "false"]).safeParse(url.searchParams.get("includePending") ?? "false");
+      if (!includePending.success) return validationError(includePending.error);
+      const forecast = await service.statementForecast(dates.from, dates.to, includePending.data === "true");
       const statementIds = Object.values(forecast).flat().map(item => item.statementId);
       const statements = await Promise.all(statementIds.map(id => service.statementDetail(id)));
       return json(statements, 200, statementsResponseSchema);
@@ -70,6 +73,11 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
       const dates = parsePeriod(url);
       if (!dates.success) return dates.response;
       return json(await service.categoryReport(dates.from, dates.to), 200, categoryReportResponseSchema);
+    }
+    if (route === "reports/monthly-series") {
+      const dates = parsePeriod(url);
+      if (!dates.success) return dates.response;
+      return json(await service.monthlySeries(dates.from, dates.to), 200, monthlySeriesResponseSchema);
     }
     if (route === "reports/summary") {
       const dates = parsePeriod(url);

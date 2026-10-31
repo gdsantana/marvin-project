@@ -60,6 +60,8 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
       id: "e90e4ed7-74e0-43cf-b8cf-b6f155b43093", name: "Salário", type: "income", parentId: null, isArchived: false,
     }] });
     if (url.pathname === "/api/v1/reports/summary") return Response.json({ ok: false, error: { code: "NOT_FOUND", message: "Summary unavailable" } }, { status: 503 });
+    if (url.pathname === "/api/v1/reports/monthly-series") return Response.json({ ok: true, data: [{ from: "2026-10-01", to: "2026-10-31", balancesByCurrency: { BRL: "0" }, incomeMinorByCurrency: { BRL: "0" }, expenseMinorByCurrency: { BRL: "0" } }] });
+    if (url.pathname === "/api/v1/statements") return Response.json({ ok: true, data: [] });
     if (url.pathname === "/api/v1/statements/payment") return Response.json({ ok: true, data: { value: {
       transaction: {
         id: "c32a74c0-cbbb-4ecc-9fbb-6d0e902c65b6", kind: "transfer", occurredOn: "2026-10-01", postedOn: null,
@@ -144,9 +146,15 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
     assert.equal(requests.at(-1)?.headers.get("idempotency-key"), null);
     assert.equal((requests.at(-1)?.body as { source: string }).source, "hermes");
 
-    const forecasts = await client.callTool({ name: "get_expense_forecasts", arguments: { from: "2026-10-01", to: "2026-10-31", currency: "BRL" } });
+    const forecasts = await client.callTool({ name: "get_expense_forecasts", arguments: { from: "2026-10-01", to: "2026-10-31", currency: "BRL", includePending: true } });
     assert.equal(forecasts.isError, undefined);
-    assert.match(requests.at(-1)?.url ?? "", /expense-forecasts\?from=2026-10-01&to=2026-10-31&currency=BRL/);
+    assert.match(requests.at(-1)?.url ?? "", /expense-forecasts\?from=2026-10-01&to=2026-10-31&currency=BRL&includePending=true/);
+    const monthlySeries = await client.callTool({ name: "get_monthly_series", arguments: { from: "2026-10-01", to: "2026-10-31" } });
+    assert.equal(monthlySeries.isError, undefined);
+    assert.equal(requests.at(-1)?.url, "http://web.test/api/v1/reports/monthly-series?from=2026-10-01&to=2026-10-31");
+    const statements = await client.callTool({ name: "get_statements", arguments: { from: "2026-10-01", to: "2026-10-31", includePending: true } });
+    assert.equal(statements.isError, undefined);
+    assert.equal(requests.at(-1)?.url, "http://web.test/api/v1/statements?from=2026-10-01&to=2026-10-31&includePending=true");
     const forecastWrite = await client.callTool({ name: "create_expense_forecast", arguments: {
       idempotencyKey: "forecast-1", accountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54", expectedOn: "2026-10-10",
       amountMinor: "2500", categoryId: null, description: "Lanche",

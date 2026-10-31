@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID, scrypt as scryptCallback } from "node:crypto";
@@ -159,6 +160,8 @@ async function main() {
   const sessionSecret = randomBytes(32).toString("base64url");
   const origin = `http://127.0.0.1:${webPort}`;
   const dbUrl = `postgresql://postgres@127.0.0.1:${pgPort}/postgres`;
+  const dockerMode = !existsSync(path.join(pgBin, "postgres"));
+  const pgContainer = `marvin-integration-${process.pid}`;
   const commonEnv = { ...process.env, DATABASE_URL: dbUrl, APP_ORIGIN: origin, SESSION_SECRET: sessionSecret,
     WEB_PASSWORD_HASH: `scrypt$${salt}$${passwordHash}`, MCP_API_TOKEN: serviceToken,
     MCP_HERMES_BEARER_TOKEN: hermesToken, MCP_API_URL: `${origin}/api/`, NEXT_TELEMETRY_DISABLED: "1",
@@ -167,17 +170,28 @@ async function main() {
   const cleanup = () => cleanupPromise ??= (async () => {
     await mcpClient?.close().catch(() => undefined);
     for (const child of [...children].reverse()) await stop(child);
-    if (pgData) {
+    if (dockerMode) {
+      try { await command("docker", ["rm", "-f", pgContainer], commonEnv); } catch { /* container may not exist */ }
+    } else if (pgData) {
       try { await command(path.join(pgBin, "pg_ctl"), ["-D", pgData, "-m", "immediate", "stop"], commonEnv); } catch { /* server may not have started */ }
     }
     await rm(scratch, { recursive: true, force: true });
   })();
   activeCleanup = cleanup;
   try {
-    const postgresVersion = await capture(path.join(pgBin, "postgres"), ["--version"], commonEnv);
-    if (!postgresVersion.includes("18.6")) throw new Error("O harness exige o runtime PostgreSQL 18.6 em PG_BIN.");
-    await command(path.join(pgBin, "initdb"), ["-D", pgData, "-A", "trust", "-U", "postgres", "--no-locale", "-E", "UTF8"], commonEnv);
-    await command(path.join(pgBin, "pg_ctl"), ["-D", pgData, "-o", `-h 127.0.0.1 -k ${scratch} -p ${pgPort} -F`, "-w", "start"], commonEnv);
+    if (dockerMode) {
+      await command("docker", ["run", "-d", "--name", pgContainer, "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-p", `127.0.0.1:${pgPort}:5432`, `postgres:${process.env.POSTGRES_IMAGE_TAG ?? "17.11-alpine"}`], commonEnv);
+      let ready = false;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        try { await command("docker", ["exec", pgContainer, "pg_isready", "-U", "postgres"], commonEnv); ready = true; break; } catch { await delay(500); }
+      }
+      if (!ready) throw new Error("PostgreSQL descartável não iniciou.");
+    } else {
+      const postgresVersion = await capture(path.join(pgBin, "postgres"), ["--version"], commonEnv);
+      if (!/\b(?:17|18)\./.test(postgresVersion)) throw new Error("Use PostgreSQL 17 ou 18 em PG_BIN.");
+      await command(path.join(pgBin, "initdb"), ["-D", pgData, "-A", "trust", "-U", "postgres", "--no-locale", "-E", "UTF8"], commonEnv);
+      await command(path.join(pgBin, "pg_ctl"), ["-D", pgData, "-o", `-h 127.0.0.1 -k ${scratch} -p ${pgPort} -F`, "-w", "start"], commonEnv);
+    }
     await command("pnpm", ["--filter", "@finance/db", "db:migrate"], commonEnv);
 
     const nextCli = path.join(root, "apps/web/node_modules/next/dist/bin/next");
@@ -250,7 +264,8 @@ async function main() {
     const revisedExpenseCat = created(await post("categories", { name: "Corrected category", type: "expense", parentId: null }, createdIdResponseSchemaEnvelope));
     const checkingId = created(await post("accounts", { name: "Checking", type: "checking", currency: "BRL", openingBalanceMinor: "0", openingDate: date, institutionId }, createdIdResponseSchemaEnvelope));
     const otherCheckingId = created(await post("accounts", { name: "Savings", type: "checking", currency: "BRL", openingBalanceMinor: "0", openingDate: date, institutionId }, createdIdResponseSchemaEnvelope));
-    const eurId = created(await post("accounts", { name: "Euro", type: "checking", currency: "EUR", openingBalanceMinor: "0", openingDate: date, institutionId }, createdIdResponseSchemaEnvelope));
+    const unsupportedCurrency = await fetch(`${base}/api/v1/accounts`, { method: "POST", headers: { ...webHeaders, "idempotency-key": randomUUID() }, body: JSON.stringify({ name: "Euro", type: "checking", currency: "EUR", openingBalanceMinor: "0", openingDate: date, institutionId }) });
+    check(unsupportedCurrency.status === 400, "conta fora de BRL deve ser rejeitada");
     const cardId = created(await post("accounts", { name: "Credit", type: "credit_card", currency: "BRL", openingBalanceMinor: "0", openingDate: "2026-01-01", institutionId, cardSettings: { creditLimitMinor: "500000", closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, createdIdResponseSchemaEnvelope));
     const baseMeta = { occurredOn: date, description: "Integration", source: "manual" };
     const salaryKey = randomUUID();
@@ -268,7 +283,6 @@ async function main() {
     check(conflictResult.isError === true && /IDEMPOTENCY_CONFLICT/.test(conflictText), `reuso divergente via MCP: isError=${Boolean(conflictResult.isError)} code/message=${conflictText || "ausente"}; esperado IDEMPOTENCY_CONFLICT`);
     for (const [description, paymentMethod] of [["Pix", "pix"], ["Debit", "debit"]] as const) await post("transactions/expense", { ...baseMeta, description, accountId: checkingId, amountMinor: "10000", paymentMethod, allocations: [{ categoryId: expenseCat, amountMinor: "10000" }] }, transactionCreatedResponseSchema);
     await post("transactions/transfer", { ...baseMeta, fromAccountId: checkingId, toAccountId: otherCheckingId, amountMinor: "20000" }, transactionCreatedResponseSchema);
-    await post("transactions/income", { ...baseMeta, description: "EUR salary", accountId: eurId, amountMinor: "70000", categoryId: incomeCat }, transactionCreatedResponseSchema);
 
     const purchasePayload = { ...baseMeta, description: "Three installments", cardAccountId: cardId, totalAmountMinor: "100000", installmentCount: 3, allocations: [{ categoryId: expenseCat, amountMinor: "70000" }, { categoryId: revisedExpenseCat, amountMinor: "30000" }] };
     const beforePreviewTransactions = await fetch(`${base}/api/v1/transactions?from=${date}&to=2027-12-31`, { headers: bearerHeaders }).then(r => json(r, "transactions before preview"));
@@ -319,8 +333,7 @@ async function main() {
     assert.equal(refund.data.value.allocations[0]?.categoryId, expenseCat);
 
     const report = await fetch(`${base}/api/v1/reports/summary?from=${date}&to=2026-12-31`, { headers: bearerHeaders }).then(async r => monthlySummaryResponseSchema.parse(await json(r, "summary report")).data);
-    check(Boolean(report.incomeMinorByCurrency.BRL && report.incomeMinorByCurrency.EUR), "relatório deve manter receitas BRL e EUR separadas");
-    check(report.incomeMinorByCurrency.EUR === "70000" && (report.expenseMinorByCurrency.EUR === undefined || report.expenseMinorByCurrency.EUR === "0"), "relatório EUR deve conter receita EUR e nenhuma despesa agregada de BRL");
+    check(Object.keys(report.incomeMinorByCurrency).every(currency => currency === "BRL"), "relatório deve aceitar somente BRL");
     check(report.incomeMinorByCurrency.BRL === "502500" && report.expenseMinorByCurrency.BRL === "119000", `relatório BRL divergente: income=${report.incomeMinorByCurrency.BRL ?? "ausente"}, expense=${report.expenseMinorByCurrency.BRL ?? "ausente"}; esperado 502500/119000`);
     const balances = await fetch(`${base}/api/v1/accounts`, { headers: bearerHeaders }).then(async r => accountsResponseSchema.parse(await json(r, "accounts balance")).data);
     const balanceSum = balances.filter(a => a.currency === "BRL").reduce((sum, account) => sum + BigInt(account.balanceMinor), 0n);

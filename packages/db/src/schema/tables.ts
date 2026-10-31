@@ -45,6 +45,7 @@ export const accounts = pgTable("accounts", {
   check("accounts_name_nonempty", sql`length(trim(${table.name})) > 0`),
   check("accounts_type_valid", sql`${table.type} in ('checking', 'savings', 'cash', 'credit_card')`),
   check("accounts_currency_iso", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+  check("accounts_currency_brl", sql`${table.currency} = 'BRL'`),
   unique("accounts_id_type_unique").on(table.id, table.type),
 ]);
 
@@ -168,6 +169,7 @@ export const expenseForecasts = pgTable("expense_forecasts", {
 }, (table) => [
   check("expense_forecasts_amount_positive", sql`${table.amountMinor} > 0`),
   check("expense_forecasts_currency_iso", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+  check("expense_forecasts_currency_brl", sql`${table.currency} = 'BRL'`),
   check("expense_forecasts_status_valid", sql`${table.status} in ('projected', 'realized', 'cancelled')`),
   check("expense_forecasts_realized_link", sql`(${table.status} = 'realized') = (${table.realizedTransactionId} is not null)`),
   check("expense_forecasts_description_nonempty", sql`length(trim(${table.description})) > 0`),

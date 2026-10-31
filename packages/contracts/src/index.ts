@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const currencySchema = z.string().regex(/^[A-Z]{3}$/, "Use código ISO 4217 em maiúsculas");
+export const currencySchema = z.literal("BRL");
+// Records remain sparse, including empty periods; literal record keys are exhaustive in Zod.
+const currencyMapKeySchema = z.string().refine(value => currencySchema.safeParse(value).success, "Somente BRL é suportado");
 const MAX_BIGINT = 9223372036854775807n;
 const MIN_BIGINT = -9223372036854775808n;
 function isIanaTimeZone(value: string): boolean { try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; } }
@@ -113,6 +115,7 @@ export const transactionResponseSchema = z.object({
   entries: z.array(entryResponseSchema), allocations: z.array(allocationResponseSchema),
   revisions: z.array(z.object({ id: idSchema, revisionNumber: z.number().int().positive(), reason: z.string(), actor: z.string(), source: transactionSourceSchema, createdAt: z.iso.datetime() })).default([]),
   reversalOfTransactionId: idSchema.nullable().default(null), reversedByTransactionIds: z.array(idSchema).default([]),
+  canReverse: z.boolean().default(false),
 });
 export const statementItemResponseSchema = z.object({
   id: idSchema, statementId: idSchema, sourceTransactionId: idSchema, installmentPlanId: idSchema.nullable(),
@@ -125,19 +128,20 @@ export const statementDetailSchema = z.object({
   id: idSchema, cardAccountId: idSchema, cardAccountName: z.string(), currency: currencySchema,
   cycleStartOn: dateSchema, closingOn: dateSchema, dueOn: dateSchema, status: statementStatusSchema,
   items: z.array(statementItemResponseSchema), payments: z.array(statementPaymentResponseSchema),
-  billedMinor: derivedMinorAmountSchema, paidMinor: derivedMinorAmountSchema, remainingMinor: derivedMinorAmountSchema,
+  billedMinor: derivedMinorAmountSchema, paidMinor: derivedMinorAmountSchema, remainingMinor: derivedMinorAmountSchema, creditBalanceMinor: derivedMinorAmountSchema,
 });
-export const monthlyReportSchema = z.record(currencySchema, z.object({ incomeMinor: derivedMinorAmountSchema, expenseMinor: derivedMinorAmountSchema, netMinor: derivedMinorAmountSchema }));
+export const monthlyReportSchema = z.record(currencyMapKeySchema, z.object({ incomeMinor: derivedMinorAmountSchema, expenseMinor: derivedMinorAmountSchema, netMinor: derivedMinorAmountSchema }));
 export const categoryReportSchema = z.array(z.object({
   currency: currencySchema, categoryId: idSchema.nullable(), categoryName: z.string().nullable(),
   incomeMinor: derivedMinorAmountSchema, expenseMinor: derivedMinorAmountSchema, netMinor: derivedMinorAmountSchema,
 }));
 export const monthlySummarySchema = z.object({
-  from: dateSchema, to: dateSchema, balancesByCurrency: z.record(currencySchema, derivedMinorAmountSchema),
-  incomeMinorByCurrency: z.record(currencySchema, derivedMinorAmountSchema), expenseMinorByCurrency: z.record(currencySchema, derivedMinorAmountSchema),
+  from: dateSchema, to: dateSchema, balancesByCurrency: z.record(currencyMapKeySchema, derivedMinorAmountSchema),
+  incomeMinorByCurrency: z.record(currencyMapKeySchema, derivedMinorAmountSchema), expenseMinorByCurrency: z.record(currencyMapKeySchema, derivedMinorAmountSchema),
 });
+export const monthlySeriesSchema = z.array(monthlySummarySchema);
 export const statementForecastEntrySchema = z.object({ statementId: idSchema, dueOn: dateSchema, billedMinor: derivedMinorAmountSchema, paidMinor: derivedMinorAmountSchema, remainingMinor: derivedMinorAmountSchema });
-export const statementForecastSchema = z.record(currencySchema, z.array(statementForecastEntrySchema));
+export const statementForecastSchema = z.record(currencyMapKeySchema, z.array(statementForecastEntrySchema));
 export const createdIdResponseSchema = z.object({ id: idSchema });
 export const persistedResultSchema = <T extends z.ZodType>(value: T) => z.object({ value, replayed: z.boolean() });
 export const successResponseSchema = <T extends z.ZodType>(data: T) => z.object({ ok: z.literal(true), data });
@@ -151,6 +155,7 @@ export const transactionsResponseSchema = responseSchema(z.array(transactionResp
 export const monthlyReportResponseSchema = responseSchema(monthlyReportSchema);
 export const categoryReportResponseSchema = responseSchema(categoryReportSchema);
 export const monthlySummaryResponseSchema = responseSchema(monthlySummarySchema);
+export const monthlySeriesResponseSchema = responseSchema(monthlySeriesSchema);
 export const statementForecastResponseSchema = responseSchema(statementForecastSchema);
 export const statementsResponseSchema = responseSchema(z.array(statementDetailSchema));
 export const statementResponseSchema = responseSchema(statementDetailSchema);

@@ -25,7 +25,10 @@ export type StatementPayment = { id: UUID; statementId: UUID; transferTransactio
 export type Persisted<T> = { value: T; replayed: boolean };
 export type Idempotency = { key: string; payload: unknown };
 
+export type ReportingData = { transactions: Transaction[]; entries: Entry[]; allocations: Allocation[]; revisions: TransactionRevision[]; accounts: Account[]; categories: Category[] };
+
 export interface TransactionContext {
+  readonly reporting: { load(): Promise<ReportingData> };
   readonly institutions: { get(id: UUID): Promise<Institution | null>; save(value: Institution): Promise<void>; list(): Promise<Institution[]> };
   readonly accounts: { get(id: UUID): Promise<Account | null>; save(value: Account): Promise<void>; balance(id: UUID, through?: string): Promise<Minor>; list(): Promise<Account[]> };
   readonly categories: { get(id: UUID): Promise<Category | null>; save(value: Category & { name: string; parentId: UUID | null }): Promise<void>; list(): Promise<Category[]> };
@@ -103,16 +106,18 @@ export class FinanceService {
   }
 
   async createInstitution(input: { id?: UUID; name: string }, key: string): Promise<UUID> {
-    return (await this.idempotent("createInstitution", key, input, async tx => { const institutionId = input.id ?? id(); await tx.institutions.save({ id: institutionId, name: input.name.trim(), isArchived: false }); return institutionId; })).value;
+    return (await this.idempotent("createInstitution", key, input, async tx => { const institutionId = input.id ?? id(); if (await tx.institutions.get(institutionId)) fail("CONFLICT", "Instituição já existe"); await tx.institutions.save({ id: institutionId, name: input.name.trim(), isArchived: false }); return institutionId; })).value;
   }
 
   async createAccount(input: CreateAccountCommand, key: string): Promise<UUID> {
     return (await this.idempotent("createAccount", key, input, async tx => {
+      if (input.currency !== "BRL") fail("CURRENCY_MISMATCH", "Somente BRL é suportado");
       if (input.cardSettings && !isIanaTimeZone(input.cardSettings.billingTimezone)) fail("VALIDATION_ERROR", "Fuso horário IANA inválido");
       if (input.institutionId && !await tx.institutions.get(input.institutionId)) fail("NOT_FOUND", "Instituição não encontrada");
       if (input.type === "credit_card" && !input.cardSettings) fail("VALIDATION_ERROR", "Configuração obrigatória para cartão");
       if (input.type !== "credit_card" && input.cardSettings) fail("INVALID_ACCOUNT_TYPE", "Configuração de cartão não se aplica a esta conta");
       const accountId = input.id ?? id();
+      if (await tx.accounts.get(accountId)) fail("CONFLICT", "Conta já existe");
       const { cardSettings, ...accountInput } = input;
       await tx.accounts.save({ ...accountInput, id: accountId, isArchived: false });
       if (cardSettings) await tx.cards.saveSettings({ ...cardSettings, accountId });
@@ -135,7 +140,7 @@ export class FinanceService {
     return (await this.idempotent("createCategory", key, input, async tx => {
       if (input.parentId && !await tx.categories.get(input.parentId)) fail("NOT_FOUND", "Categoria pai não encontrada");
       if (input.id && input.id === input.parentId) fail("VALIDATION_ERROR", "Categoria não pode ser pai de si mesma");
-      const categoryId = input.id ?? id(); await tx.categories.save({ ...input, id: categoryId, isArchived: false }); return categoryId;
+      const categoryId = input.id ?? id(); if (await tx.categories.get(categoryId)) fail("CONFLICT", "Categoria já existe"); await tx.categories.save({ ...input, id: categoryId, isArchived: false }); return categoryId;
     })).value;
   }
 
@@ -159,8 +164,11 @@ export class FinanceService {
     });
   }
 
-  async listExpenseForecasts(from: string, to: string, currency?: string): Promise<ExpenseForecast[]> {
-    return this.repository.transaction(tx => tx.forecasts.list(from, to, currency));
+  async listExpenseForecasts(from: string, to: string, currency?: string, includePending = false): Promise<ExpenseForecast[]> {
+    return this.repository.transaction(async tx => {
+      if (!includePending) return tx.forecasts.list(from, to, currency);
+      return (await tx.forecasts.list("0001-01-01", "9999-12-31", currency)).filter(row => row.status === "projected" || (row.expectedOn >= from && row.expectedOn <= to));
+    });
   }
 
   async realizeExpenseForecast(forecastId: UUID, input: RealizeExpenseForecastInput, key: string): Promise<Persisted<{ forecast: ExpenseForecast; transaction: Transaction }>> {
@@ -251,16 +259,11 @@ export class FinanceService {
 
   async createCreditPurchase(input: CreateCreditPurchaseInput, key: string): Promise<Persisted<{ transaction: Transaction; plan: InstallmentPlan; items: StatementItem[] }>> {
     return this.idempotent("createCreditPurchase", key, input, async tx => {
-      const card = await this.requireAccount(tx, input.cardAccountId); if (card.type !== "credit_card") fail("INVALID_ACCOUNT_TYPE", "A compra exige conta de cartão");
-      this.assertAfterOpening(card, input.occurredOn);
-      const settings = await tx.cards.getSettings(card.id); if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada");
-      const total = asMinor(input.totalAmountMinor), allocations = input.allocations.map(a => ({ categoryId: a.categoryId, amountMinor: -asMinor(a.amountMinor) }));
-      this.assertAllocationSum(allocations, -total); await this.validateAllocations(tx, allocations, "expense");
+      const { card, settings, total, allocations, dates } = await this.prepareCreditPurchase(tx, input);
       const transaction = this.transactionFrom(input, "expense", null, key, "credit"); await tx.transactions.save(transaction);
       await tx.entries.add({ transactionId: transaction.id, accountId: card.id, amountMinor: -total });
       await tx.allocations.addMany(allocations.map(a => ({ transactionId: transaction.id, categoryId: a.categoryId, amountMinor: a.amountMinor })));
       const plan = { id: id(), purchaseTransactionId: transaction.id, totalAmountMinor: total, installmentCount: input.installmentCount }; await tx.installmentPlans.save(plan);
-      const dates = this.purchaseStatements(input.occurredOn, input.postedOn ?? input.occurredOn, settings.closingDay);
       const split = splitInstallments(total, input.installmentCount), statements = await Promise.all(split.map((_, n) => this.ensureStatement(tx, card.id, dates.closingOn, dates.cycleStartOn, settings.closingDay, settings.dueDay, n)));
       const items = await tx.statements.addItems(split.map((amountMinor, index) => ({ statementId: statements[index]!.id, sourceTransactionId: transaction.id, installmentPlanId: plan.id, installmentNumber: index + 1, itemType: "purchase", amountMinor, description: `${input.description} (${index + 1}/${input.installmentCount})` })));
       return { transaction, plan, items };
@@ -269,43 +272,25 @@ export class FinanceService {
 
   async createCashback(input: CreateCashbackInput, key: string): Promise<Persisted<Transaction>> {
     return this.idempotent("createCashback", key, input, async tx => {
-      const account = await this.requireAccount(tx, input.accountId); const amount = asMinor(input.amountMinor);
-      if (account.type === "credit_card" && !input.cardStatementId) fail("VALIDATION_ERROR", "Cashback no cartão exige fatura de crédito");
-      if (input.cardStatementId && account.type !== "credit_card") fail("INVALID_ACCOUNT_TYPE", "Crédito de fatura exige cartão");
-      this.assertAfterOpening(account, input.occurredOn);
+      const { account, statement } = await this.prepareCashback(tx, input);
+      const amount = asMinor(input.amountMinor);
       const transaction = this.transactionFrom(input, "income", null, key, input.cardStatementId ? "credit" : null); await tx.transactions.save(transaction);
       await tx.entries.add({ transactionId: transaction.id, accountId: account.id, amountMinor: amount });
-      await this.validateAllocations(tx, [{ categoryId: input.categoryId, amountMinor: amount }], "income");
       await tx.allocations.addMany([{ transactionId: transaction.id, categoryId: input.categoryId, amountMinor: amount }]);
-      if (input.cardStatementId) {
-        const statement = await tx.statements.get(input.cardStatementId); if (!statement || statement.cardAccountId !== account.id) return fail("NOT_FOUND", "Fatura não pertence ao cartão");
-        if (statement.status !== "open") return fail("CONFLICT", "Cashback precisa ser vinculado a uma fatura aberta");
-        await tx.statements.addItems([{ statementId: statement.id, sourceTransactionId: transaction.id, installmentPlanId: null, installmentNumber: null, itemType: "cashback", amountMinor: -amount, description: input.description }]);
-      }
+      if (statement) await tx.statements.addItems([{ statementId: statement.id, sourceTransactionId: transaction.id, installmentPlanId: null, installmentNumber: null, itemType: "cashback", amountMinor: -amount, description: input.description }]);
       return transaction;
     });
   }
 
   async createRefund(input: CreateRefundInput, key: string): Promise<Persisted<Transaction>> {
     return this.idempotent("createRefund", key, input, async tx => {
-      const original = await tx.transactions.get(input.originalTransactionId); if (!original || original.kind !== "expense") return fail("INVALID_REFUND", "Estorno exige despesa original");
-      if ((await tx.transactions.list("0001-01-01", "9999-12-31")).some(item => item.kind === "adjustment" && item.relatedTransactionId === original.id)) return fail("INVALID_REFUND", "Despesa revertida não pode receber novo estorno");
-      const originalEntries = await tx.entries.listByAccount(input.accountId); const originalEntry = originalEntries.find(e => e.transactionId === original.id);
-      if (!originalEntry || originalEntry.amountMinor >= 0n) return fail("INVALID_REFUND", "Conta não corresponde à despesa original");
-      const account = await this.requireAccount(tx, input.accountId); this.assertAfterOpening(account, input.occurredOn);
-      const priorRefunds = (await tx.transactions.list("0001-01-01", "9999-12-31")).filter(t => t.kind === "refund" && t.relatedTransactionId === original.id);
-      let refunded = 0n;
-      for (const refund of priorRefunds) for (const entry of await tx.entries.listByAccount(input.accountId)) if (entry.transactionId === refund.id) refunded += entry.amountMinor;
-      const amount = asMinor(input.amountMinor); if (amount + refunded > -originalEntry.amountMinor) fail("INVALID_REFUND", "Estorno excede o valor restante da compra");
+      const { original, account, amount, allocations: refundAllocations, target } = await this.prepareRefund(tx, input);
       const transaction = this.transactionFrom(input, "refund", original.id, key, original.paymentMethod);
-      const originalAllocations = await tx.allocations.listByTransaction(original.id);
-      const refundAllocations = await this.refundAllocations(tx, original.id, originalAllocations, amount);
       await tx.transactions.save(transaction); await tx.entries.add({ transactionId: transaction.id, accountId: input.accountId, amountMinor: amount });
       await tx.allocations.addMany(refundAllocations.map(a => ({ transactionId: transaction.id, categoryId: a.categoryId, amountMinor: a.amountMinor })));
       if (account.type === "credit_card") {
         const settings = await tx.cards.getSettings(account.id); if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada");
-        const target = await this.refundStatementTarget(tx, account, input.occurredOn, input.postedOn ?? input.occurredOn);
-        const statement = target.statement ?? await this.ensureStatement(tx, account.id, target.plan!.closingOn, target.plan!.cycleStartOn, settings.closingDay, settings.dueDay, 0);
+        const statement = target!.statement ?? await this.ensureStatement(tx, account.id, target!.plan!.closingOn, target!.plan!.cycleStartOn, settings.closingDay, settings.dueDay, 0);
         await tx.statements.addItems([{ statementId: statement.id, sourceTransactionId: transaction.id, installmentPlanId: null, installmentNumber: null, itemType: "refund", amountMinor: -amount, description: input.description }]);
       }
       return transaction;
@@ -369,15 +354,7 @@ export class FinanceService {
 
   async payStatement(input: PayStatementInput, key: string): Promise<Persisted<{ transaction: Transaction; payment: StatementPayment }>> {
     return this.idempotent("payStatement", key, input, async tx => {
-      const statement = await tx.statements.get(input.statementId); if (!statement) return fail("NOT_FOUND", "Fatura não encontrada");
-      if (statement.status === "open") return fail("CONFLICT", "Feche a fatura antes de registrar pagamento");
-      const card = await this.requireAccount(tx, statement.cardAccountId), bank = await this.requireAccount(tx, input.fromAccountId);
-      if (bank.type === "credit_card" || bank.id === card.id) fail("INVALID_ACCOUNT_TYPE", "Pagamento deve sair de uma conta de caixa/banco");
-      if (bank.currency !== card.currency) fail("CURRENCY_MISMATCH", "Pagamento deve usar a moeda da fatura");
-      this.assertAfterOpening(bank, input.occurredOn); this.assertAfterOpening(card, input.occurredOn);
-      const [items, payments] = await Promise.all([tx.statements.items(statement.id), tx.payments.list(statement.id)]);
-      const amount = asMinor(input.amountMinor), due = items.reduce((sum, item) => sum + item.amountMinor, 0n) - payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
-      if (amount > due) fail("INSUFFICIENT_STATEMENT_BALANCE", "Pagamento supera o saldo da fatura", { dueMinor: due.toString() });
+      const { statement, card, bank, amount, due } = await this.prepareStatementPayment(tx, input);
       const transaction = this.transactionFrom(input, "transfer", null, key, "bank_transfer"); await tx.transactions.save(transaction);
       await tx.entries.add({ transactionId: transaction.id, accountId: bank.id, amountMinor: -amount }); await tx.entries.add({ transactionId: transaction.id, accountId: card.id, amountMinor: amount });
       const payment = { id: id(), statementId: statement.id, transferTransactionId: transaction.id, amountMinor: amount }; await tx.payments.save(payment);
@@ -387,13 +364,13 @@ export class FinanceService {
     });
   }
 
-  async accountBalance(id: UUID, through?: string): Promise<Minor> { return this.repository.transaction(async tx => { const account = await this.requireAccount(tx, id); return account.openingBalanceMinor + await tx.accounts.balance(id, through); }); }
+  async accountBalance(id: UUID, through?: string): Promise<Minor> { return this.repository.transaction(async tx => { const account = await this.requireAccount(tx, id); return this.balanceAt(tx, account, through); }); }
 
   async listInstitutions(): Promise<Institution[]> { return this.repository.transaction(tx => tx.institutions.list()); }
 
   async listAccounts(through?: string): Promise<Array<Account & { balanceMinor: Minor; availableCreditMinor?: Minor | null }>> {
     return this.repository.transaction(async tx => Promise.all((await tx.accounts.list()).map(async account => {
-      const result = { ...account, balanceMinor: account.openingBalanceMinor + await tx.accounts.balance(account.id, through) };
+      const result = { ...account, balanceMinor: await this.balanceAt(tx, account, through) };
       if (account.type !== "credit_card") return result;
       const settings = await tx.cards.getSettings(account.id);
       return { ...result, availableCreditMinor: settings?.creditLimitMinor === null || !settings ? null : settings.creditLimitMinor + result.balanceMinor };
@@ -414,7 +391,7 @@ export class FinanceService {
     entries: Array<Entry & { accountName: string; accountType: Account["type"]; currency: string }>;
     allocations: Array<{ id?: UUID; categoryId: UUID | null; amountMinor: Minor; categoryName: string | null; categoryType: Category["type"] | null }>;
     revisions: Array<Pick<TransactionRevision, "id" | "revisionNumber" | "reason" | "actor" | "source" | "createdAt">>;
-    reversalOfTransactionId: UUID | null; reversedByTransactionIds: UUID[];
+    reversalOfTransactionId: UUID | null; reversedByTransactionIds: UUID[]; canReverse: boolean;
   }>> {
     return this.repository.transaction(async tx => {
       const result = [];
@@ -436,7 +413,10 @@ export class FinanceService {
         }
         const { idempotencyKey: _idempotencyKey, ...publicTransaction } = effectiveMetadata;
         const reversedByTransactionIds = allTransactions.filter(item => item.kind === "adjustment" && item.relatedTransactionId === transaction.id).map(item => item.id);
-        result.push({ ...publicTransaction, revisions: revisions.map(({ id, revisionNumber, reason, actor, source, createdAt }) => ({ id, revisionNumber, reason, actor, source, createdAt })), reversalOfTransactionId: transaction.kind === "adjustment" ? transaction.relatedTransactionId : null, reversedByTransactionIds, entries, allocations });
+        const hasRefund = allTransactions.some(item => item.kind === "refund" && item.relatedTransactionId === transaction.id);
+        const hasStatementPayment = transaction.kind === "transfer" && (await tx.payments.findByTransfer(transaction.id)).length > 0;
+        const canReverse = transaction.paymentMethod !== "credit" && !entries.some(entry => entry.accountType === "credit_card") && ["income", "expense", "transfer"].includes(transaction.kind) && reversedByTransactionIds.length === 0 && !hasRefund && !hasStatementPayment;
+        result.push({ ...publicTransaction, revisions: revisions.map(({ id, revisionNumber, reason, actor, source, createdAt }) => ({ id, revisionNumber, reason, actor, source, createdAt })), reversalOfTransactionId: transaction.kind === "adjustment" ? transaction.relatedTransactionId : null, reversedByTransactionIds, canReverse, entries, allocations });
       }
       return result;
     });
@@ -449,7 +429,11 @@ export class FinanceService {
       const [items, payments] = await Promise.all([tx.statements.items(statementId), tx.payments.list(statementId)]);
       const billedMinor = items.reduce((sum, item) => sum + item.amountMinor, 0n);
       const paidMinor = payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
-      return { ...statement, cardAccountName: card.name, currency: card.currency, items, payments, billedMinor, paidMinor, remainingMinor: billedMinor - paidMinor };
+      const remainingMinor = billedMinor - paidMinor;
+      const settings = await tx.cards.getSettings(card.id);
+      const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: settings?.billingTimezone ?? "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const status = statement.status === "open" ? "open" : remainingMinor <= 0n ? "paid" : localToday > statement.dueOn ? "overdue" : paidMinor > 0n ? "partially_paid" : "closed";
+      return { ...statement, status: status as Statement["status"], cardAccountName: card.name, currency: card.currency, items, payments, billedMinor, paidMinor, remainingMinor, creditBalanceMinor: remainingMinor < 0n ? -remainingMinor : 0n };
     });
   }
 
@@ -457,28 +441,28 @@ export class FinanceService {
     return this.repository.transaction(async tx => {
       const card = await this.requireAccount(tx, cardAccountId); if (card.type !== "credit_card") fail("INVALID_ACCOUNT_TYPE", "Limite disponível exige cartão");
       const settings = await tx.cards.getSettings(card.id); if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada");
-      return settings.creditLimitMinor === null ? null : settings.creditLimitMinor + card.openingBalanceMinor + await tx.accounts.balance(card.id);
+      return settings.creditLimitMinor === null ? null : settings.creditLimitMinor + await this.balanceAt(tx, card);
     });
   }
 
   async balancesByCurrency(through?: string): Promise<Record<string, string>> {
     return this.repository.transaction(async tx => {
       const totals = new Map<string, Minor>();
-      for (const account of await tx.accounts.list()) totals.set(account.currency, (totals.get(account.currency) ?? 0n) + account.openingBalanceMinor + await tx.accounts.balance(account.id, through));
+      for (const account of await tx.accounts.list()) if (!through || through >= account.openingDate) totals.set(account.currency, (totals.get(account.currency) ?? 0n) + await this.balanceAt(tx, account, through));
       return Object.fromEntries([...totals].map(([currency, amount]) => [currency, amount.toString()]));
     });
   }
 
-  async statementForecast(from: string, to: string): Promise<Record<string, Array<{ statementId: UUID; dueOn: string; billedMinor: string; paidMinor: string; remainingMinor: string }>>> {
+  async statementForecast(from: string, to: string, includePending = false): Promise<Record<string, Array<{ statementId: UUID; dueOn: string; billedMinor: string; paidMinor: string; remainingMinor: string }>>> {
     return this.repository.transaction(async tx => {
       const forecast: Record<string, Array<{ statementId: UUID; dueOn: string; billedMinor: string; paidMinor: string; remainingMinor: string }>> = {};
       for (const account of await tx.accounts.list()) {
         if (account.type !== "credit_card") continue;
         for (const statement of await tx.statements.list(account.id)) {
-          if (statement.dueOn < from || statement.dueOn > to) continue;
           const [items, payments] = await Promise.all([tx.statements.items(statement.id), tx.payments.list(statement.id)]);
           const billed = items.reduce((sum, item) => sum + item.amountMinor, 0n);
           const paid = payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
+          if ((statement.dueOn < from || statement.dueOn > to) && !(includePending && billed > paid)) continue;
           (forecast[account.currency] ??= []).push({ statementId: statement.id, dueOn: statement.dueOn, billedMinor: billed.toString(), paidMinor: paid.toString(), remainingMinor: (billed - paid).toString() });
         }
       }
@@ -488,52 +472,21 @@ export class FinanceService {
   }
 
   async monthlyReport(from: string, to: string): Promise<Record<string, { incomeMinor: string; expenseMinor: string; netMinor: string }>> {
-    return this.repository.transaction(async tx => {
-      const allTransactions = await tx.transactions.list("0001-01-01", "9999-12-31"), transactions = allTransactions.filter(t => t.occurredOn >= from && t.occurredOn <= to), result = new Map<string, { income: bigint; expense: bigint }>();
-      for (const transaction of transactions) {
-        if (transaction.kind === "transfer" || transaction.kind === "adjustment" || allTransactions.some(item => item.kind === "adjustment" && item.relatedTransactionId === transaction.id)) continue;
-        const entries = await tx.entries.listByTransaction(transaction.id);
-        const currencies = new Set<string>();
-        for (const entry of entries) { const account = await tx.accounts.get(entry.accountId); if (account) currencies.add(account.currency); }
-        if (currencies.size > 1) fail("CURRENCY_MISMATCH", "Relatório exige valores separados por moeda");
-        const currency = [...currencies][0]; if (!currency) continue;
-        const revisions = await tx.revisions.listByTransaction(transaction.id), latestAllocations = [...revisions].reverse().find(revision => revision.allocations !== null)?.allocations;
-        for (const allocation of latestAllocations ?? await tx.allocations.listByTransaction(transaction.id)) {
-          const current = result.get(currency) ?? { income: 0n, expense: 0n };
-          if (transaction.kind === "income") current.income += allocation.amountMinor;
-          else if (transaction.kind === "refund") current.expense -= allocation.amountMinor;
-          else if (transaction.kind === "expense") current.expense += -allocation.amountMinor;
-          result.set(currency, current);
-        }
-      }
-      return Object.fromEntries([...result].map(([currency, value]) => [currency, { incomeMinor: value.income.toString(), expenseMinor: value.expense.toString(), netMinor: (value.income - value.expense).toString() }]));
-    });
+    return this.repository.transaction(async tx => this.reportTotals(this.economicProjection(await tx.reporting.load()), from, to));
   }
 
   async categoryReport(from: string, to: string): Promise<CategoryReport[]> {
     return this.repository.transaction(async tx => {
-      const allTransactions = await tx.transactions.list("0001-01-01", "9999-12-31");
-      const transactions = allTransactions.filter(transaction => transaction.occurredOn >= from && transaction.occurredOn <= to);
-      const categories = new Map((await tx.categories.list()).map(category => [category.id, category.name]));
-      const result = new Map<string, { currency: string; categoryId: UUID | null; categoryName: string | null; income: bigint; expense: bigint }>();
-      for (const transaction of transactions) {
-        if (transaction.kind === "transfer" || transaction.kind === "adjustment" || allTransactions.some(item => item.kind === "adjustment" && item.relatedTransactionId === transaction.id)) continue;
-        const entries = await tx.entries.listByTransaction(transaction.id), currencies = new Set<string>();
-        for (const entry of entries) { const account = await tx.accounts.get(entry.accountId); if (account) currencies.add(account.currency); }
-        if (currencies.size > 1) fail("CURRENCY_MISMATCH", "Relatório exige valores separados por moeda");
-        const currency = [...currencies][0]; if (!currency) continue;
-        const revisions = await tx.revisions.listByTransaction(transaction.id);
-        const latestAllocations = [...revisions].reverse().find(revision => revision.allocations !== null)?.allocations;
-        for (const allocation of latestAllocations ?? await tx.allocations.listByTransaction(transaction.id)) {
-          const key = `${currency}:${allocation.categoryId ?? "uncategorized"}`;
-          const current = result.get(key) ?? { currency, categoryId: allocation.categoryId, categoryName: allocation.categoryId ? categories.get(allocation.categoryId) ?? null : null, income: 0n, expense: 0n };
-          if (transaction.kind === "income") current.income += allocation.amountMinor;
-          else if (transaction.kind === "refund") current.expense -= allocation.amountMinor;
-          else if (transaction.kind === "expense") current.expense += -allocation.amountMinor;
-          result.set(key, current);
-        }
+      const data = await tx.reporting.load();
+      const categories = new Map(data.categories.map(category => [category.id, category.name]));
+      const grouped = new Map<string, { currency: "BRL"; categoryId: UUID | null; categoryName: string | null; income: bigint; expense: bigint }>();
+      for (const row of this.economicProjection(data)) {
+        if (row.date < from || row.date > to) continue;
+        const key = `${row.currency}:${row.categoryId ?? "uncategorized"}`;
+        const group = grouped.get(key) ?? { currency: row.currency, categoryId: row.categoryId, categoryName: row.categoryId ? categories.get(row.categoryId) ?? null : null, income: 0n, expense: 0n };
+        group.income += row.income; group.expense += row.expense; grouped.set(key, group);
       }
-      return [...result.values()].map(({ currency, categoryId, categoryName, income, expense }) => ({ currency, categoryId, categoryName, incomeMinor: income.toString(), expenseMinor: expense.toString(), netMinor: (income - expense).toString() }));
+      return [...grouped.values()].map(({ income, expense, ...row }) => ({ ...row, incomeMinor: income.toString(), expenseMinor: expense.toString(), netMinor: (income - expense).toString() }));
     });
   }
 
@@ -542,12 +495,69 @@ export class FinanceService {
   }
 
   async monthlySummary(from: string, to: string) {
-    const [report, balancesByCurrency] = await Promise.all([this.monthlyReport(from, to), this.balancesByCurrency(to)]);
-    return {
-      from, to, balancesByCurrency,
-      incomeMinorByCurrency: Object.fromEntries(Object.entries(report).map(([currency, values]) => [currency, values.incomeMinor])),
-      expenseMinorByCurrency: Object.fromEntries(Object.entries(report).map(([currency, values]) => [currency, values.expenseMinor])),
-    };
+    return this.repository.transaction(async tx => {
+      const data = await tx.reporting.load();
+      return this.summaryFromData(data, this.economicProjection(data), from, to);
+    });
+  }
+
+  async monthlySeries(from: string, to: string) {
+    return this.repository.transaction(async tx => {
+      const data = await tx.reporting.load(), projection = this.economicProjection(data);
+      const result = [];
+      let month = `${from.slice(0, 7)}-01`;
+      while (month <= to) {
+        const next = new Date(`${month}T00:00:00Z`);
+        next.setUTCMonth(next.getUTCMonth() + 1);
+        const last = new Date(next); last.setUTCDate(0);
+        const end = last.toISOString().slice(0, 10);
+        result.push(this.summaryFromData(data, projection, month < from ? from : month, end > to ? to : end));
+        if (end >= to) break;
+        month = next.toISOString().slice(0, 10);
+      }
+      return result;
+    });
+  }
+
+  private economicProjection(data: ReportingData) {
+    const reversed = new Set(data.transactions.filter(row => row.kind === "adjustment").map(row => row.relatedTransactionId));
+    const accounts = new Map(data.accounts.map(row => [row.id, row]));
+    const entries = new Map<string, Entry[]>(), allocations = new Map<string, Array<{ categoryId: UUID | null; amountMinor: bigint }>>();
+    for (const entry of data.entries) { const rows = entries.get(entry.transactionId) ?? []; rows.push(entry); entries.set(entry.transactionId, rows); }
+    for (const allocation of data.allocations) { const rows = allocations.get(allocation.transactionId) ?? []; rows.push(allocation); allocations.set(allocation.transactionId, rows); }
+    for (const revision of [...data.revisions].sort((a, b) => a.revisionNumber - b.revisionNumber)) if (revision.allocations !== null) allocations.set(revision.transactionId, revision.allocations);
+    const result: Array<{ date: string; currency: "BRL"; categoryId: UUID | null; income: bigint; expense: bigint }> = [];
+    for (const transaction of data.transactions) {
+      if (!["income", "expense", "refund"].includes(transaction.kind) || reversed.has(transaction.id)) continue;
+      const currencies = new Set((entries.get(transaction.id) ?? []).map(entry => accounts.get(entry.accountId)?.currency).filter((value): value is string => Boolean(value)));
+      if (currencies.size > 1) fail("CURRENCY_MISMATCH", "Operação possui moedas incompatíveis");
+      const currency = [...currencies][0]; if (!currency) continue;
+      if (currency !== "BRL") fail("CURRENCY_MISMATCH", "Somente BRL é suportado");
+      for (const allocation of allocations.get(transaction.id) ?? []) result.push({ date: transaction.occurredOn, currency: "BRL", categoryId: allocation.categoryId, income: transaction.kind === "income" ? allocation.amountMinor : 0n, expense: transaction.kind === "income" ? 0n : -allocation.amountMinor });
+    }
+    return result;
+  }
+
+  private reportTotals(projection: ReturnType<FinanceService["economicProjection"]>, from: string, to: string) {
+    const grouped = new Map<string, { income: bigint; expense: bigint }>();
+    for (const row of projection) if (row.date >= from && row.date <= to) {
+      const group = grouped.get(row.currency) ?? { income: 0n, expense: 0n };
+      group.income += row.income; group.expense += row.expense; grouped.set(row.currency, group);
+    }
+    return Object.fromEntries([...grouped].map(([currency, row]) => [currency, { incomeMinor: row.income.toString(), expenseMinor: row.expense.toString(), netMinor: (row.income - row.expense).toString() }]));
+  }
+
+  private summaryFromData(data: ReportingData, projection: ReturnType<FinanceService["economicProjection"]>, from: string, to: string) {
+    const totals = this.reportTotals(projection, from, to);
+    const balances = new Map<string, bigint>();
+    const accounts = new Map(data.accounts.map(account => [account.id, account]));
+    const dates = new Map(data.transactions.map(transaction => [transaction.id, transaction.occurredOn]));
+    for (const account of data.accounts) if (account.openingDate <= to) balances.set(account.currency, (balances.get(account.currency) ?? 0n) + account.openingBalanceMinor);
+    for (const entry of data.entries) {
+      const account = accounts.get(entry.accountId), date = dates.get(entry.transactionId);
+      if (account && date && date >= account.openingDate && date <= to) balances.set(account.currency, (balances.get(account.currency) ?? 0n) + entry.amountMinor);
+    }
+    return { from, to, balancesByCurrency: Object.fromEntries([...balances].map(([currency, amount]) => [currency, amount.toString()])), incomeMinorByCurrency: Object.fromEntries(Object.entries(totals).map(([currency, row]) => [currency, row.incomeMinor])), expenseMinorByCurrency: Object.fromEntries(Object.entries(totals).map(([currency, row]) => [currency, row.expenseMinor])) };
   }
 
   async previewTransaction(input: PreviewTransactionInput): Promise<PreviewTransactionOutput> {
@@ -556,84 +566,33 @@ export class FinanceService {
       this.validateInputDates(input);
       switch (input.operation) {
         case "income": {
-          const account = await this.requireAccount(tx, input.accountId); this.ensureAllowedAccount(account, false); this.assertAfterOpening(account, input.occurredOn);
-          const allocations = [{ categoryId: input.categoryId, amountMinor: amount(input.amountMinor) }]; await this.validateAllocations(tx, allocations, "income");
-          return { operation: input.operation, kind: "income", entries: [{ accountId: account.id, amountMinor: input.amountMinor }], allocations: [{ categoryId: input.categoryId, amountMinor: input.amountMinor }] };
+          const { account, allocations } = await this.prepareIncome(tx, input);
+          return { operation: input.operation, kind: "income", entries: [{ accountId: account.id, amountMinor: input.amountMinor }], allocations: allocations.map(item => ({ categoryId: item.categoryId, amountMinor: item.amountMinor.toString() })) };
         }
         case "expense": {
-          const account = await this.requireAccount(tx, input.accountId); this.ensureAllowedAccount(account, false); this.assertAfterOpening(account, input.occurredOn);
-          const allocations = input.allocations.map(item => ({ categoryId: item.categoryId, amountMinor: -amount(item.amountMinor) }));
-          this.assertAllocationSum(allocations, -amount(input.amountMinor)); await this.validateAllocations(tx, allocations, "expense");
+          const { account, allocations } = await this.prepareExpense(tx, input);
           return { operation: input.operation, kind: "expense", entries: [{ accountId: account.id, amountMinor: (-amount(input.amountMinor)).toString() }], allocations: allocations.map(item => ({ categoryId: item.categoryId, amountMinor: item.amountMinor.toString() })) };
         }
         case "transfer": {
-          const from = await this.requireAccount(tx, input.fromAccountId), to = await this.requireAccount(tx, input.toAccountId);
-          if (from.id === to.id || from.currency !== to.currency) return fail("CURRENCY_MISMATCH", "Transferência exige contas distintas na mesma moeda");
-          this.assertAfterOpening(from, input.occurredOn); this.assertAfterOpening(to, input.occurredOn);
+          const { from, to } = await this.prepareTransfer(tx, input);
           return { operation: input.operation, kind: "transfer", entries: [{ accountId: from.id, amountMinor: (-amount(input.amountMinor)).toString() }, { accountId: to.id, amountMinor: input.amountMinor }], allocations: [] };
         }
         case "credit_purchase": {
-          const card = await this.requireAccount(tx, input.cardAccountId); if (card.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "A compra exige conta de cartão");
-          this.assertAfterOpening(card, input.occurredOn);
-          const settings = await tx.cards.getSettings(card.id); if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada");
-          const total = amount(input.totalAmountMinor), allocations = input.allocations.map(item => ({ categoryId: item.categoryId, amountMinor: -amount(item.amountMinor) }));
-          this.assertAllocationSum(allocations, -total); await this.validateAllocations(tx, allocations, "expense");
-          const dates = this.purchaseStatements(input.occurredOn, input.postedOn ?? input.occurredOn, settings.closingDay);
-          const installments = splitInstallments(total, input.installmentCount).map((value, index) => {
-            const closingOn = addMonths(dates.closingOn, index, settings.closingDay);
-            return { number: index + 1, amountMinor: value.toString(), closingOn, dueOn: dueDate(closingOn, settings.closingDay, settings.dueDay) };
-          });
-          for (const installment of installments) {
-            const existing = await tx.statements.findByClosingDate(card.id, installment.closingOn);
-            if (existing && existing.status !== "open") return fail("CONFLICT", "Não é possível inserir compra em fatura fechada");
-            if (existing) continue;
-            const cycleStart = addMonths(installment.closingOn, -1, settings.closingDay);
-            await this.assertNoStatementOverlap(tx, card.id, cycleStart, installment.closingOn);
-          }
+          const { card, total, allocations, installments } = await this.prepareCreditPurchase(tx, input);
           return { operation: input.operation, kind: "expense", entries: [{ accountId: card.id, amountMinor: (-total).toString() }], allocations: allocations.map(item => ({ categoryId: item.categoryId, amountMinor: item.amountMinor.toString() })), installments };
         }
         case "cashback": {
-          const account = await this.requireAccount(tx, input.accountId); this.assertAfterOpening(account, input.occurredOn);
-          if (account.type === "credit_card" && !input.cardStatementId) return fail("VALIDATION_ERROR", "Cashback no cartão exige fatura de crédito");
-          if (input.cardStatementId && account.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "Crédito de fatura exige cartão");
-          const allocations = [{ categoryId: input.categoryId, amountMinor: amount(input.amountMinor) }]; await this.validateAllocations(tx, allocations, "income");
-          if (input.cardStatementId) {
-            const statement = await tx.statements.get(input.cardStatementId);
-            if (!statement || statement.cardAccountId !== account.id) return fail("NOT_FOUND", "Fatura não pertence ao cartão");
-            if (statement.status !== "open") return fail("CONFLICT", "Cashback precisa ser vinculado a uma fatura aberta");
-          }
+          const { account } = await this.prepareCashback(tx, input);
           return { operation: input.operation, kind: "income", entries: [{ accountId: account.id, amountMinor: input.amountMinor }], allocations: [{ categoryId: input.categoryId, amountMinor: input.amountMinor }], ...(input.cardStatementId ? { statementId: input.cardStatementId } : {}) };
         }
         case "refund": {
-          const original = await tx.transactions.get(input.originalTransactionId); if (!original || original.kind !== "expense") return fail("INVALID_REFUND", "Estorno exige despesa original");
-          const account = await this.requireAccount(tx, input.accountId); this.assertAfterOpening(account, input.occurredOn);
-          const originalEntry = (await tx.entries.listByAccount(account.id)).find(entry => entry.transactionId === original.id);
-          if (!originalEntry || originalEntry.amountMinor >= 0n) return fail("INVALID_REFUND", "Conta não corresponde à despesa original");
-          const amountMinor = amount(input.amountMinor);
-          const previous = (await tx.transactions.list("0001-01-01", "9999-12-31")).filter(transaction => transaction.kind === "refund" && transaction.relatedTransactionId === original.id);
-          let refunded = 0n;
-          for (const transaction of previous) for (const entry of await tx.entries.listByAccount(account.id)) if (entry.transactionId === transaction.id) refunded += entry.amountMinor;
-          if (amountMinor + refunded > -originalEntry.amountMinor) return fail("INVALID_REFUND", "Estorno excede o valor restante da compra");
-          const originalAllocations = await tx.allocations.listByTransaction(original.id), allocations = await this.refundAllocations(tx, original.id, originalAllocations, amountMinor);
-          let statementId: UUID | undefined;
-          let statementPlan: { cycleStartOn: string; closingOn: string; dueOn: string } | undefined;
-          if (account.type === "credit_card") {
-            const target = await this.refundStatementTarget(tx, account, input.occurredOn, input.postedOn ?? input.occurredOn);
-            if (target.statement) statementId = target.statement.id;
-            else statementPlan = target.plan!;
-          }
+          const { account, allocations, target } = await this.prepareRefund(tx, input);
+          const statementId = target?.statement?.id;
+          const statementPlan = target?.plan ?? undefined;
           return { operation: input.operation, kind: "refund", entries: [{ accountId: account.id, amountMinor: input.amountMinor }], allocations: allocations.map(item => ({ categoryId: item.categoryId, amountMinor: item.amountMinor.toString() })), ...(statementId ? { statementId } : {}), ...(statementPlan ? { statementPlan } : {}) };
         }
         case "statement_payment": {
-          const statement = await tx.statements.get(input.statementId); if (!statement) return fail("NOT_FOUND", "Fatura não encontrada");
-          if (statement.status === "open") return fail("CONFLICT", "Feche a fatura antes de registrar pagamento");
-          const card = await this.requireAccount(tx, statement.cardAccountId), bank = await this.requireAccount(tx, input.fromAccountId);
-          if (bank.type === "credit_card" || bank.id === card.id) return fail("INVALID_ACCOUNT_TYPE", "Pagamento deve sair de uma conta de caixa/banco");
-          if (bank.currency !== card.currency) return fail("CURRENCY_MISMATCH", "Pagamento deve usar a moeda da fatura");
-          this.assertAfterOpening(bank, input.occurredOn); this.assertAfterOpening(card, input.occurredOn);
-          const [items, payments] = await Promise.all([tx.statements.items(statement.id), tx.payments.list(statement.id)]);
-          const remaining = items.reduce((sum, item) => sum + item.amountMinor, 0n) - payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
-          const payment = amount(input.amountMinor); if (payment > remaining) return fail("INSUFFICIENT_STATEMENT_BALANCE", "Pagamento supera o saldo da fatura");
+          const { statement, card, bank, amount: payment, due: remaining } = await this.prepareStatementPayment(tx, input);
           return { operation: input.operation, kind: "transfer", entries: [{ accountId: bank.id, amountMinor: (-payment).toString() }, { accountId: card.id, amountMinor: payment.toString() }], allocations: [], statementId: statement.id, remainingStatementMinor: (remaining - payment).toString() };
         }
       }
@@ -641,8 +600,7 @@ export class FinanceService {
   }
 
   private async persistIncome(tx: TransactionContext, input: CreateIncomeInput, key: string): Promise<Transaction> {
-    const account = await this.requireAccount(tx, input.accountId); this.ensureAllowedAccount(account, false); this.assertAfterOpening(account, input.occurredOn);
-    const allocations = [{ categoryId: input.categoryId, amountMinor: asMinor(input.amountMinor) }]; await this.validateAllocations(tx, allocations, "income");
+    const { account, allocations } = await this.prepareIncome(tx, input);
     const transaction = this.transactionFrom(input, "income", null, key, input.paymentMethod ?? null);
     await tx.transactions.save(transaction); await tx.entries.add({ transactionId: transaction.id, accountId: account.id, amountMinor: asMinor(input.amountMinor) });
     await tx.allocations.addMany(allocations.map(a => ({ transactionId: transaction.id, categoryId: a.categoryId, amountMinor: a.amountMinor })));
@@ -650,9 +608,7 @@ export class FinanceService {
   }
 
   private async persistExpense(tx: TransactionContext, input: CreateExpenseInput, key: string): Promise<Transaction> {
-    const account = await this.requireAccount(tx, input.accountId); this.ensureAllowedAccount(account, false); this.assertAfterOpening(account, input.occurredOn);
-    const allocations = input.allocations.map(a => ({ categoryId: a.categoryId, amountMinor: -asMinor(a.amountMinor) }));
-    this.assertAllocationSum(allocations, -asMinor(input.amountMinor)); await this.validateAllocations(tx, allocations, "expense");
+    const { account, allocations } = await this.prepareExpense(tx, input);
     const transaction = this.transactionFrom(input, "expense", null, key, input.paymentMethod);
     await tx.transactions.save(transaction); await tx.entries.add({ transactionId: transaction.id, accountId: account.id, amountMinor: -asMinor(input.amountMinor) });
     await tx.allocations.addMany(allocations.map(a => ({ transactionId: transaction.id, categoryId: a.categoryId, amountMinor: a.amountMinor })));
@@ -660,12 +616,106 @@ export class FinanceService {
   }
 
   private async persistTransfer(tx: TransactionContext, input: CreateTransferInput, key: string): Promise<Transaction> {
-    const from = await this.requireAccount(tx, input.fromAccountId), to = await this.requireAccount(tx, input.toAccountId);
-    if (from.id === to.id || from.currency !== to.currency) fail("CURRENCY_MISMATCH", "Transferência exige contas distintas na mesma moeda");
-    this.assertAfterOpening(from, input.occurredOn); this.assertAfterOpening(to, input.occurredOn);
+    const { from, to } = await this.prepareTransfer(tx, input);
     const transaction = this.transactionFrom(input, "transfer", null, key, "bank_transfer"), amount = asMinor(input.amountMinor);
     await tx.transactions.save(transaction); await tx.entries.add({ transactionId: transaction.id, accountId: from.id, amountMinor: -amount }); await tx.entries.add({ transactionId: transaction.id, accountId: to.id, amountMinor: amount });
     return transaction;
+  }
+
+  private async prepareStatementPayment(tx: TransactionContext, input: PayStatementInput) {
+    this.validateInputDates(input);
+    const statement = await tx.statements.get(input.statementId); if (!statement) return fail("NOT_FOUND", "Fatura não encontrada");
+    if (statement.status === "open") return fail("CONFLICT", "Feche a fatura antes de registrar pagamento");
+    const card = await this.requireAccount(tx, statement.cardAccountId), bank = await this.requireAccount(tx, input.fromAccountId);
+    if (bank.type === "credit_card" || bank.id === card.id) fail("INVALID_ACCOUNT_TYPE", "Pagamento deve sair de uma conta de caixa/banco");
+    if (bank.currency !== card.currency) fail("CURRENCY_MISMATCH", "Pagamento deve usar a moeda da fatura");
+    this.assertAfterOpening(bank, input.occurredOn); this.assertAfterOpening(card, input.occurredOn);
+    const [items, payments] = await Promise.all([tx.statements.items(statement.id), tx.payments.list(statement.id)]);
+    const amount = asMinor(input.amountMinor), due = items.reduce((sum, item) => sum + item.amountMinor, 0n) - payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
+    if (amount > due) fail("INSUFFICIENT_STATEMENT_BALANCE", "Pagamento supera o saldo da fatura", { dueMinor: due.toString() });
+    return { statement, card, bank, amount, due };
+  }
+
+  private async prepareIncome(tx: TransactionContext, input: CreateIncomeInput) {
+    this.validateInputDates(input);
+    const account = await this.requireAccount(tx, input.accountId); this.ensureAllowedAccount(account, false); this.assertAfterOpening(account, input.occurredOn);
+    const allocations = [{ categoryId: input.categoryId, amountMinor: asMinor(input.amountMinor) }]; await this.validateAllocations(tx, allocations, "income");
+    return { account, allocations };
+  }
+
+  private async prepareExpense(tx: TransactionContext, input: CreateExpenseInput) {
+    this.validateInputDates(input);
+    const account = await this.requireAccount(tx, input.accountId); this.ensureAllowedAccount(account, false); this.assertAfterOpening(account, input.occurredOn);
+    const allocations = input.allocations.map(a => ({ categoryId: a.categoryId, amountMinor: -asMinor(a.amountMinor) }));
+    this.assertAllocationSum(allocations, -asMinor(input.amountMinor)); await this.validateAllocations(tx, allocations, "expense");
+    return { account, allocations };
+  }
+
+  private async prepareTransfer(tx: TransactionContext, input: CreateTransferInput) {
+    this.validateInputDates(input);
+    const from = await this.requireAccount(tx, input.fromAccountId), to = await this.requireAccount(tx, input.toAccountId);
+    if (from.id === to.id || from.currency !== to.currency) fail("CURRENCY_MISMATCH", "Transferência exige contas distintas na mesma moeda");
+    this.assertAfterOpening(from, input.occurredOn); this.assertAfterOpening(to, input.occurredOn);
+    return { from, to };
+  }
+
+  private async prepareCashback(tx: TransactionContext, input: CreateCashbackInput) {
+    this.validateInputDates(input);
+    const account = await this.requireAccount(tx, input.accountId); this.assertAfterOpening(account, input.occurredOn);
+    if (account.type === "credit_card" && !input.cardStatementId) return fail("VALIDATION_ERROR", "Cashback no cartão exige fatura de crédito");
+    if (input.cardStatementId && account.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "Crédito de fatura exige cartão");
+    const allocations = [{ categoryId: input.categoryId, amountMinor: asMinor(input.amountMinor) }]; await this.validateAllocations(tx, allocations, "income");
+    let statement: Statement | null = null;
+    if (input.cardStatementId) {
+      statement = await tx.statements.get(input.cardStatementId);
+      if (!statement || statement.cardAccountId !== account.id) return fail("NOT_FOUND", "Fatura não pertence ao cartão");
+      if (statement.status !== "open") return fail("CONFLICT", "Cashback precisa ser vinculado a uma fatura aberta");
+    }
+    return { account, statement };
+  }
+
+  private async prepareCreditPurchase(tx: TransactionContext, input: CreateCreditPurchaseInput) {
+    this.validateInputDates(input);
+    const card = await this.requireAccount(tx, input.cardAccountId); if (card.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "A compra exige conta de cartão");
+    this.assertAfterOpening(card, input.occurredOn);
+    const settings = await tx.cards.getSettings(card.id); if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada");
+    const total = asMinor(input.totalAmountMinor), allocations = input.allocations.map(item => ({ categoryId: item.categoryId, amountMinor: -asMinor(item.amountMinor) }));
+    this.assertAllocationSum(allocations, -total); await this.validateAllocations(tx, allocations, "expense");
+    const dates = this.purchaseStatements(input.occurredOn, input.postedOn ?? input.occurredOn, settings.closingDay);
+    const installments = await Promise.all(splitInstallments(total, input.installmentCount).map(async (value, index) => {
+      const closingOn = addMonths(dates.closingOn, index, settings.closingDay);
+      const existing = await tx.statements.findByClosingDate(card.id, closingOn);
+      return { number: index + 1, amountMinor: value.toString(), closingOn, dueOn: existing?.dueOn ?? dueDate(closingOn, settings.closingDay, settings.dueDay) };
+    }));
+    for (const installment of installments) {
+      const existing = await tx.statements.findByClosingDate(card.id, installment.closingOn);
+      if (existing && existing.status !== "open") return fail("CONFLICT", "Não é possível alterar uma fatura fechada");
+      if (existing) continue;
+      const cycleStart = addMonths(installment.closingOn, -1, settings.closingDay);
+      await this.assertNoStatementOverlap(tx, card.id, cycleStart, installment.closingOn);
+    }
+    return { card, settings, total, allocations, dates, installments };
+  }
+
+  private async prepareRefund(tx: TransactionContext, input: CreateRefundInput) {
+    this.validateInputDates(input);
+    const original = await tx.transactions.get(input.originalTransactionId); if (!original || original.kind !== "expense") return fail("INVALID_REFUND", "Estorno exige despesa original");
+    if ((await tx.transactions.list("0001-01-01", "9999-12-31")).some(item => item.kind === "adjustment" && item.relatedTransactionId === original.id)) return fail("INVALID_REFUND", "Despesa revertida não pode receber novo estorno");
+    const originalEntries = await tx.entries.listByAccount(input.accountId); const originalEntry = originalEntries.find(e => e.transactionId === original.id);
+    if (!originalEntry || originalEntry.amountMinor >= 0n) return fail("INVALID_REFUND", "Conta não corresponde à despesa original");
+    const account = await this.requireAccount(tx, input.accountId); this.assertAfterOpening(account, input.occurredOn);
+    const priorRefunds = new Set((await tx.transactions.list("0001-01-01", "9999-12-31")).filter(t => t.kind === "refund" && t.relatedTransactionId === original.id).map(row => row.id));
+    const refunded = originalEntries.filter(entry => priorRefunds.has(entry.transactionId)).reduce((sum, entry) => sum + entry.amountMinor, 0n);
+    const amount = asMinor(input.amountMinor); if (amount + refunded > -originalEntry.amountMinor) fail("INVALID_REFUND", "Estorno excede o valor restante da compra");
+    const originalAllocations = await tx.allocations.listByTransaction(original.id);
+    const refundAllocations = await this.refundAllocations(tx, original.id, originalAllocations, amount);
+    const target = account.type === "credit_card" ? await this.refundStatementTarget(tx, account, input.occurredOn, input.postedOn ?? input.occurredOn) : null;
+    return { original, account, amount, allocations: refundAllocations, target };
+  }
+
+  private async balanceAt(tx: TransactionContext, account: Account, through?: string): Promise<Minor> {
+    if (through && through < account.openingDate) return 0n;
+    return account.openingBalanceMinor + await tx.accounts.balance(account.id, through);
   }
 
   private async requireAccount(tx: TransactionContext, accountId: UUID): Promise<Account> { const account = await tx.accounts.get(accountId); if (!account || account.isArchived) return fail("NOT_FOUND", "Conta não encontrada ou arquivada"); return account; }
@@ -677,7 +727,7 @@ export class FinanceService {
   private assertAllocationSum(allocations: Array<{ amountMinor: Minor }>, total: Minor) { if (allocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0n) !== total) fail("VALIDATION_ERROR", "Alocações devem somar o total da operação"); }
   private validateInputDates(input: { occurredOn: string; postedOn?: string | null }) { if (input.postedOn && input.postedOn < input.occurredOn) fail("VALIDATION_ERROR", "Data de postagem anterior à data econômica"); }
   private transactionFrom(input: { occurredOn: string; postedOn?: string | null; description: string; counterpartyName?: string | null; notes?: string | null; source?: string; reviewStatus?: string }, kind: string, relatedTransactionId: UUID | null, idempotencyKey: string, paymentMethod: string | null): Transaction {
-    if (input.postedOn && input.postedOn < input.occurredOn) fail("VALIDATION_ERROR", "Data de postagem anterior à data econômica");
+    this.validateInputDates(input);
     return { id: id(), kind, occurredOn: input.occurredOn, postedOn: input.postedOn ?? null, description: input.description, counterpartyName: input.counterpartyName ?? null, notes: input.notes ?? null, reviewStatus: input.reviewStatus === "needs_review" ? "needs_review" : "confirmed", paymentMethod, relatedTransactionId, idempotencyKey, source: input.source ?? "manual" };
   }
   private purchaseStatements(occurredOn: string, postedOn: string, closingDay: number) {
@@ -701,7 +751,7 @@ export class FinanceService {
     if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada");
     const statementDate = postedOn || occurredOn;
     const openStatement = (await tx.statements.list(account.id))
-      .filter(statement => statement.status === "open" && statement.closingOn >= statementDate)
+      .filter(statement => statement.status === "open" && statement.closingOn > statementDate)
       .sort((a, b) => a.closingOn.localeCompare(b.closingOn))[0];
     if (openStatement) return { statement: openStatement, plan: null };
     const cycle = this.purchaseStatements(statementDate, statementDate, settings.closingDay);

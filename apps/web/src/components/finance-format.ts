@@ -28,3 +28,16 @@ export function percentChangeBasisPoints(before: bigint, after: bigint): bigint 
   if (before === 0n) return null;
   return ((after - before) * 10000n) / (before < 0n ? -before : before);
 }
+
+export function todayCivil(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const part = (type: string) => parts.find(item => item.type === type)!.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function reportPeriod(range: string, now = new Date()) {
+  const [year, month] = todayCivil(now).split("-").map(Number);
+  const start = new Date(Date.UTC(year!, range === "year" ? 0 : month! - 1 + (range === "last-month" ? -1 : 0), 1));
+  const end = new Date(Date.UTC(start.getUTCFullYear(), range === "year" ? 12 : start.getUTCMonth() + 1, 0));
+  return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+}

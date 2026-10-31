@@ -16,7 +16,7 @@ import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
 import { actionLabels, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
-import { formatDate, formatMinor, parseMajorToMinor } from "./finance-format";
+import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod } from "./finance-format";
 
 const titles: Record<Section, { title: string; intro: string }> = {
   new: { title: "Nova transação", intro: "Registre uma receita ou despesa." },
@@ -25,15 +25,8 @@ const titles: Record<Section, { title: string; intro: string }> = {
   cards: { title: "Cartões", intro: "Acompanhe limites, compras e próximos vencimentos." },
   entries: { title: "Lançamentos", intro: "Histórico registrado e previsões avulsas em áreas separadas." },
   statements: { title: "Faturas", intro: "Fechamentos, parcelas e pagamentos dos seus cartões." },
-  reports: { title: "Relatórios", intro: "Receitas e despesas por período, sempre separadas por moeda." },
+  reports: { title: "Relatórios", intro: "Receitas e despesas por período, em reais." },
 };
-function periodRange(range: string) {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), range === "year" ? 0 : now.getMonth() + (range === "last-month" ? -1 : 0), 1);
-  const to = range === "last-month" ? new Date(now.getFullYear(), now.getMonth(), 0) : range === "year" ? new Date(now.getFullYear(), 11, 31) : new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const fmt = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  return { from: fmt(from), to: fmt(to) };
-}
 
 function transactionKindLabel(kind: string) {
   switch (kind) {
@@ -50,7 +43,7 @@ function statementStatusLabel(status: string) {
   switch (status) {
     case "open": return "Aberta";
     case "closed": return "Fechada";
-    case "paid": return "Paga";
+    case "paid": return "Quitada";
     case "partially_paid": return "Parcialmente paga";
     case "overdue": return "Vencida";
     default: return status;
@@ -66,6 +59,7 @@ export function Workspace({ section }: { section: Section }) {
   const [busy, setBusy] = useState(false);
   const [range, setRange] = useState<ReportRange>("month");
   const [references, setReferences] = useState<References>({ accounts: [], categories: [], transactions: [], statements: [], institutions: [] });
+  const [historyPeriod, setHistoryPeriod] = useState(() => reportPeriod("month"));
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
   const [report, setReport] = useState<{ range: string; data: ReportData } | null>(null);
@@ -99,18 +93,20 @@ export function Workspace({ section }: { section: Section }) {
     if (!authenticated) return;
     let cancelled = false;
     setDataLoading(true); setDataError("");
-    const today = new Date().toISOString().slice(0, 10);
-    const statementFrom = `${new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 7)}-01`;
-    const statementTo = `${new Date(Date.now() + 730 * 86400000).toISOString().slice(0, 7)}-28`;
-    const transactionFrom = `${new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 4)}-01-01`;
-    const forecastFrom = `${new Date().getFullYear()}-01-01`;
-    const forecastTo = `${new Date().getFullYear() + 1}-12-31`;
+    const today = todayCivil();
+    const year = Number(today.slice(0, 4));
+    const statementFrom = historyPeriod.from;
+    const statementTo = section === "statements" ? historyPeriod.to : `${year + 2}-12-31`;
+    const transactionFrom = section === "entries" ? historyPeriod.from : "0001-01-01";
+    const transactionTo = section === "entries" ? historyPeriod.to : today;
+    const forecastFrom = historyPeriod.from;
+    const forecastTo = historyPeriod.to;
     Promise.all([
       fetch("/api/v1/accounts", { cache: "no-store" }), fetch("/api/v1/categories", { cache: "no-store" }),
-      fetch(`/api/v1/transactions?from=${transactionFrom}&to=${today}`, { cache: "no-store" }),
-      fetch(`/api/v1/statements?from=${statementFrom}&to=${statementTo}`, { cache: "no-store" }),
+      fetch(`/api/v1/transactions?from=${transactionFrom}&to=${transactionTo}`, { cache: "no-store" }),
+      fetch(`/api/v1/statements?from=${statementFrom}&to=${statementTo}&includePending=true`, { cache: "no-store" }),
       fetch("/api/v1/institutions", { cache: "no-store" }),
-      fetch(`/api/v1/expense-forecasts?from=${forecastFrom}&to=${forecastTo}`, { cache: "no-store" }),
+      fetch(`/api/v1/expense-forecasts?from=${forecastFrom}&to=${forecastTo}&includePending=true`, { cache: "no-store" }),
     ]).then(async ([accounts, categories, transactions, statements, institutions, expenseForecasts]) => {
       const responses = await Promise.all([accounts.json(), categories.json(), transactions.json(), statements.json(), institutions.json(), expenseForecasts.json()]);
       if ([accounts, categories, transactions, statements, institutions, expenseForecasts].some(response => response.status === 401)) { router.replace("/login"); return; }
@@ -122,12 +118,12 @@ export function Workspace({ section }: { section: Section }) {
     }).catch(error => { if (!cancelled) setDataError(error instanceof Error && error.message.startsWith("Você não tem permissão") ? error.message : "Não foi possível carregar os dados. Tente novamente."); })
       .finally(() => { if (!cancelled) setDataLoading(false); });
     return () => { cancelled = true; };
-  }, [authenticated, reloadToken, router]);
+  }, [authenticated, reloadToken, router, historyPeriod, section]);
 
   useEffect(() => {
     if (!authenticated) return;
     const controller = new AbortController();
-    const { from, to } = periodRange(range);
+    const { from, to } = reportPeriod(range);
     setReportLoading(true); setReportError("");
     fetch(`/api/v1/reports/summary?from=${from}&to=${to}`, { cache: "no-store", signal: controller.signal })
       .then(async response => {
@@ -145,10 +141,10 @@ export function Workspace({ section }: { section: Section }) {
   useEffect(() => {
     if (!authenticated || (section !== "overview" && section !== "reports")) return;
     const controller = new AbortController();
-    const { from, to } = periodRange(range);
+    const { from, to } = reportPeriod(range);
     const urls = [
       `/api/v1/reports/categories?from=${from}&to=${to}`,
-      ...recentMonths(to, range === "year" ? 12 : 6).map(month => `/api/v1/reports/summary?from=${month.from}&to=${month.to}`),
+      `/api/v1/reports/monthly-series?from=${recentMonths(to, range === "year" ? 12 : 6)[0]!.from}&to=${to}`,
     ];
     setAnalyticsLoading(true); setAnalyticsError("");
     Promise.all(urls.map(url => fetch(url, { cache: "no-store", signal: controller.signal })))
@@ -158,7 +154,7 @@ export function Workspace({ section }: { section: Section }) {
         return Promise.all(responses.map(response => response.json()));
       })
       .then(results => {
-        if (!controller.signal.aborted && results) setAnalytics({ range, categories: results[0].data as CategoryReport[], series: results.slice(1).map(result => result.data as ReportData) });
+        if (!controller.signal.aborted && results) setAnalytics({ range, categories: results[0].data as CategoryReport[], series: results[1].data as ReportData[] });
       })
       .catch(() => { if (!controller.signal.aborted) setAnalyticsError("Não foi possível carregar os gráficos. Tente novamente."); })
       .finally(() => { if (!controller.signal.aborted) setAnalyticsLoading(false); });
@@ -240,7 +236,7 @@ export function Workspace({ section }: { section: Section }) {
         creditLimitMinor: body.creditLimitMinor ?? null,
         closingDay: body.closingDay === "" ? undefined : body.closingDay,
         dueDay: body.dueDay === "" ? undefined : body.dueDay,
-        billingTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo",
+        billingTimezone: "America/Sao_Paulo",
         billingMode: "manual",
       };
       delete body.creditLimitMinor; delete body.closingDay; delete body.dueDay;
@@ -293,6 +289,10 @@ export function Workspace({ section }: { section: Section }) {
           {section === "overview" && <DashboardOverview series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError)} />}
           {section === "accounts" && <ResourceSection title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." action="account" setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} />}
           {section === "cards" && <ResourceSection title="Seus cartões" detail="Cartões, limites disponíveis e configurações de fechamento." action="account" secondaryAction="configureCard" setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
+          {(section === "entries" || section === "statements") && <div className="mb-4 flex flex-wrap gap-3">
+            <label className="grid gap-1 text-sm">De<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.from} max={historyPeriod.to} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, from: event.target.value })); }} /></label>
+            <label className="grid gap-1 text-sm">Até<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.to} min={historyPeriod.from} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, to: event.target.value })); }} /></label>
+          </div>}
           {section === "entries" && <>
             <TransactionList rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
             <ExpenseForecasts forecasts={forecasts} references={references} setForm={setForm} onRealize={forecast => openForecastAction("realizeForecast", forecast)} onCancel={forecast => openForecastAction("cancelForecast", forecast)} />
@@ -312,11 +312,10 @@ function ResourceSection({ title, detail, action, secondaryAction, setForm, rows
 
 function Rows({ rows, empty, transactionActions }: { rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; empty: string; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
   if (!rows.length) return <EmptyInline text={empty} />;
-  const refundedTransactionIds = new Set(rows.filter((row): row is TransactionOption => "occurredOn" in row && row.kind === "refund").map(row => row.relatedTransactionId).filter((id): id is string => Boolean(id)));
   return <ul className="divide-y divide-border">{rows.map(row => {
     let title: string, detail: string, amount = "";
     if ("balanceMinor" in row) { title = row.name; detail = `${row.type === "credit_card" ? "Cartão" : "Conta"} · ${row.currency}${row.type === "credit_card" && row.availableCreditMinor !== undefined ? ` · disponível ${row.availableCreditMinor === null ? "sem limite definido" : formatMinor(row.availableCreditMinor, row.currency)}` : ""}`; amount = formatMinor(row.balanceMinor, row.currency); }
-    else if ("dueOn" in row) { title = row.cardAccountName; detail = `Vence em ${formatDate(row.dueOn)} · ${statementStatusLabel(row.status)}`; amount = row.remainingMinor ? formatMinor(row.remainingMinor, row.currency) : ""; }
+    else if ("dueOn" in row) { title = row.cardAccountName; detail = `Vence em ${formatDate(row.dueOn)} · ${statementStatusLabel(row.status)}`; amount = row.creditBalanceMinor && BigInt(row.creditBalanceMinor) > 0n ? `Crédito ${formatMinor(row.creditBalanceMinor, row.currency)}` : row.remainingMinor ? formatMinor(row.remainingMinor, row.currency) : ""; }
     else if ("occurredOn" in row) { title = row.description; detail = [formatDate(row.occurredOn), transactionKindLabel(row.kind), row.counterpartyName].filter(Boolean).join(" · "); amount = row.entries?.map(entry => entry.currency ? formatMinor(entry.amountMinor, entry.currency) : entry.amountMinor).join(" / ") ?? ""; }
     else { title = row.name; detail = row.type === "income" ? "Categoria de receita" : "Categoria de despesa"; }
     return <li id={"occurredOn" in row ? `transaction-${row.id}` : undefined} key={row.id} className="py-3">
@@ -327,7 +326,7 @@ function Rows({ rows, empty, transactionActions }: { rows: (AccountOption | Cate
         {row.allocations?.length ? <div><p className="font-medium text-foreground">Categorias atuais</p>{row.allocations.map((allocation, index) => <p key={`${allocation.categoryId}-${index}`} className="mt-1 flex flex-wrap justify-between gap-2 [&>span]:min-w-0 [&>span]:max-w-full [&>span]:break-words"><span>{allocation.categoryName ?? "Sem categoria"}</span><span className="tabular-nums">{formatMinor(allocation.amountMinor, row.entries?.[0]?.currency ?? "BRL")}</span></p>)}</div> : null}
         {(row.reversalOfTransactionId || row.reversedByTransactionIds?.length) && <div><p className="font-medium text-foreground">Vínculos</p>{row.reversalOfTransactionId && <a className="inline-flex min-h-11 items-center font-medium text-primary underline-offset-4 hover:underline" href={`#transaction-${row.reversalOfTransactionId}`}>Reverte o lançamento {row.reversalOfTransactionId.slice(0, 8)}</a>}{row.reversedByTransactionIds?.map(id => <a key={id} className="mt-1 block inline-flex min-h-11 items-center font-medium text-primary underline-offset-4 hover:underline" href={`#transaction-${id}`}>Revertido pelo lançamento {id.slice(0, 8)}</a>)}</div>}
         {!!row.revisions?.length && <div><p className="font-medium text-foreground">Revisões registradas</p><ol className="mt-1 grid gap-2">{row.revisions.map(revision => <li key={revision.id} className="border-l-2 border-primary/30 pl-2"><strong>Revisão {revision.revisionNumber}</strong> · {revision.reason}<br />Por {revision.actor} ({revision.source}) em {new Date(revision.createdAt).toLocaleString("pt-BR")}</li>)}</ol><p className="mt-2 text-muted-foreground">Consulte o motivo e a autoria de cada revisão acima.</p></div>}
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => transactionActions.correct(row)}>Corrigir dados ou categoria</Button>{["income", "expense", "transfer"].includes(row.kind) && row.paymentMethod !== "credit" && !row.entries?.some(entry => entry.accountType === "credit_card") && !row.reversedByTransactionIds?.length && !refundedTransactionIds.has(row.id) && <Button variant="outline" onClick={() => transactionActions.reverse(row)}>Reverter lançamento</Button>}</div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => transactionActions.correct(row)}>Corrigir dados ou categoria</Button>{row.canReverse && <Button variant="outline" onClick={() => transactionActions.reverse(row)}>Cancelar lançamento</Button>}</div>
       </div></details>}
     </li>;
   })}</ul>;

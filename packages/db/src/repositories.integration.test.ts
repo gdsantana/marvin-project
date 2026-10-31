@@ -101,6 +101,19 @@ test("PostgreSQL constraints and domain ports persist financial operations, fore
     await assert.rejects(repository.transaction((tx) => tx.idempotency.claim("integration-key", { amountMinor: "13" })), { code: "IDEMPOTENCY_CONFLICT" });
 
     const service = new FinanceService(repository);
+    const fixedInstitutionId = randomUUID();
+    const fixedAccountId = randomUUID();
+    const fixedCategoryId = randomUUID();
+    const createdInstitution = await service.createInstitution({ id: fixedInstitutionId, name: "Insert only bank" }, "insert-only-institution");
+    assert.equal(await service.createInstitution({ id: fixedInstitutionId, name: "Insert only bank" }, "insert-only-institution"), createdInstitution);
+    await assert.rejects(service.createInstitution({ id: fixedInstitutionId, name: "Changed bank" }, "new-institution-key"), { code: "CONFLICT" });
+    assert.equal(await repository.transaction(async tx => (await tx.institutions.get(fixedInstitutionId))?.name), "Insert only bank");
+    const createdAccount = await service.createAccount({ id: fixedAccountId, name: "Insert only account", type: "checking", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId: fixedInstitutionId }, "insert-only-account");
+    assert.equal(await service.createAccount({ id: fixedAccountId, name: "Insert only account", type: "checking", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId: fixedInstitutionId }, "insert-only-account"), createdAccount);
+    await assert.rejects(service.createAccount({ id: fixedAccountId, name: "Changed account", type: "checking", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId: null }, "new-account-key"), { code: "CONFLICT" });
+    const createdCategory = await service.createCategory({ id: fixedCategoryId, name: "Insert only category", type: "income", parentId: null }, "insert-only-category");
+    assert.equal(await service.createCategory({ id: fixedCategoryId, name: "Insert only category", type: "income", parentId: null }, "insert-only-category"), createdCategory);
+    await assert.rejects(service.createCategory({ id: fixedCategoryId, name: "Changed category", type: "expense", parentId: null }, "new-category-key"), { code: "CONFLICT" });
     const cashAccount = await service.createAccount({ name: "Service checking", type: "checking", currency: "BRL", openingBalanceMinor: 50000n, openingDate: "2026-10-01", institutionId: null }, "service-account-checking");
     const serviceCard = await service.createAccount({
       name: "Service card", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId: null,
@@ -122,7 +135,9 @@ test("PostgreSQL constraints and domain ports persist financial operations, fore
     const entriesBeforeClose = await pool.query("SELECT count(*)::int AS count FROM account_entries");
     const scheduledClosures = await Promise.all(["close-auto-a", "close-auto-b"].map(() => service.closeDueAutomaticStatements("2026-10-26T12:00:00.000Z")));
     assert.equal(scheduledClosures.reduce((sum, result) => sum + result.closedCount, 0), 1);
-    assert.equal((await service.statementDetail(overdueStatement.id)).status, "closed");
+    const closedStatement = await service.statementDetail(overdueStatement.id);
+    assert.equal(closedStatement.status, "paid");
+    assert.equal(closedStatement.remainingMinor, 0n);
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM account_entries")).rows[0]!.count, entriesBeforeClose.rows[0]!.count);
     const metadata = { occurredOn: "2026-10-25", description: "Salary", source: "manual" as const, reviewStatus: "confirmed" as const };
     const salary = await service.createIncome({ ...metadata, accountId: cashAccount, amountMinor: "50000", categoryId: incomeCategory }, "service-salary");

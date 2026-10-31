@@ -7,18 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { MonthlyFinanceChart, ExpenseDonutChart } from "./finance-charts";
+import { visibleTransactions } from "./transaction-list";
 import { formatDate, formatMinor } from "@/components/finance-format";
+import type { CategoryReport } from "@finance/contracts";
 import type { Action, References, ReportData, TransactionOption } from "@/components/workspace-types";
 
 export type DashboardSeriesPoint = Pick<ReportData, "from" | "to" | "incomeMinorByCurrency" | "expenseMinorByCurrency">;
-export type DashboardCategory = {
-  currency: string;
-  categoryId: string | null;
-  categoryName: string | null;
-  incomeMinor: string;
-  expenseMinor: string;
-  netMinor: string;
-};
+export type DashboardCategory = CategoryReport;
 
 export type DashboardOverviewProps = {
   references: References;
@@ -37,7 +32,7 @@ export function DashboardOverview({ references, report, reportError, series, cat
   const balances = Object.entries(report?.balancesByCurrency ?? {});
   const incomes = Object.entries(report?.incomeMinorByCurrency ?? {});
   const expenses = Object.entries(report?.expenseMinorByCurrency ?? {});
-  const recent = [...references.transactions].sort((a, b) => b.occurredOn.localeCompare(a.occurredOn)).slice(0, 5);
+  const recent = [...visibleTransactions(references.transactions)].sort((a, b) => b.occurredOn.localeCompare(a.occurredOn)).slice(0, 5);
 
   return <div className="flex flex-col gap-4 pb-6 sm:gap-6">
     <div className="flex justify-end">
@@ -97,7 +92,7 @@ export function DashboardOverview({ references, report, reportError, series, cat
 
     <Card>
       <CardHeader><CardTitle><h2>Próximas faturas</h2></CardTitle><CardDescription>Parcelas e pagamentos</CardDescription></CardHeader>
-      <CardContent>{references.statements.filter(statement => statement.status !== "paid").length ? <ul className="divide-y divide-border">{references.statements.filter(statement => statement.status !== "paid").slice(0, 4).map(statement => <li key={statement.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><span>{statement.cardAccountName} · vence em {formatDate(statement.dueOn)}</span><span className="font-mono tabular-nums">{statement.remainingMinor ? formatMinor(statement.remainingMinor, statement.currency) : ""}</span></li>)}</ul> : <EmptyPanel text="Cadastre um cartão para acompanhar suas faturas." />}<Link href="/statements" className="inline-flex min-h-11 items-center text-sm text-primary">Ver faturas</Link></CardContent>
+      <CardContent>{references.statements.filter(statement => BigInt(statement.remainingMinor ?? "0") > 0n).length ? <ul className="divide-y divide-border">{references.statements.filter(statement => BigInt(statement.remainingMinor ?? "0") > 0n).slice(0, 4).map(statement => <li key={statement.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><span>{statement.cardAccountName} · vence em {formatDate(statement.dueOn)}</span><span className="font-mono tabular-nums">{statement.remainingMinor ? formatMinor(statement.remainingMinor, statement.currency) : ""}</span></li>)}</ul> : <EmptyPanel text="Cadastre um cartão para acompanhar suas faturas." />}<Link href="/statements" className="inline-flex min-h-11 items-center text-sm text-primary">Ver faturas</Link></CardContent>
     </Card>
 
     <div className="grid grid-cols-2 gap-3 lg:hidden">
@@ -173,13 +168,13 @@ function MetricCard({ label, values, tone, icon, unavailable, className = "" }: 
   const valueTone = tone === "income" ? "text-primary" : tone === "expense" ? "text-destructive" : "text-foreground";
   return <Card className={`min-w-0 ${className}`}><CardContent className="flex min-h-32 flex-col justify-between gap-3 p-3 sm:p-4">
     <div className="flex items-center justify-between gap-2"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground sm:text-[11px]">{label}</p><span className={`flex size-7 shrink-0 items-center justify-center rounded-full bg-muted [&_svg]:size-3.5 ${tone === "income" ? "text-primary" : tone === "expense" ? "text-destructive" : "text-muted-foreground"}`}>{icon}</span></div>
-    {unavailable ? <p className="text-sm text-muted-foreground">Indisponível</p> : values.length ? <div className="grid gap-1">{values.map(([currency, amount]) => <p key={currency} className={`break-words font-mono text-lg font-medium tracking-tight tabular-nums sm:text-2xl ${valueTone}`}>{formatMinor(amount, currency)}</p>)}</div> : <p className="text-sm text-muted-foreground">Sem movimentações</p>}
+    {unavailable ? <p className="text-sm text-muted-foreground">Indisponível</p> : values.length ? <div className="grid gap-1">{values.map(([currency, amount]) => <p key={currency} className={`[overflow-wrap:anywhere] font-mono text-lg font-medium tracking-tight tabular-nums sm:text-2xl ${valueTone}`}>{formatMinor(amount, currency)}</p>)}</div> : <p className="text-sm text-muted-foreground">Sem movimentações</p>}
     <span className="text-[11px] text-muted-foreground">{tone === "balance" ? `${values.length ? values.length : 0} ${values.length === 1 ? "moeda" : "moedas"} · saldo até o fim do período` : "Totais do período selecionado"}</span>
   </CardContent></Card>;
 }
 
 function TransactionRow({ transaction }: { transaction: TransactionOption }) {
-  const isIncome = transaction.kind === "income" || transaction.kind === "cashback";
+  const isIncome = transaction.kind === "income";
   const amounts = transaction.entries?.map(entry => formatMinor(entry.amountMinor, entry.currency)).join(" · ") ?? "";
   const kind = transaction.kind === "income" ? "Receita" : transaction.kind === "expense" ? "Despesa" : transaction.kind === "transfer" ? "Transferência" : transaction.kind === "refund" ? "Estorno" : transaction.kind;
   return <li className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-surface p-2 lg:bg-transparent lg:py-4">

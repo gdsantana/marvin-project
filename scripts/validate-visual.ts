@@ -21,27 +21,28 @@ Inspeção visual, contraste WCAG e leitor de tela continuam manuais.`;
 const ids = Array.from({ length: 10 }, (_, i) => `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`);
 const accounts = [
   { id: ids[0], name: "Conta sintética BRL", type: "checking", currency: "BRL", balanceMinor: "900719925474099301" },
-  { id: ids[1], name: "Conta sintética EUR", type: "checking", currency: "EUR", balanceMinor: "23456" },
+  { id: ids[1], name: "Conta sintética BRL secundária", type: "checking", currency: "BRL", balanceMinor: "23456" },
   { id: ids[2], name: "Cartão sintético", type: "credit_card", currency: "BRL", balanceMinor: "-10001", availableCreditMinor: "89999" },
   { id: ids[9], name: "Reserva sintética BRL", type: "savings", currency: "BRL", balanceMinor: "1100" },
 ];
 const entry = (accountIndex: number, amountMinor: string) => ({ accountId: accounts[accountIndex]!.id, accountName: accounts[accountIndex]!.name, accountType: accounts[accountIndex]!.type, amountMinor, currency: accounts[accountIndex]!.currency });
 const transactions = [
-  { id: ids[3], kind: "income", description: "Receita sintética", occurredOn: "2026-10-10", reviewStatus: "confirmed", entries: [entry(0, "12345")] },
-  { id: ids[4], kind: "expense", description: "Despesa sintética com descrição extensa " + "contexto ".repeat(16), occurredOn: "2026-10-11", paymentMethod: "pix", reviewStatus: "confirmed", entries: [entry(0, "-6789")], allocations: [{ categoryId: ids[7], categoryName: "Categoria sintética", amountMinor: "-6789" }] },
-  { id: ids[5], kind: "transfer", description: "Transferência própria sintética", occurredOn: "2026-10-12", reviewStatus: "confirmed", entries: [entry(0, "-1100"), entry(3, "1100")] },
-  { id: ids[6], kind: "transfer", description: "Pagamento de fatura sintético", occurredOn: "2026-10-13", reviewStatus: "confirmed", entries: [entry(0, "-2200"), entry(2, "2200")] },
+  { id: ids[3], kind: "income", description: "Receita sintética", occurredOn: "2026-10-10", reviewStatus: "confirmed", canReverse: true, entries: [entry(0, "12345")] },
+  { id: ids[4], kind: "expense", description: "Despesa sintética com descrição extensa " + "contexto ".repeat(16), occurredOn: "2026-10-11", paymentMethod: "pix", reviewStatus: "confirmed", canReverse: true, entries: [entry(0, "-6789")], allocations: [{ categoryId: ids[7], categoryName: "Categoria sintética", amountMinor: "-6789" }] },
+  { id: ids[5], kind: "transfer", description: "Transferência própria sintética", occurredOn: "2026-10-12", reviewStatus: "confirmed", canReverse: true, entries: [entry(0, "-1100"), entry(3, "1100")] },
+  { id: ids[6], kind: "transfer", description: "Pagamento de fatura sintético", occurredOn: "2026-10-13", reviewStatus: "confirmed", canReverse: false, entries: [entry(0, "-2200"), entry(2, "2200")] },
 ];
 const fixtures: Record<string, unknown> = {
   "/api/v1/accounts": accounts,
+  "/api/v1/reports/categories": [{ currency: "BRL", categoryId: ids[7], categoryName: "Categoria sintética", incomeMinor: "0", expenseMinor: "6789", netMinor: "-6789" }],
   "/api/v1/categories": [{ id: ids[7], name: "Categoria sintética", type: "expense", isArchived: false }],
-  "/api/v1/transactions": transactions,
+  "/api/v1/transactions": [...transactions, { ...transactions[1], id: "cancelled-original", description: "Lançamento cancelado sintético", reversedByTransactionIds: ["cancelled-reversal"], canReverse: false }, { ...transactions[1], id: "cancelled-reversal", description: "Compensação sintética", kind: "adjustment", reversalOfTransactionId: "cancelled-original", canReverse: false }],
   "/api/v1/institutions": [{ id: ids[8], name: "Instituição sintética" }],
   "/api/v1/statements": ["open", "partially_paid"].map((status, i) => ({ id: `10000000-0000-4000-8000-00000000000${i}`, cardAccountId: ids[2], cardAccountName: "Cartão sintético", currency: "BRL", dueOn: "2026-11-10", status, remainingMinor: "10001", items: [] })),
   "/api/v1/expense-forecasts": [{ id: "20000000-0000-4000-8000-000000000000", accountId: ids[0], expectedOn: "2026-11-01", amountMinor: "3333", categoryId: ids[7], description: "Previsão sintética", currency: "BRL", status: "projected", realizedTransactionId: null, createdAt: "2026-10-01T12:00:00Z" }],
   "/api/v1/cards/settings": { accountId: ids[2], creditLimitMinor: "100000", closingDay: 25, dueDay: 10, billingTimezone: "America/Sao_Paulo", billingMode: "manual" },
 };
-const summary = (url: URL, income = "12345") => ({ from: url.searchParams.get("from"), to: url.searchParams.get("to"), balancesByCurrency: { BRL: "900719925474099301", EUR: "23456" }, incomeMinorByCurrency: { BRL: income, EUR: "4567" }, expenseMinorByCurrency: { BRL: "6789", EUR: "123" } });
+const summary = (url: URL, income = "12345") => ({ from: url.searchParams.get("from"), to: url.searchParams.get("to"), balancesByCurrency: { BRL: "900719925474099301" }, incomeMinorByCurrency: { BRL: income }, expenseMinorByCurrency: { BRL: "6789" } });
 const json = (route: Route, data: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ data }) });
 type WriteAttempt = { path: string; body: Record<string, unknown>; key: string | undefined; csrf: string | undefined };
 type State = { authenticated: boolean; empty: boolean; failReport: boolean; writes: WriteAttempt[]; previews: Record<string, unknown>[]; unexpected: string[]; reportHook?: (route: Route, url: URL) => Promise<void> };
@@ -61,10 +62,11 @@ async function intercept(context: BrowserContext): Promise<State> {
       state.authenticated = true;
       return json(route, { authenticated: true });
     }
-    if (request.method() === "GET" && url.pathname === "/api/v1/reports/summary") {
-      if (state.reportHook) return state.reportHook(route, url);
+    if (request.method() === "GET" && ["/api/v1/reports/summary", "/api/v1/reports/monthly-series"].includes(url.pathname)) {
+      if (state.reportHook && url.pathname.endsWith("/summary")) return state.reportHook(route, url);
       if (state.failReport) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "UNAVAILABLE", message: "Não foi possível carregar os dados. Tente novamente." } }) });
-      return json(route, state.empty ? { ...summary(url), balancesByCurrency: {}, incomeMinorByCurrency: {}, expenseMinorByCurrency: {} } : summary(url));
+      const data = state.empty ? { ...summary(url), balancesByCurrency: {}, incomeMinorByCurrency: {}, expenseMinorByCurrency: {} } : summary(url);
+      return json(route, url.pathname.endsWith("/monthly-series") ? [data] : data);
     }
     if (request.method() === "GET" && url.pathname in fixtures) return json(route, state.empty ? [] : fixtures[url.pathname]);
     if (request.method() === "POST" && url.pathname === "/api/v1/transactions/preview") {
@@ -85,7 +87,7 @@ async function intercept(context: BrowserContext): Promise<State> {
 }
 
 async function visibleText(page: Page, text: string) {
-  await page.getByText(text, { exact: true }).first().waitFor({ state: "visible" });
+  await page.getByText(text, { exact: true }).filter({ visible: true }).first().waitFor({ state: "visible" });
 }
 
 async function noOverflow(page: Page) {
@@ -166,6 +168,56 @@ async function main() {
   const output = await mkdtemp(join(tmpdir(), "marvin-visual-"));
   const results: { scenario: string; passed: boolean; error?: string }[] = [];
   const routes = ["/", "/accounts", "/cards", "/entries", "/statements", "/reports"];
+  if (process.argv.includes("--audit")) {
+    try {
+      for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+        const context = await browser.newContext({ viewport, colorScheme: "dark", timezoneId: "America/Sao_Paulo", locale: "pt-BR", reducedMotion: "reduce" });
+        const state = await intercept(context);
+        const page = await context.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", error => errors.push(error.message));
+        for (const route of routes) {
+          await page.goto(`${base.origin}${route}`);
+          await page.locator("#main-content").waitFor();
+          await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "BRL 9.007.199.254.740.993,01");
+          assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: rolagem horizontal`);
+          await page.screenshot({ path: join(output, `${viewport.width}-audit-${route.slice(1) || "overview"}.png`), fullPage: true });
+          if (route === "/entries") {
+            const toggle = page.getByLabel("Mostrar cancelados");
+            assert.equal(await page.getByText("Lançamento cancelado sintético", { exact: true }).count(), 0);
+            await toggle.check(); assert(await toggle.isChecked());
+            await page.getByText("Lançamento cancelado sintético", { exact: true }).filter({ visible: true }).first().waitFor();
+            await toggle.uncheck();
+            assert.equal(await page.getByText("Lançamento cancelado sintético", { exact: true }).count(), 0);
+            await page.getByLabel("De", { exact: true }).fill("2025-01-01");
+            await Promise.all([page.waitForResponse(response => response.url().includes("/expense-forecasts?") && response.url().includes("to=2025-12-31")), page.getByLabel("Até", { exact: true }).fill("2025-12-31")]);
+            const cancel = page.getByRole("button", { name: "Cancelar lançamento", exact: true }).first();
+            await page.locator("#transaction-" + ids[3] + " summary:visible").click();
+            await cancel.click();
+            await page.getByRole("dialog").waitFor();
+            await page.getByRole("button", { name: "Fechar", exact: true }).first().click();
+          }
+          results.push({ scenario: `${viewport.width}-audit-${route}`, passed: true });
+        }
+        if (viewport.width < 768) {
+          await page.getByRole("button", { name: "Mais opções", exact: true }).click();
+          await page.getByRole("navigation", { name: "Mais opções", exact: true }).getByRole("link", { name: "Contas", exact: true }).click();
+          await page.waitForURL(`${base.origin}/accounts`);
+        } else {
+          await page.getByRole("combobox", { name: "Criar novo registro" }).selectOption("account");
+          await page.getByRole("dialog").waitFor();
+          assert.equal(await page.locator('input[name="currency"]').inputValue(), "BRL");
+          assert.equal(await page.getByRole("combobox", { name: "Moeda", exact: true }).count(), 0);
+        }
+        assert.deepEqual(state.unexpected, []); assert.deepEqual(errors, []);
+        await context.close();
+      }
+      await writeFile(join(output, "results.json"), JSON.stringify(results, null, 2));
+      console.log(`PASS: ${results.length} telas mobile/desktop; evidências em ${output}`);
+    } finally { await browser.close(); }
+    return;
+  }
+
   try {
     for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
       for (const colorScheme of ["light", "dark"] as const) {
@@ -319,7 +371,7 @@ async function main() {
         await scenario("P5-values-capabilities", async page => {
           await page.goto(base.origin);
           await visibleText(page, "BRL 9.007.199.254.740.993,01");
-          for (const value of ["EUR 234,56", "BRL 123,45", "BRL 67,89", "EUR 45,67", "EUR 1,23"]) assert((await page.locator("body").innerText()).includes(value), `P5: valor ausente ${value}`);
+          for (const value of ["BRL 234,56", "BRL 123,45", "BRL 67,89"]) assert((await page.locator("body").innerText()).includes(value), `P5: valor ausente ${value}`);
           assert.equal(await page.getByText(/patrimônio líquido|sincronizar banco|análise por ia|meta de economia/i).count(), 0);
           await page.goto(`${base.origin}/entries`);
           await visibleText(page, "Transferência própria sintética");

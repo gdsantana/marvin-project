@@ -74,7 +74,8 @@ function createContext(db: Database): TransactionContext {
         return row ?? null;
       },
       async save(value) {
-        await db.insert(institutions).values(value).onConflictDoUpdate({ target: institutions.id, set: { name: value.name, isArchived: value.isArchived, updatedAt: new Date() } });
+        const [row] = await db.insert(institutions).values(value).onConflictDoNothing({ target: institutions.id }).returning({ id: institutions.id });
+        if (!row) throw new DomainError("CONFLICT", "Instituição já existe");
       },
       async list() { return db.select({ id: institutions.id, name: institutions.name, isArchived: institutions.isArchived }).from(institutions); },
     },
@@ -84,11 +85,8 @@ function createContext(db: Database): TransactionContext {
         return row ?? null;
       },
       async save(value) {
-        // Account names are supplied by the domain contract; preserve them on updates.
-        const [existing] = await db.select({ name: accounts.name }).from(accounts).where(eq(accounts.id, value.id)).limit(1);
-        const name = "name" in value && typeof value.name === "string" ? value.name : existing?.name;
-        if (!name) throw new Error("FinanceRepository requires Account.name to create an account");
-        await db.insert(accounts).values({ ...value, name }).onConflictDoUpdate({ target: accounts.id, set: { ...value, name, updatedAt: new Date() } });
+        const [row] = await db.insert(accounts).values(value).onConflictDoNothing({ target: accounts.id }).returning({ id: accounts.id });
+        if (!row) throw new DomainError("CONFLICT", "Conta já existe");
       },
       async balance(id, through) {
         const conditions = [eq(accountEntries.accountId, id)];
@@ -105,7 +103,8 @@ function createContext(db: Database): TransactionContext {
         return row as Awaited<ReturnType<TransactionContext["categories"]["get"]>>;
       },
       async save(value) {
-        await db.insert(categories).values(value).onConflictDoUpdate({ target: categories.id, set: { name: value.name, type: value.type, parentId: value.parentId, isArchived: value.isArchived, updatedAt: new Date() } });
+        const [row] = await db.insert(categories).values(value).onConflictDoNothing({ target: categories.id }).returning({ id: categories.id });
+        if (!row) throw new DomainError("CONFLICT", "Categoria já existe");
       },
       async list() { return db.select().from(categories); },
     },
@@ -167,6 +166,26 @@ function createContext(db: Database): TransactionContext {
       async listByTransaction(id) {
         const rows = await db.select().from(transactionRevisions).where(eq(transactionRevisions.transactionId, id)).orderBy(asc(transactionRevisions.revisionNumber));
         return rows.map(row => ({ ...row, createdAt: row.createdAt.toISOString(), metadata: row.metadata as TransactionRevision["metadata"], allocations: row.allocations?.map(item => ({ ...item, amountMinor: BigInt(item.amountMinor) })) ?? null }));
+      },
+    },
+    reporting: {
+      async load() {
+        const [transactionRows, entryRows, allocationRows, revisionRows, accountRows, categoryRows] = await Promise.all([
+          db.select().from(transactions),
+          db.select().from(accountEntries),
+          db.select().from(categoryAllocations),
+          db.select().from(transactionRevisions),
+          db.select().from(accounts),
+          db.select().from(categories),
+        ]);
+        return {
+          transactions: transactionRows,
+          entries: entryRows,
+          allocations: allocationRows,
+          revisions: revisionRows.map(row => ({ ...row, createdAt: row.createdAt.toISOString(), metadata: row.metadata as TransactionRevision["metadata"], allocations: row.allocations?.map(item => ({ ...item, amountMinor: BigInt(item.amountMinor) })) ?? null })),
+          accounts: accountRows,
+          categories: categoryRows,
+        };
       },
     },
     cards: {

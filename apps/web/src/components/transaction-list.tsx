@@ -39,12 +39,8 @@ function amountTone(row: TransactionOption) {
   return incomeKinds.has(row.kind) ? "text-success" : expenseKinds.has(row.kind) ? "text-destructive" : "text-foreground";
 }
 
-function canReverse(row: TransactionOption, rows: TransactionOption[]) {
-  return ["income", "expense", "transfer"].includes(row.kind)
-    && row.paymentMethod !== "credit"
-    && !row.entries?.some(entry => entry.accountType === "credit_card")
-    && !row.reversedByTransactionIds?.length
-    && !rows.some(item => item.kind === "refund" && item.relatedTransactionId === row.id);
+export function visibleTransactions(rows: TransactionOption[], showCancelled = false) {
+  return showCancelled ? rows : rows.filter(row => !row.reversalOfTransactionId && !row.reversedByTransactionIds?.length);
 }
 
 export function filterTransactions(rows: TransactionOption[], { query = "", filter = "all", accountId = "", categoryId = "" }: { query?: string; filter?: Filter; accountId?: string; categoryId?: string }) {
@@ -60,25 +56,28 @@ export function filterTransactions(rows: TransactionOption[], { query = "", filt
 }
 
 export function TransactionList({ rows, empty = "Seus lançamentos aparecerão aqui depois de registrados.", transactionActions }: Props) {
+  const [showCancelled, setShowCancelled] = useState(false);
+  const visibleRows = useMemo(() => visibleTransactions(rows, showCancelled), [rows, showCancelled]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const accounts = [...new Map(rows.flatMap(row => (row.entries ?? []).map(entry => [entry.accountId, entry.accountName] as const))).entries()];
   const categories = [...new Map(rows.flatMap(row => (row.allocations ?? []).filter(item => item.categoryId).map(item => [item.categoryId!, item.categoryName ?? "Sem categoria"] as const))).entries()];
-  const filteredRows = useMemo(() => filterTransactions(rows, { query, filter, accountId, categoryId }), [filter, query, rows, accountId, categoryId]);
+  const filteredRows = useMemo(() => filterTransactions(visibleRows, { query, filter, accountId, categoryId }), [filter, query, visibleRows, accountId, categoryId]);
   const grouped = useMemo(() => {
     const groups = new Map<string, TransactionOption[]>();
     for (const row of filteredRows) groups.set(row.occurredOn, [...(groups.get(row.occurredOn) ?? []), row]);
     return [...groups.entries()];
   }, [filteredRows]);
   const counts = {
-    all: rows.length,
-    income: rows.filter(row => incomeKinds.has(row.kind)).length,
-    expense: rows.filter(row => expenseKinds.has(row.kind)).length,
+    all: visibleRows.length,
+    income: visibleRows.filter(row => incomeKinds.has(row.kind)).length,
+    expense: visibleRows.filter(row => expenseKinds.has(row.kind)).length,
   };
 
   return <section aria-label="Extrato de transações" className="flex flex-col gap-4">
+    <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={showCancelled} onChange={event => setShowCancelled(event.target.checked)} />Mostrar cancelados</label>
     <div className="flex flex-col gap-3 rounded-xl bg-card p-3 sm:p-4">
       <label className="relative block">
         <SearchIcon aria-hidden="true" className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -129,11 +128,11 @@ function TransactionCard({ row, rows, transactionActions }: { row: TransactionOp
   const category = row.allocations?.find(item => item.categoryName)?.categoryName;
   return <li id={`transaction-${row.id}`} className="min-w-0 rounded-xl bg-card p-3 shadow-sm">
     <div className="flex items-center justify-between gap-3">
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">{incomeKinds.has(row.kind) ? <ArrowDownLeftIcon aria-hidden="true" className="text-success" /> : <ArrowUpRightIcon aria-hidden="true" className="text-destructive" />}</div>
         <div className="min-w-0"><p className="truncate text-sm font-medium">{row.description}</p><div className="mt-1 flex flex-wrap items-center gap-1.5"><Badge variant="outline" className="h-5 rounded px-1.5 py-0 font-mono text-[10px] uppercase tracking-wide">{category ?? kindLabel(row.kind)}</Badge>{row.reviewStatus === "needs_review" ? <Badge variant="outline" className="h-5 rounded px-1.5 py-0 text-[10px]">Precisa revisar</Badge> : <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><CircleCheckIcon aria-hidden="true" className="size-3 text-success" />Confirmado</span>}</div></div>
       </div>
-      <div className="flex max-w-[48%] min-w-0 items-center gap-1"><div className="min-w-0 break-words text-right"><p className={`font-mono text-sm font-medium tabular-nums ${amountTone(row)}`}>{formatAmount(row)}</p><p className="font-mono text-[10px] text-muted-foreground">{formatDate(row.occurredOn)}</p></div><ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" /></div>
+      <div className="flex max-w-[48%] min-w-0 shrink-0 items-center gap-1"><div className="min-w-0 break-words text-right"><p className={`font-mono text-sm font-medium tabular-nums ${amountTone(row)}`}>{formatAmount(row)}</p><p className="font-mono text-[10px] text-muted-foreground">{formatDate(row.occurredOn)}</p></div><ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" /></div>
     </div>
     {(transactionActions || row.notes) && <details className="mt-2 border-t border-border pt-1 text-xs"><summary className="flex min-h-9 cursor-pointer items-center text-muted-foreground">Detalhes do lançamento</summary><div className="grid gap-3 pb-2 text-muted-foreground">{row.notes && <p className="whitespace-pre-wrap">{row.notes}</p>}<TransactionMeta row={row} />{transactionActions && <ActionButtons row={row} rows={rows} actions={transactionActions} />}</div></details>}
   </li>;
@@ -151,6 +150,6 @@ function TransactionMeta({ row }: { row: TransactionOption }) {
   return <div className="grid gap-2">{row.entries?.length ? <div><p className="font-medium text-foreground">Contas movimentadas</p>{row.entries.map((entry, index) => <p key={`${entry.accountId}-${index}`} className="mt-1 flex justify-between gap-2"><span className="truncate">{entry.accountName}</span><span className="shrink-0 tabular-nums">{formatMinor(entry.amountMinor, entry.currency)}</span></p>)}</div> : null}{row.allocations?.length ? <div><p className="font-medium text-foreground">Categorias</p>{row.allocations.map((item, index) => <p key={`${item.categoryId}-${index}`} className="mt-1 flex justify-between gap-2"><span>{item.categoryName ?? "Sem categoria"}</span><span className="tabular-nums">{formatMinor(item.amountMinor, row.entries?.[0]?.currency ?? "BRL")}</span></p>)}</div> : null}{(row.reversalOfTransactionId || row.reversedByTransactionIds?.length) && <div><p className="font-medium text-foreground">Vínculos</p>{row.reversalOfTransactionId && <a className="block min-h-8 pt-2 text-primary underline-offset-4 hover:underline" href={`#transaction-${row.reversalOfTransactionId}`}>Reverte o lançamento {row.reversalOfTransactionId.slice(0, 8)}</a>}{row.reversedByTransactionIds?.map(id => <a key={id} className="block min-h-8 pt-2 text-primary underline-offset-4 hover:underline" href={`#transaction-${id}`}>Revertido pelo lançamento {id.slice(0, 8)}</a>)}</div>}{row.revisions?.length ? <div><p className="font-medium text-foreground">Revisões</p>{row.revisions.map(revision => <p key={revision.id} className="mt-1">Revisão {revision.revisionNumber} · {revision.reason} · {revision.actor} ({revision.source}) · {new Date(revision.createdAt).toLocaleString("pt-BR")}</p>)}</div> : null}</div>;
 }
 
-function ActionButtons({ row, rows, actions }: { row: TransactionOption; rows: TransactionOption[]; actions: NonNullable<Props["transactionActions"]> }) {
-  return <div className="mt-2 flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => actions.correct(row)}>Corrigir dados ou categoria</Button>{canReverse(row, rows) && <Button type="button" size="sm" variant="outline" onClick={() => actions.reverse(row)}>Reverter lançamento</Button>}</div>;
+function ActionButtons({ row, rows: _rows, actions }: { row: TransactionOption; rows: TransactionOption[]; actions: NonNullable<Props["transactionActions"]> }) {
+  return <div className="mt-2 flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => actions.correct(row)}>Corrigir dados ou categoria</Button>{row.canReverse && <Button type="button" size="sm" variant="outline" onClick={() => actions.reverse(row)}>Cancelar lançamento</Button>}</div>;
 }

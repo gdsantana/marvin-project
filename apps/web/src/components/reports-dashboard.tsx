@@ -4,32 +4,13 @@ import { ArrowDownLeftIcon, ArrowUpRightIcon, CalendarDaysIcon, ChartNoAxesCombi
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { MonthlyFinanceChart, AmountFinanceChart } from "./finance-charts";
-import { formatMinor, percentChangeBasisPoints } from "./finance-format";
+import type { CategoryReport, MonthlySummary } from "@finance/contracts";
+import { formatDate, formatMinor, percentChangeBasisPoints } from "./finance-format";
 
 export type ReportRange = "month" | "last-month" | "year";
-export type ReportsSummary = {
-  from: string;
-  to: string;
-  balancesByCurrency: Record<string, string>;
-  incomeMinorByCurrency: Record<string, string>;
-  expenseMinorByCurrency: Record<string, string>;
-};
-
-export type ReportSeriesPoint = {
-  from: string;
-  to: string;
-  incomeMinorByCurrency: Record<string, string>;
-  expenseMinorByCurrency: Record<string, string>;
-};
-
-export type ReportCategory = {
-  currency: string;
-  categoryId: string | null;
-  categoryName: string | null;
-  incomeMinor: string;
-  expenseMinor: string;
-  netMinor: string;
-};
+export type ReportsSummary = MonthlySummary;
+export type ReportSeriesPoint = Pick<MonthlySummary, "from" | "to" | "incomeMinorByCurrency" | "expenseMinorByCurrency">;
+export type ReportCategory = CategoryReport;
 
 export type ReportsDashboardProps = {
   range: ReportRange;
@@ -161,10 +142,6 @@ function Summary({ label, amount, currency, icon }: { label: string; amount: str
   return <div className="min-w-0 rounded-lg bg-muted/50 p-3"><div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Icon aria-hidden="true" className="size-3.5" />{label}</div><p className="mt-2 break-words font-mono text-sm font-medium tabular-nums">{formatMinor(amount, currency)}</p></div>;
 }
 
-function formatDate(value: string) {
-  const date = new Date(`${value}T00:00:00Z`);
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeZone: "UTC" }).format(date);
-}
 
 function periodDays(from: string, to: string) {
   const start = Date.parse(`${from}T00:00:00Z`);

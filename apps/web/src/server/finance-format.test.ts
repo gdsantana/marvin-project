@@ -31,3 +31,13 @@ test("period variation handles zero, negative baselines and large amounts exactl
   assert.equal(percentChangeBasisPoints(-10000n, -5000n), 5000n);
   assert.equal(percentChangeBasisPoints(100000000000000000000n, 90000000000000000000n), -1000n);
 });
+
+
+test("civil date and report periods use Sao Paulo across UTC and year boundaries", async () => {
+  const { todayCivil, reportPeriod } = await import("../components/finance-format");
+  const instant = new Date("2027-01-01T01:30:00Z");
+  assert.equal(todayCivil(instant), "2026-12-31");
+  assert.deepEqual(reportPeriod("month", instant), { from: "2026-12-01", to: "2026-12-31" });
+  assert.deepEqual(reportPeriod("last-month", instant), { from: "2026-11-01", to: "2026-11-30" });
+  assert.deepEqual(reportPeriod("year", instant), { from: "2026-01-01", to: "2026-12-31" });
+});

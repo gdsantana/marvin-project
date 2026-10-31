@@ -15,6 +15,13 @@
       "when": 1792900000000,
       "tag": "0001_forecasts_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793400000000,
+      "tag": "0002_brl_only",
+      "breakpoints": true
     }
   ]
 }

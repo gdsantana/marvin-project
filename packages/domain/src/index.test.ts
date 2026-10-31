@@ -16,13 +16,17 @@ class MemoryRepository implements FinanceRepository {
   settings = new Map<string, { accountId: string; creditLimitMinor: bigint | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" }>();
   statements = new Map<string, Statement>(); items: StatementItem[] = []; plans = new Map<string, { id: string; purchaseTransactionId: string; totalAmountMinor: bigint; installmentCount: number }>(); payments: StatementPayment[] = [];
   idempotency = new Map<string, { payload: string; result: unknown | null }>();
+  transactionCount = 0;
+  reportingLoadCount = 0;
 
   async transaction<T>(work: (tx: TransactionContext) => Promise<T>): Promise<T> {
+    this.transactionCount++;
+    const snapshot = { institutions: new Map(this.institutions), accounts: new Map(this.accounts), categories: new Map(this.categories), transactions: new Map(this.transactions), entries: [...this.entries], allocations: [...this.allocations], forecasts: new Map(this.forecasts), revisions: [...this.revisions], settings: new Map(this.settings), statements: new Map(this.statements), items: [...this.items], plans: new Map(this.plans), payments: [...this.payments], idempotency: new Map([...this.idempotency].map(([key, value]) => [key, { ...value }])) };
     const tx: TransactionContext = {
       institutions: { get: async id => this.institutions.get(id) ?? null, save: async value => { this.institutions.set(value.id, value); }, list: async () => [...this.institutions.values()] },
       accounts: {
         get: async id => this.accounts.get(id) ?? null, save: async account => { this.accounts.set(account.id, account); }, list: async () => [...this.accounts.values()],
-        balance: async id => this.entries.filter(entry => entry.accountId === id).reduce((total, entry) => total + entry.amountMinor, 0n),
+        balance: async (id, through) => this.entries.filter(entry => entry.accountId === id && (!through || (this.transactions.get(entry.transactionId)?.occurredOn ?? "9999-12-31") <= through)).reduce((total, entry) => total + entry.amountMinor, 0n),
       },
       categories: { get: async id => this.categories.get(id) ?? null, save: async category => { this.categories.set(category.id, category); }, list: async () => [...this.categories.values()] },
       transactions: {
@@ -32,7 +36,7 @@ class MemoryRepository implements FinanceRepository {
       },
       entries: {
         add: async entry => { const result = { ...entry, id: crypto.randomUUID() }; this.entries.push(result); return result; },
-        listByAccount: async id => this.entries.filter(entry => entry.accountId === id),
+        listByAccount: async (id, through) => this.entries.filter(entry => entry.accountId === id && (!through || (this.transactions.get(entry.transactionId)?.occurredOn ?? "9999-12-31") <= through)),
         listByTransaction: async id => this.entries.filter(entry => entry.transactionId === id),
       },
       allocations: {
@@ -71,8 +75,12 @@ class MemoryRepository implements FinanceRepository {
         },
         complete: async (key, result) => { const entry = this.idempotency.get(key)!; entry.result = result; },
       },
+      reporting: { load: async () => { this.reportingLoadCount++; return { transactions: [...this.transactions.values()], entries: [...this.entries], allocations: [...this.allocations], revisions: [...this.revisions], accounts: [...this.accounts.values()], categories: [...this.categories.values()] }; } },
     };
-    return work(tx);
+    try { return await work(tx); } catch (error) {
+      this.institutions = snapshot.institutions; this.accounts = snapshot.accounts; this.categories = snapshot.categories; this.transactions = snapshot.transactions; this.entries = snapshot.entries; this.allocations = snapshot.allocations; this.forecasts = snapshot.forecasts; this.revisions = snapshot.revisions; this.settings = snapshot.settings; this.statements = snapshot.statements; this.items = snapshot.items; this.plans = snapshot.plans; this.payments = snapshot.payments; this.idempotency = snapshot.idempotency;
+      throw error;
+    }
   }
 }
 
@@ -100,6 +108,16 @@ test("schemas rejeitam alocação negativa e valores fora do BIGINT", () => {
   assert.equal(createExpenseSchema.safeParse({ ...metadata, accountId: crypto.randomUUID(), amountMinor: "100", paymentMethod: "debit", allocations: [{ categoryId: null, amountMinor: "-100" }] }).success, false);
 });
 
+test("contratos de resumo aceitam mapas vazios e BRL, rejeitam EUR e domínio recusa conta EUR", async () => {
+  const base = { from: "2026-10-01", to: "2026-10-31", balancesByCurrency: {}, incomeMinorByCurrency: {}, expenseMinorByCurrency: {} };
+  assert.equal(monthlySummarySchema.safeParse(base).success, true);
+  assert.equal(monthlySummarySchema.safeParse({ ...base, balancesByCurrency: { BRL: "0" } }).success, true);
+  assert.equal(monthlySummarySchema.safeParse({ ...base, balancesByCurrency: { EUR: "0" } }).success, false);
+  assert.equal(createAccountSchema.safeParse({ name: "Euro", type: "checking", currency: "EUR", openingBalanceMinor: "0", openingDate: "2026-01-01", institutionId: null }).success, false);
+  const service = new FinanceService(new MemoryRepository());
+  await assert.rejects(() => service.createAccount({ name: "Euro", type: "checking", currency: "EUR", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null }, "eur-domain"), { code: "CURRENCY_MISMATCH" });
+});
+
 test("contratos de correção derivam autoria do contexto confiável e tipam respostas distintas", () => {
   const transactionId = crypto.randomUUID();
   const correction = correctTransactionSchema.parse({ transactionId, reason: "Fix", actor: "untrusted", source: "hermes", metadata: { description: "Corrected" } });
@@ -121,6 +139,126 @@ test("outputs financeiros agregados aceitam BigInt arbitrário sem ampliar input
   assert.equal(monthlySummarySchema.safeParse({ from: "2026-10-01", to: "2026-10-31", balancesByCurrency: { BRL: huge }, incomeMinorByCurrency: { BRL: huge }, expenseMinorByCurrency: { BRL: "0" } }).success, true);
   assert.equal(statementForecastEntrySchema.safeParse({ statementId: crypto.randomUUID(), dueOn: "2026-10-31", billedMinor: `-${huge}`, paidMinor: "0", remainingMinor: `-${huge}` }).success, true);
   assert.equal(createAccountSchema.safeParse({ name: "Card", type: "credit_card", currency: "BRL", openingBalanceMinor: "0", openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "Mars/Phobos", billingMode: "automatic" } }).success, false);
+});
+
+test("saldo anterior à abertura é zero e relatórios carregam uma projeção por transação", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const account = await service.createAccount({ name: "Conta", type: "checking", currency: "BRL", openingBalanceMinor: 1250n, openingDate: "2026-10-10", institutionId: null }, "cutoff-account");
+  assert.equal(await service.accountBalance(account, "2026-10-09"), 0n);
+  assert.equal((await service.listAccounts("2026-10-09")).find(row => row.id === account)?.balanceMinor, 0n);
+  const beforeTransactions = repository.transactionCount, beforeLoads = repository.reportingLoadCount;
+  await service.monthlySummary("2026-10-01", "2026-10-31");
+  assert.equal(repository.transactionCount, beforeTransactions + 1);
+  assert.equal(repository.reportingLoadCount, beforeLoads + 1);
+  const beforeSeriesTransactions = repository.transactionCount, beforeSeriesLoads = repository.reportingLoadCount;
+  const series = await service.monthlySeries("2026-10-01", "2026-11-30");
+  assert.equal(series.length, 2);
+  assert.equal(repository.transactionCount, beforeSeriesTransactions + 1);
+  assert.equal(repository.reportingLoadCount, beforeSeriesLoads + 1);
+});
+
+test("preview e commit de compra parcelada respeitam vencimento já persistido", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "due-existing-card");
+  const category = await service.createCategory({ name: "Casa", type: "expense", parentId: null }, "due-existing-category");
+  const statement = await service.createStatement({ cardAccountId: card, cycleStartOn: "2026-09-21", closingOn: "2026-10-20", dueOn: "2026-10-30" });
+  const input = { ...metadata, occurredOn: "2026-10-19", operation: "credit_purchase" as const, cardAccountId: card, totalAmountMinor: "300", installmentCount: 1, allocations: [{ categoryId: category, amountMinor: "300" }] };
+  const preview = await service.previewTransaction(input);
+  assert.equal(preview.installments?.[0]?.dueOn, "2026-10-30");
+  const committed = await service.createCreditPurchase(input, "existing-due-purchase");
+  assert.equal(committed.value.items[0]?.statementId, statement.id);
+  assert.equal(repository.statements.get(statement.id)?.dueOn, "2026-10-30");
+});
+
+test("reembolso de despesa revertida é recusado no preview e no commit; fechamento no dia de corte avança ciclo", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const checking = await service.createAccount({ name: "Conta", type: "checking", currency: "BRL", openingBalanceMinor: 10000n, openingDate: "2026-01-01", institutionId: null }, "refund-reversed-account");
+  const category = await service.createCategory({ name: "Casa", type: "expense", parentId: null }, "refund-reversed-category");
+  const original = await service.createExpense({ ...metadata, accountId: checking, amountMinor: "500", paymentMethod: "pix", allocations: [{ categoryId: category, amountMinor: "500" }] }, "refund-reversed-expense");
+  await service.reverseTransaction({ transactionId: original.value.id, occurredOn: "2026-10-26", reason: "Duplicada" }, "refund-reversed-reversal", { actor: "owner", source: "manual" });
+  const refund = { ...metadata, operation: "refund" as const, originalTransactionId: original.value.id, amountMinor: "100", accountId: checking };
+  await assert.rejects(() => service.previewTransaction(refund), { code: "INVALID_REFUND" });
+  await assert.rejects(() => service.createRefund(refund, "refund-reversed-commit"), { code: "INVALID_REFUND" });
+
+  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "refund-cutoff-card");
+  const purchase = await service.createCreditPurchase({ ...metadata, occurredOn: "2026-10-19", cardAccountId: card, totalAmountMinor: "500", installmentCount: 1, allocations: [{ categoryId: category, amountMinor: "500" }] }, "refund-cutoff-purchase");
+  const postedOnClosing = { ...metadata, occurredOn: "2026-10-19", postedOn: "2026-10-20", operation: "refund" as const, originalTransactionId: purchase.value.transaction.id, amountMinor: "100", accountId: card };
+  const cutoffPreview = await service.previewTransaction(postedOnClosing);
+  assert.equal(cutoffPreview.statementPlan?.closingOn, "2026-11-20");
+  const committedRefund = await service.createRefund(postedOnClosing, "refund-cutoff-commit");
+  assert.equal(repository.items.find(item => item.sourceTransactionId === committedRefund.value.id)?.statementId, cutoffPreview.statementId ?? [...repository.statements.values()].find(statement => statement.closingOn === "2026-11-20")?.id);
+});
+
+test("status derivado da fatura prioriza aberta, atraso, parcial, quitada e crédito", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2020-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "derived-status-card");
+  const addBill = async (closing: string, due: string, status: Statement["status"], billed: bigint, paid = 0n) => {
+    const statement = await service.createStatement({ cardAccountId: card, cycleStartOn: closing.slice(0, 7) + "-01", closingOn: closing, dueOn: due });
+    repository.statements.set(statement.id, { ...statement, status });
+    if (billed) repository.items.push({ id: crypto.randomUUID(), statementId: statement.id, sourceTransactionId: crypto.randomUUID(), installmentPlanId: null, installmentNumber: null, itemType: "adjustment", amountMinor: billed, description: "bill" });
+    if (paid) repository.payments.push({ id: crypto.randomUUID(), statementId: statement.id, transferTransactionId: crypto.randomUUID(), amountMinor: paid });
+    return statement;
+  };
+  const open = await addBill("2020-01-20", "2020-01-28", "open", 100n);
+  const overdue = await addBill("2020-02-20", "2020-02-28", "closed", 100n);
+  const partial = await addBill("2020-03-20", "2020-03-28", "closed", 100n, 20n);
+  const credit = await addBill("2020-04-20", "2020-04-28", "closed", -50n);
+  assert.equal((await service.statementDetail(open.id)).status, "open");
+  assert.equal((await service.statementDetail(overdue.id)).status, "overdue");
+  assert.equal((await service.statementDetail(partial.id)).status, "overdue");
+  assert.equal((await service.statementDetail(credit.id)).status, "paid");
+  assert.equal((await service.statementDetail(credit.id)).creditBalanceMinor, 50n);
+  const future = await addBill("2099-04-20", "2099-04-28", "closed", 100n);
+  assert.equal((await service.statementDetail(future.id)).status, "closed");
+});
+
+test("realização idempotente não duplica lançamentos e previsões antigas opcionais permanecem visíveis", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const account = await service.createAccount({ name: "Conta", type: "checking", currency: "BRL", openingBalanceMinor: 10000n, openingDate: "2020-01-01", institutionId: null }, "forecast-idem-account");
+  const category = await service.createCategory({ name: "Casa", type: "expense", parentId: null }, "forecast-idem-category");
+  const forecast = await service.createExpenseForecast({ accountId: account, expectedOn: "2020-02-01", description: "Conta antiga", amountMinor: "500", categoryId: category }, "forecast-idem-create");
+  assert.equal((await service.listExpenseForecasts("2026-10-01", "2026-10-31")).length, 0);
+  assert.equal((await service.listExpenseForecasts("2026-10-01", "2026-10-31", undefined, true)).length, 1);
+  const realize = { occurredOn: "2026-10-25", paymentMethod: "pix" as const, source: "manual" as const, reviewStatus: "confirmed" as const };
+  const first = await service.realizeExpenseForecast(forecast.value.id, realize, "forecast-realize-idem");
+  const second = await service.realizeExpenseForecast(forecast.value.id, realize, "forecast-realize-idem");
+  assert.equal(second.replayed, true);
+  assert.equal(repository.entries.filter(entry => entry.transactionId === first.value.transaction.id).length, 1);
+  assert.equal(repository.transactions.size, 1);
+});
+
+test("estorno de compra parcelada após pagamento preserva parcelas pagas e credita o valor exato", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: 50000n, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "installment-refund-card");
+  const bank = await service.createAccount({ name: "Banco", type: "checking", currency: "BRL", openingBalanceMinor: 100000n, openingDate: "2026-01-01", institutionId: null }, "installment-refund-bank");
+  const category = await service.createCategory({ name: "Casa", type: "expense", parentId: null }, "installment-refund-category");
+  const purchase = await service.createCreditPurchase({ ...metadata, occurredOn: "2026-10-10", cardAccountId: card, totalAmountMinor: "1000", installmentCount: 3, allocations: [{ categoryId: category, amountMinor: "1000" }] }, "installment-refund-purchase");
+  const firstItem = purchase.value.items[0]!;
+  const firstStatement = repository.statements.get(firstItem.statementId)!;
+  await service.closeStatement(firstStatement.id, "installment-refund-close");
+  await service.payStatement({ ...metadata, statementId: firstStatement.id, fromAccountId: bank, amountMinor: firstItem.amountMinor.toString() }, "installment-refund-pay");
+  const beforeItems = [...repository.items], beforePayments = [...repository.payments];
+  const input = { ...metadata, originalTransactionId: purchase.value.transaction.id, amountMinor: "1000", accountId: card };
+  const refund = await service.createRefund(input, "installment-refund-create");
+  const replay = await service.createRefund(input, "installment-refund-create");
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(repository.items.filter(item => item.installmentPlanId === purchase.value.plan.id), beforeItems.filter(item => item.installmentPlanId === purchase.value.plan.id));
+  assert.deepEqual(repository.payments, beforePayments);
+  assert.equal(repository.items.find(item => item.sourceTransactionId === refund.value.id)?.amountMinor, -1000n);
+  assert.equal(repository.items.length, beforeItems.length + 1);
+  assert.equal(repository.payments.length, beforePayments.length);
+});
+
+test("statementForecast includePending inclui fatura vencida em aberto e omite fatura antiga quitada", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2020-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "forecast-statement-card");
+  const open = await service.createStatement({ cardAccountId: card, cycleStartOn: "2020-01-01", closingOn: "2020-01-20", dueOn: "2020-01-28" });
+  const paid = await service.createStatement({ cardAccountId: card, cycleStartOn: "2020-02-01", closingOn: "2020-02-20", dueOn: "2020-02-28" });
+  for (const statement of [open, paid]) repository.items.push({ id: crypto.randomUUID(), statementId: statement.id, sourceTransactionId: crypto.randomUUID(), installmentPlanId: null, installmentNumber: null, itemType: "adjustment", amountMinor: 500n, description: "Conta" });
+  repository.payments.push({ id: crypto.randomUUID(), statementId: paid.id, transferTransactionId: crypto.randomUUID(), amountMinor: 500n });
+  assert.equal(Object.values(await service.statementForecast("2026-10-01", "2026-10-31")).flat().length, 0);
+  const pending = Object.values(await service.statementForecast("2026-10-01", "2026-10-31", true)).flat();
+  assert.deepEqual(pending.map(row => row.statementId), [open.id]);
 });
 
 test("saldos, crédito disponível e totais de fatura derivados excedem BIGINT sem perder precisão", async () => {
@@ -150,6 +288,7 @@ test("receita, despesa, transferência, compra parcelada, reembolso, pagamento p
   await assert.rejects(() => service.createCashback({ ...metadata, accountId: checking, amountMinor: "500000", categoryId: incomeCategory }, "salary-1"), (error: unknown) => error instanceof DomainError && error.code === "IDEMPOTENCY_CONFLICT");
   const expense = await service.createExpense({ ...metadata, accountId: checking, amountMinor: "10000", paymentMethod: "debit", allocations: [{ categoryId: expenseCategory, amountMinor: "10000" }] }, "expense-1");
   assert.equal(await service.accountBalance(checking), 990000n);
+  assert.equal(await service.accountBalance(checking, "2025-12-31"), 0n);
   await service.createTransfer({ ...metadata, fromAccountId: checking, toAccountId: savings, amountMinor: "1000" }, "transfer-1");
   assert.equal(await service.accountBalance(checking) + await service.accountBalance(savings), 990000n);
   const history = await service.transactionHistory("2026-10-01", "2026-10-31");
@@ -198,7 +337,7 @@ test("receita, despesa, transferência, compra parcelada, reembolso, pagamento p
 
 test("vencimento em/antes do fechamento cai no mês seguinte e fatura fechada não é reescrita", async () => {
   const repository = new MemoryRepository(), service = new FinanceService(repository);
-  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "EUR", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 20, billingTimezone: "Europe/Warsaw", billingMode: "manual" } }, "auto-card");
+  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 20, billingTimezone: "Europe/Warsaw", billingMode: "manual" } }, "auto-card");
   await service.configureCard({ accountId: card, creditLimitMinor: null, closingDay: 20, dueDay: 20, billingTimezone: "Europe/Warsaw", billingMode: "manual" }, "auto-card-settings");
   const category = await service.createCategory({ name: "Gasto", type: "expense", parentId: null }, "auto-category");
   const purchase = await service.createCreditPurchase({ ...metadata, cardAccountId: card, totalAmountMinor: "100", installmentCount: 1, allocations: [{ categoryId: category, amountMinor: "100" }] }, "close-purchase");
@@ -252,7 +391,7 @@ test("previsão avulsa só altera saldo no fluxo idempotente de realização; co
 test("relatório por categoria usa última revisão, estornos, reversões e compra parcelada uma vez", async () => {
   const service = new FinanceService(new MemoryRepository());
   const checking = await service.createAccount({ name: "Checking", type: "checking", currency: "BRL", openingBalanceMinor: 100_000n, openingDate: "2026-01-01", institutionId: null }, "category-report-checking");
-  const card = await service.createAccount({ name: "Card", type: "credit_card", currency: "EUR", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "Europe/Warsaw", billingMode: "manual" } }, "category-report-card");
+  const card = await service.createAccount({ name: "Card", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "Europe/Warsaw", billingMode: "manual" } }, "category-report-card");
   const groceries = await service.createCategory({ name: "Mercado", type: "expense", parentId: null }, "category-report-groceries");
   const dining = await service.createCategory({ name: "Restaurante", type: "expense", parentId: null }, "category-report-dining");
   const salary = await service.createCategory({ name: "Salário", type: "income", parentId: null }, "category-report-salary");
@@ -267,7 +406,7 @@ test("relatório por categoria usa última revisão, estornos, reversões e comp
   assert.deepEqual(report, [
     { currency: "BRL", categoryId: dining, categoryName: "Restaurante", incomeMinor: "0", expenseMinor: "800", netMinor: "-800" },
     { currency: "BRL", categoryId: salary, categoryName: "Salário", incomeMinor: "5000", expenseMinor: "0", netMinor: "5000" },
-    { currency: "EUR", categoryId: groceries, categoryName: "Mercado", incomeMinor: "0", expenseMinor: "900", netMinor: "-900" },
+    { currency: "BRL", categoryId: groceries, categoryName: "Mercado", incomeMinor: "0", expenseMinor: "900", netMinor: "-900" },
   ]);
   assert.equal(categoryReportResponseSchema.safeParse({ ok: true, data: report }).success, true);
 });
@@ -329,4 +468,14 @@ test("reembolso de cartão usa data postada e alocações efetivas também no pr
   const detail = await service.statementDetail(preview.statementId ?? [...repository.statements.values()].find(item => item.closingOn === "2026-11-20")!.id);
   assert.equal(detail.items.find(item => item.sourceTransactionId === refund.value.id)?.amountMinor, -2000n);
   assert.deepEqual((await service.transactionHistory("2026-10-01", "2026-10-31")).find(item => item.id === refund.value.id)?.allocations.map(item => [item.categoryId, item.amountMinor]), [[categoryB, 2000n]]);
+});
+
+
+test("monthly series preserves ISO years below 100 and the final supported year", async () => {
+  const service = new FinanceService(new MemoryRepository());
+  const ancient = await service.monthlySeries("0001-01-15", "0001-02-10");
+  assert.deepEqual(ancient.map(row => [row.from, row.to]), [["0001-01-15", "0001-01-31"], ["0001-02-01", "0001-02-10"]]);
+  const final = await service.monthlySeries("9999-12-01", "9999-12-31");
+  assert.equal(final.length, 1);
+  assert.equal(final[0]?.to, "9999-12-31");
 });

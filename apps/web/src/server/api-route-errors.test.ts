@@ -118,3 +118,47 @@ test("category report endpoint validates the period and serializes categorized t
     if (previousRepository === undefined) delete runtime.marvinRepository; else runtime.marvinRepository = previousRepository;
   }
 });
+
+test("monthly series validates dates and serializes its response", async () => {
+  const token = process.env.MCP_API_TOKEN;
+  const runtime = globalThis as typeof globalThis & { marvinFinance?: unknown; marvinRepository?: unknown };
+  const previousService = runtime.marvinFinance, previousRepository = runtime.marvinRepository;
+  process.env.MCP_API_TOKEN = "test-api-token-with-at-least-32-bytes-long"; runtime.marvinRepository = {};
+  runtime.marvinFinance = { monthlySeries: async (from: string, to: string) => [{ from, to, balancesByCurrency: { BRL: "0" }, incomeMinorByCurrency: { BRL: "100" }, expenseMinorByCurrency: { BRL: "20" } }] };
+  try {
+    const headers = { authorization: `Bearer ${process.env.MCP_API_TOKEN}` }, context = { params: Promise.resolve({ path: ["reports", "monthly-series"] }) };
+    const response = await GET(new Request("http://localhost/api/v1/reports/monthly-series?from=2026-10-01&to=2026-10-31", { headers }), context);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, data: [{ from: "2026-10-01", to: "2026-10-31", balancesByCurrency: { BRL: "0" }, incomeMinorByCurrency: { BRL: "100" }, expenseMinorByCurrency: { BRL: "20" } }] });
+    assert.equal((await GET(new Request("http://localhost/api/v1/reports/monthly-series?from=nope&to=2026-10-31", { headers }), context)).status, 400);
+  } finally {
+    if (token === undefined) delete process.env.MCP_API_TOKEN; else process.env.MCP_API_TOKEN = token;
+    if (previousService === undefined) delete runtime.marvinFinance; else runtime.marvinFinance = previousService;
+    if (previousRepository === undefined) delete runtime.marvinRepository; else runtime.marvinRepository = previousRepository;
+  }
+});
+
+test("pending query validates booleans and account creation rejects non-BRL currency", async () => {
+  const token = process.env.MCP_API_TOKEN;
+  const runtime = globalThis as typeof globalThis & { marvinFinance?: unknown; marvinRepository?: unknown };
+  const previousService = runtime.marvinFinance, previousRepository = runtime.marvinRepository;
+  process.env.MCP_API_TOKEN = "test-api-token-with-at-least-32-bytes-long"; runtime.marvinRepository = {};
+  runtime.marvinFinance = { statementForecast: async (_from: string, _to: string, pending: boolean) => { assert.equal(pending, true); return {}; }, listExpenseForecasts: async (_from: string, _to: string, _currency: string | undefined, pending: boolean) => { assert.equal(pending, true); return []; } };
+  try {
+    const headers = { authorization: `Bearer ${process.env.MCP_API_TOKEN}` };
+    for (const route of ["statements", "expense-forecasts"]) {
+      const context = { params: Promise.resolve({ path: [route] }) };
+      const valid = await GET(new Request(`http://localhost/api/v1/${route}?from=2026-10-01&to=2026-10-31&includePending=true`, { headers }), context);
+      assert.equal(valid.status, 200);
+      const invalid = await GET(new Request(`http://localhost/api/v1/${route}?from=2026-10-01&to=2026-10-31&includePending=yes`, { headers }), context);
+      assert.equal(invalid.status, 400);
+    }
+    const postContext = { params: Promise.resolve({ path: ["accounts"] }) };
+    const response = await (await import("../app/api/v1/[...path]/route")).POST(new Request("http://localhost/api/v1/accounts", { method: "POST", headers: { ...headers, "content-type": "application/json", "idempotency-key": "eur-account" }, body: JSON.stringify({ name: "Euro", type: "checking", currency: "EUR", openingBalanceMinor: "0", openingDate: "2026-01-01", institutionId: null }) }), postContext);
+    assert.equal(response.status, 400);
+  } finally {
+    if (token === undefined) delete process.env.MCP_API_TOKEN; else process.env.MCP_API_TOKEN = token;
+    if (previousService === undefined) delete runtime.marvinFinance; else runtime.marvinFinance = previousService;
+    if (previousRepository === undefined) delete runtime.marvinRepository; else runtime.marvinRepository = previousRepository;
+  }
+});

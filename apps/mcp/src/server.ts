@@ -11,14 +11,16 @@ import {
   transactionCorrectionResponseSchema, transactionReversedResponseSchema,
   previewTransactionResponseSchema, previewTransactionSchema, reportQuerySchema, statementDetailSchema,
   statementItemResponseSchema, statementPaymentResponseSchema, transactionResponseSchema,
-  creditPurchaseCreatedResponseSchema, monthlySummarySchema as apiMonthlySummarySchema,
+  creditPurchaseCreatedResponseSchema, monthlySummarySchema as apiMonthlySummarySchema, monthlySeriesSchema,
 } from "@finance/contracts";
 import { z } from "zod";
 import { bearerTokenIsValid } from "./auth.js";
 import { WebApiClient, WebApiError } from "./api-client.js";
 
 const periodSchema = z.object({ from: reportQuerySchema.shape.from, to: reportQuerySchema.shape.to });
-const forecastPeriodSchema = reportQuerySchema.shape;
+const pendingPeriodSchema = periodSchema.extend({ includePending: z.boolean().default(false) });
+const forecastQuerySchema = reportQuerySchema.safeExtend({ includePending: z.boolean().default(false) });
+const forecastPeriodSchema = forecastQuerySchema.shape;
 const withIdempotencyKey = (schema: z.ZodObject<z.ZodRawShape>): z.ZodObject<z.ZodRawShape> => {
   const { source: _source, ...shape } = schema.shape;
   return z.object({ ...shape, idempotencyKey: idempotencyKeySchema });
@@ -86,19 +88,27 @@ export function createFinanceMcpServer(api: WebApiClient) {
     const { from, to } = validatedPeriod(input);
     return api.request(`v1/reports/summary?from=${from}&to=${to}`, apiMonthlySummarySchema);
   }));
-  server.registerTool("get_statements", {
-    description: "Consulta faturas e detalhes no período informado.", inputSchema: periodSchema.shape,
+  server.registerTool("get_monthly_series", {
+    description: "Consulta uma série mensal de receitas e despesas em reais.", inputSchema: periodSchema.shape,
   }, input => apiToolResult(() => {
     const { from, to } = validatedPeriod(input);
-    return api.request(`v1/statements?from=${from}&to=${to}`, statementsOutputSchema);
+    return api.request(`v1/reports/monthly-series?from=${from}&to=${to}`, monthlySeriesSchema);
+  }));
+  server.registerTool("get_statements", {
+    description: "Consulta faturas no período e, opcionalmente, pendências antigas.", inputSchema: pendingPeriodSchema.shape,
+  }, input => apiToolResult(() => {
+    const { from, to } = validatedPeriod(input);
+    const { includePending } = pendingPeriodSchema.parse(input);
+    return api.request(`v1/statements?from=${from}&to=${to}&includePending=${includePending}`, statementsOutputSchema);
   }));
   server.registerTool("get_expense_forecasts", {
     description: "Lista previsões avulsas de despesa por período e moeda, separadas de saldos e faturas.",
     inputSchema: forecastPeriodSchema,
   }, input => apiToolResult(() => {
-    const { from, to, currency } = reportQuerySchema.parse(input);
+    const { from, to, currency, includePending } = forecastQuerySchema.parse(input);
     const query = new URLSearchParams({ from, to });
     if (currency) query.set("currency", currency);
+    query.set("includePending", String(includePending));
     return api.request(`v1/expense-forecasts?${query}`, z.array(expenseForecastSchema));
   }));
   server.registerTool("preview_transaction", {
