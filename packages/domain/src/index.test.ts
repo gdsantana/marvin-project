@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { accountWithBalanceSchema, createAccountSchema, createExpenseSchema, correctTransactionSchema, derivedMinorAmountSchema, minorAmountSchema, monthlySummarySchema, positiveMinorAmountSchema, reverseTransactionSchema, statementForecastEntrySchema, transactionAuditContextSchema, transactionCorrectionResponseSchema, transactionReversedResponseSchema } from "@finance/contracts";
+import { accountWithBalanceSchema, categoryReportResponseSchema, createAccountSchema, createExpenseSchema, correctTransactionSchema, derivedMinorAmountSchema, minorAmountSchema, monthlySummarySchema, positiveMinorAmountSchema, reverseTransactionSchema, statementForecastEntrySchema, transactionAuditContextSchema, transactionCorrectionResponseSchema, transactionReversedResponseSchema } from "@finance/contracts";
 import {
   addMonths, DomainError, FinanceService, splitInstallments,
   type Account, type Allocation, type Entry, type FinanceRepository, type Statement,
@@ -247,6 +247,29 @@ test("previsão avulsa só altera saldo no fluxo idempotente de realização; co
   const salary = await service.createIncome({ ...metadata, accountId: checking, amountMinor: "100", categoryId: incomeCategory }, "reversed-salary");
   await service.reverseTransaction({ transactionId: salary.value.id, occurredOn: "2026-10-27", reason: "Corrigindo valor", replacement: { kind: "income", ...metadata, accountId: checking, amountMinor: "80", categoryId: incomeCategory } }, "reverse-with-replacement", { actor: "owner", source: "manual" });
   assert.equal((await service.monthlyReport("2026-10-01", "2026-10-31")).BRL?.incomeMinor, "80");
+});
+
+test("relatório por categoria usa última revisão, estornos, reversões e compra parcelada uma vez", async () => {
+  const service = new FinanceService(new MemoryRepository());
+  const checking = await service.createAccount({ name: "Checking", type: "checking", currency: "BRL", openingBalanceMinor: 100_000n, openingDate: "2026-01-01", institutionId: null }, "category-report-checking");
+  const card = await service.createAccount({ name: "Card", type: "credit_card", currency: "EUR", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "Europe/Warsaw", billingMode: "manual" } }, "category-report-card");
+  const groceries = await service.createCategory({ name: "Mercado", type: "expense", parentId: null }, "category-report-groceries");
+  const dining = await service.createCategory({ name: "Restaurante", type: "expense", parentId: null }, "category-report-dining");
+  const salary = await service.createCategory({ name: "Salário", type: "income", parentId: null }, "category-report-salary");
+  const expense = await service.createExpense({ ...metadata, accountId: checking, amountMinor: "1000", paymentMethod: "debit", allocations: [{ categoryId: groceries, amountMinor: "1000" }] }, "category-report-expense");
+  await service.correctTransaction({ transactionId: expense.value.id, reason: "Reclassificação", metadata: {}, allocations: [{ categoryId: dining, amountMinor: "1000" }] }, "category-report-revision", { actor: "owner", source: "manual" });
+  await service.createRefund({ ...metadata, originalTransactionId: expense.value.id, amountMinor: "200", accountId: checking }, "category-report-refund");
+  const reversed = await service.createExpense({ ...metadata, accountId: checking, amountMinor: "300", paymentMethod: "cash", allocations: [{ categoryId: groceries, amountMinor: "300" }] }, "category-report-reversed");
+  await service.reverseTransaction({ transactionId: reversed.value.id, occurredOn: "2026-10-27", reason: "Correção" }, "category-report-reversal", { actor: "owner", source: "manual" });
+  await service.createIncome({ ...metadata, accountId: checking, amountMinor: "5000", categoryId: salary }, "category-report-income");
+  await service.createCreditPurchase({ ...metadata, cardAccountId: card, totalAmountMinor: "900", installmentCount: 3, allocations: [{ categoryId: groceries, amountMinor: "900" }] }, "category-report-installment");
+  const report = await service.categoryReport("2026-10-01", "2026-10-31");
+  assert.deepEqual(report, [
+    { currency: "BRL", categoryId: dining, categoryName: "Restaurante", incomeMinor: "0", expenseMinor: "800", netMinor: "-800" },
+    { currency: "BRL", categoryId: salary, categoryName: "Salário", incomeMinor: "5000", expenseMinor: "0", netMinor: "5000" },
+    { currency: "EUR", categoryId: groceries, categoryName: "Mercado", incomeMinor: "0", expenseMinor: "900", netMinor: "-900" },
+  ]);
+  assert.equal(categoryReportResponseSchema.safeParse({ ok: true, data: report }).success, true);
 });
 
 test("fechamento automático usa data local do cartão, faz catch-up e não cria movimentos", async () => {

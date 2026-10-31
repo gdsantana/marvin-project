@@ -34,7 +34,7 @@ Os limites descrevem a estrutura pretendida e a organização observada. Compila
 
 ## 3. API, contratos e autenticação
 
-`packages/contracts` centraliza schemas runtime e contratos de entradas/saídas. A API web oferece leituras de contas, categorias, transações, resumo, faturas, configurações de cartão e previsões; escritas de instituição, contas, categorias, receitas, despesas, transferências, compras no crédito, cashback, estornos, pagamentos/fechamento de faturas, previsões, correções e reversões. Toda escrita POST exige chave de idempotência e valida os corpos com Zod.
+`packages/contracts` centraliza schemas runtime e contratos de entradas/saídas. A API web oferece leituras de contas, categorias, transações, resumo, distribuição por categoria, faturas, configurações de cartão e previsões; escritas de instituição, contas, categorias, receitas, despesas, transferências, compras no crédito, cashback, estornos, pagamentos/fechamento de faturas, previsões, correções e reversões. Toda escrita POST exige chave de idempotência e valida os corpos com Zod.
 
 Limites atuais da API:
 

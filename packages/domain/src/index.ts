@@ -1,7 +1,7 @@
 import type {
   CreateCashbackInput, CreateCreditPurchaseInput, CreateExpenseInput, CreateIncomeInput, CreateRefundInput,
   CreateStatementInput, CreateTransferInput, DomainErrorCode, PayStatementInput,
-  PreviewTransactionInput, PreviewTransactionOutput, CreateExpenseForecastInput,
+  PreviewTransactionInput, PreviewTransactionOutput, CreateExpenseForecastInput, CategoryReport,
   RealizeExpenseForecastInput, CorrectTransactionInput, ReverseTransactionInput, TransactionAuditContext,
 } from "@finance/contracts";
 
@@ -507,6 +507,33 @@ export class FinanceService {
         }
       }
       return Object.fromEntries([...result].map(([currency, value]) => [currency, { incomeMinor: value.income.toString(), expenseMinor: value.expense.toString(), netMinor: (value.income - value.expense).toString() }]));
+    });
+  }
+
+  async categoryReport(from: string, to: string): Promise<CategoryReport[]> {
+    return this.repository.transaction(async tx => {
+      const allTransactions = await tx.transactions.list("0001-01-01", "9999-12-31");
+      const transactions = allTransactions.filter(transaction => transaction.occurredOn >= from && transaction.occurredOn <= to);
+      const categories = new Map((await tx.categories.list()).map(category => [category.id, category.name]));
+      const result = new Map<string, { currency: string; categoryId: UUID | null; categoryName: string | null; income: bigint; expense: bigint }>();
+      for (const transaction of transactions) {
+        if (transaction.kind === "transfer" || transaction.kind === "adjustment" || allTransactions.some(item => item.kind === "adjustment" && item.relatedTransactionId === transaction.id)) continue;
+        const entries = await tx.entries.listByTransaction(transaction.id), currencies = new Set<string>();
+        for (const entry of entries) { const account = await tx.accounts.get(entry.accountId); if (account) currencies.add(account.currency); }
+        if (currencies.size > 1) fail("CURRENCY_MISMATCH", "Relatório exige valores separados por moeda");
+        const currency = [...currencies][0]; if (!currency) continue;
+        const revisions = await tx.revisions.listByTransaction(transaction.id);
+        const latestAllocations = [...revisions].reverse().find(revision => revision.allocations !== null)?.allocations;
+        for (const allocation of latestAllocations ?? await tx.allocations.listByTransaction(transaction.id)) {
+          const key = `${currency}:${allocation.categoryId ?? "uncategorized"}`;
+          const current = result.get(key) ?? { currency, categoryId: allocation.categoryId, categoryName: allocation.categoryId ? categories.get(allocation.categoryId) ?? null : null, income: 0n, expense: 0n };
+          if (transaction.kind === "income") current.income += allocation.amountMinor;
+          else if (transaction.kind === "refund") current.expense -= allocation.amountMinor;
+          else if (transaction.kind === "expense") current.expense += -allocation.amountMinor;
+          result.set(key, current);
+        }
+      }
+      return [...result.values()].map(({ currency, categoryId, categoryName, income, expense }) => ({ currency, categoryId, categoryName, incomeMinor: income.toString(), expenseMinor: expense.toString(), netMinor: (income - expense).toString() }));
     });
   }
 

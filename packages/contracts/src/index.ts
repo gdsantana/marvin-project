@@ -128,6 +128,10 @@ export const statementDetailSchema = z.object({
   billedMinor: derivedMinorAmountSchema, paidMinor: derivedMinorAmountSchema, remainingMinor: derivedMinorAmountSchema,
 });
 export const monthlyReportSchema = z.record(currencySchema, z.object({ incomeMinor: derivedMinorAmountSchema, expenseMinor: derivedMinorAmountSchema, netMinor: derivedMinorAmountSchema }));
+export const categoryReportSchema = z.array(z.object({
+  currency: currencySchema, categoryId: idSchema.nullable(), categoryName: z.string().nullable(),
+  incomeMinor: derivedMinorAmountSchema, expenseMinor: derivedMinorAmountSchema, netMinor: derivedMinorAmountSchema,
+}));
 export const monthlySummarySchema = z.object({
   from: dateSchema, to: dateSchema, balancesByCurrency: z.record(currencySchema, derivedMinorAmountSchema),
   incomeMinorByCurrency: z.record(currencySchema, derivedMinorAmountSchema), expenseMinorByCurrency: z.record(currencySchema, derivedMinorAmountSchema),
@@ -145,6 +149,7 @@ export const accountsResponseSchema = responseSchema(z.array(accountWithBalanceS
 export const categoriesResponseSchema = responseSchema(z.array(categorySchema));
 export const transactionsResponseSchema = responseSchema(z.array(transactionResponseSchema));
 export const monthlyReportResponseSchema = responseSchema(monthlyReportSchema);
+export const categoryReportResponseSchema = responseSchema(categoryReportSchema);
 export const monthlySummaryResponseSchema = responseSchema(monthlySummarySchema);
 export const statementForecastResponseSchema = responseSchema(statementForecastSchema);
 export const statementsResponseSchema = responseSchema(z.array(statementDetailSchema));
@@ -216,5 +221,6 @@ export type InstitutionResponse = z.infer<typeof institutionSchema>;
 export type AccountResponse = z.infer<typeof accountWithBalanceSchema>;
 export type CategoryResponse = z.infer<typeof categorySchema>;
 export type MonthlyReport = z.infer<typeof monthlyReportSchema>;
+export type CategoryReport = z.infer<typeof categoryReportSchema>[number];
 export type MonthlySummary = z.infer<typeof monthlySummarySchema>;
 export type StatementForecast = z.infer<typeof statementForecastSchema>;

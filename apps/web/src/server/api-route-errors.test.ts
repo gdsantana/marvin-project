@@ -92,3 +92,29 @@ test("a failed session lookup stays a JSON 401 at the GET handler boundary", asy
     else process.env.MCP_API_TOKEN = originalToken;
   }
 });
+
+test("category report endpoint validates the period and serializes categorized totals", async () => {
+  const token = process.env.MCP_API_TOKEN;
+  const runtime = globalThis as typeof globalThis & { marvinFinance?: unknown; marvinRepository?: unknown };
+  const previousService = runtime.marvinFinance;
+  const previousRepository = runtime.marvinRepository;
+  process.env.MCP_API_TOKEN = "test-api-token-with-at-least-32-bytes-long";
+  runtime.marvinRepository = {};
+  runtime.marvinFinance = { categoryReport: async (from: string, to: string) => {
+    assert.equal(from, "2026-10-01"); assert.equal(to, "2026-10-31");
+    return [{ currency: "BRL", categoryId: null, categoryName: null, incomeMinor: "0", expenseMinor: "1250", netMinor: "-1250" }];
+  } };
+  try {
+    const headers = { authorization: `Bearer ${process.env.MCP_API_TOKEN}` };
+    const context = { params: Promise.resolve({ path: ["reports", "categories"] }) };
+    const response = await GET(new Request("http://localhost/api/v1/reports/categories?from=2026-10-01&to=2026-10-31", { headers }), context);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, data: [{ currency: "BRL", categoryId: null, categoryName: null, incomeMinor: "0", expenseMinor: "1250", netMinor: "-1250" }] });
+    const invalid = await GET(new Request("http://localhost/api/v1/reports/categories?from=invalid&to=2026-10-31", { headers }), context);
+    assert.equal(invalid.status, 400);
+  } finally {
+    if (token === undefined) delete process.env.MCP_API_TOKEN; else process.env.MCP_API_TOKEN = token;
+    if (previousService === undefined) delete runtime.marvinFinance; else runtime.marvinFinance = previousService;
+    if (previousRepository === undefined) delete runtime.marvinRepository; else runtime.marvinRepository = previousRepository;
+  }
+});

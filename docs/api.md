@@ -98,6 +98,10 @@ Exemplo:
 {"ok":true,"data":{"from":"2026-10-01","to":"2026-10-31","balancesByCurrency":{"BRL":"450000"},"incomeMinorByCurrency":{"BRL":"500000"},"expenseMinorByCurrency":{"BRL":"50000"}}}
 ```
 
+### `GET /v1/reports/categories?from=YYYY-MM-DD&to=YYYY-MM-DD`
+
+Totais de receitas e despesas por categoria e moeda no intervalo, com `currency`, `categoryId`, `categoryName`, `incomeMinor`, `expenseMinor` e `netMinor`. Valores são strings em unidades mínimas. A classificação considera revisões, reembolsos e reversões; compras parceladas são reconhecidas uma única vez na data da compra. Não há conversão entre moedas.
+
 ## Escritas e preview
 
 Todas as escritas exigem sessão + CSRF ou bearer MCP e um cabeçalho `Idempotency-Key` com 1–200 caracteres. Reutilizar uma chave com o mesmo payload devolve o mesmo resultado; usar a chave para outro payload retorna `409 IDEMPOTENCY_CONFLICT`. O preview é somente leitura e não exige chave de idempotência.

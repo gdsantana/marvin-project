@@ -81,7 +81,7 @@ Não confundir os sinais das duas tabelas: um item de fatura positivo representa
 2. **Compromissos futuros:** parcelas aparecem nas respectivas faturas, junto de projeções identificadas como previstas. Não há métrica de orçamento ou competência mensal por categoria no escopo inicial.
 3. **Fluxo de caixa bancário:** quando a fatura é paga, há saída de dinheiro da conta corrente. O pagamento não gera nova despesa categorizada.
 
-Os relatórios devem nomear claramente sua perspectiva. Não somar os lançamentos patrimoniais originais com todas as parcelas como se fossem despesas independentes.
+Os relatórios devem nomear claramente sua perspectiva. Não somar os lançamentos patrimoniais originais com todas as parcelas como se fossem despesas independentes. O relatório por categoria implementado usa a data da transação original, alocações efetivas e moeda da conta; reembolsos reduzem a despesa da categoria e operações revertidas são excluídas. A série mensal usa a mesma perspectiva do resumo de receitas e despesas.
 
 ## 3. Modelo entidade-relacionamento
 

@@ -3,7 +3,7 @@ import {
   accountsResponseSchema, categoriesResponseSchema, creditCardSettingsSchema, createAccountSchema, createCashbackSchema, domainErrorCodeSchema,
   createCategorySchema, createCreditPurchaseSchema, createExpenseForecastSchema, createExpenseSchema, createIncomeSchema,
   createInstitutionSchema, createRefundSchema, createTransferSchema, createdIdResponseSchemaEnvelope,
-  creditPurchaseCreatedResponseSchema, institutionsResponseSchema, monthlySummaryResponseSchema,
+  creditPurchaseCreatedResponseSchema, institutionsResponseSchema, monthlySummaryResponseSchema, categoryReportResponseSchema,
   correctTransactionSchema, expenseForecastCreatedResponseSchema, expenseForecastResponseSchema, expenseForecastSchema,
   payStatementSchema, previewTransactionResponseEnvelopeSchema, previewTransactionSchema, realizeExpenseForecastSchema, responseSchema,
   reportQuerySchema, reverseTransactionSchema, persistedResultSchema, statementCloseResponseSchema, statementPaymentCreatedResponseSchema,
@@ -65,6 +65,11 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
       const statementIds = Object.values(forecast).flat().map(item => item.statementId);
       const statements = await Promise.all(statementIds.map(id => service.statementDetail(id)));
       return json(statements, 200, statementsResponseSchema);
+    }
+    if (route === "reports/categories") {
+      const dates = parsePeriod(url);
+      if (!dates.success) return dates.response;
+      return json(await service.categoryReport(dates.from, dates.to), 200, categoryReportResponseSchema);
     }
     if (route === "reports/summary") {
       const dates = parsePeriod(url);
