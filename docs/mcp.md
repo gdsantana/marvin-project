@@ -21,9 +21,10 @@ O cliente HTTP envia Bearer para a API, valida o envelope e valida `data` com sc
 - `get_card_settings`: recebe `accountId` e consulta limite disponível configurado, dias de fechamento/vencimento, fuso e modo do cartão.
 - `get_categories`: lista categorias para classificação.
 - `get_transactions`: recebe `from` e `to` e consulta o intervalo.
-- `get_statements`: recebe `from` e `to` e lista faturas detalhadas por vencimento.
+- `get_statements`: recebe `from` e `to` e lista faturas detalhadas por vencimento. `includePending` é opcional e booleano; quando `true`, inclui faturas ainda pendentes mesmo com vencimento fora do período.
 - `get_monthly_summary`: recebe `from` e `to` e retorna saldos/fluxos por moeda.
-- `get_expense_forecasts`: recebe `from`, `to` e opcionalmente `currency`; lista previsões avulsas projetadas, realizadas e canceladas.
+- `get_monthly_series`: recebe `from` e `to` e retorna um array de resumos mensais, cada um com o período e mapas de saldo, receita e despesa.
+- `get_expense_forecasts`: recebe `from`, `to` e opcionalmente `currency`; lista previsões avulsas projetadas, realizadas e canceladas. `includePending` é opcional e booleano; quando `true`, inclui previsões ainda projetadas mesmo que a data esperada fique fora do período.
 
 ### Preview
 
@@ -32,6 +33,8 @@ O cliente HTTP envia Bearer para a API, valida o envelope e valida `data` com sc
 ### Escrita
 
 Todas as ferramentas abaixo exigem `idempotencyKey`; o MCP o envia como `Idempotency-Key`. A origem é definida pelo servidor como `hermes` e as entradas são validadas novamente com os contracts antes de chamar a API.
+
+Moeda suportada na criação de contas é BRL. `get_transactions` pode incluir `canReverse`, calculado pela API a partir do histórico completo. `get_statements` pode incluir `creditBalanceMinor`; o `status` derivado também vem da API. O MCP não implementa regras para esses campos.
 
 - `create_institution`, `create_account`, `create_category`.
 - `create_income`, `create_expense`, `create_transfer`, `create_credit_purchase`, `create_cashback`, `create_refund`.

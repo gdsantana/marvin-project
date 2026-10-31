@@ -42,3 +42,8 @@ Este registro acompanha o comportamento implementado em `packages/contracts` e `
 ## Limites desta entrega
 
 Não há investimento, câmbio, orçamento, recorrência, geração de lançamentos financeiros em faturas, acesso ao banco no domínio ou execução de migrations. A porta SQL deve garantir FKs/uniques/constraints e consistência serializável de operações concorrentes, inclusive idempotência e limite de pagamento.
+
+
+## Consistência e BRL — 31/10/2026
+
+O ADR 0010 rege BRL-only, saldo inicial efetivo a partir da abertura, preparação financeira compartilhada, ciclos exclusivos no fechamento e relatórios em snapshot único. Cancelamento preserva original e compensação; a UI permite mostrar os cancelados. Estornos reais mantêm parcelas/pagamentos, com crédito no cartão. O detalhe da fatura deriva atraso e quitação e expõe crédito excedente. APIs e MCP documentam série mensal e `includePending`. Resultados de execução ficam somente na matriz de verificação datada.

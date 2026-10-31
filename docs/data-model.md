@@ -1,9 +1,17 @@
 # marvin-project — Modelagem de Dados e Handoff Técnico
 
-> **Status:** proposta arquitetural para implementação, ainda sem migrations executadas  
-> **Versão:** 1.0 — 2026-10-25  
+> **Status:** handoff arquitetural com partes implementadas; consulte [migrations](migrations.md) e [decisões de implementação](implementation-decisions.md) para o estado efetivo.
+> **Versão:** 1.1 — 2026-10-31
 > **Idioma do produto:** português (pt-BR); nomes técnicos em inglês  
 > **Público:** agente de implementação, engenheiro full-stack e futuro mantenedor
+
+## Regras vigentes após a auditoria de 31/10/2026
+
+O [ADR 0010](adr/0010-platform-consistency-and-brl.md) restringe o produto atual a BRL, superando exemplos multimoeda deste handoff. A proposta de investimentos em §17 permanece futura e não autoriza implementação. Outras moedas exigem decisão futura, sem conversão automática de registros existentes.
+
+Saldo antes da abertura é zero; o agregado omite a conta. Preview e gravação compartilham preparação e usam as datas da fatura persistida. Compras e estornos no dia do fechamento pertencem ao próximo ciclo. Resumos usam um snapshot e a mesma projeção econômica de categorias e série mensal.
+
+Cancelamento usa compensação rastreável, sem DELETE, com original e compensação ocultos por padrão no extrato. Estorno real reduz a categoria original e credita a conta/cartão; parcelas e pagamentos são preservados. Fatura fechada sem valor a pagar é quitada; `creditBalanceMinor` informa excedente, sem alocação automática a outras faturas. Atraso deriva da data civil do cartão. `canReverse` vem do backend com histórico completo. `includePending` une o período solicitado às pendências existentes.
 
 ## 0. Objetivo e instruções ao agente
 
@@ -38,7 +46,7 @@ Este documento define **o modelo de domínio, os dados e os invariantes**; não 
 
 ### 1.2 Stack definida para implementação
 
-Decisão registrada no [ADR 0002](adr/0002-application-stack.md); ainda não implementada. Contratos HTTP compartilhados por web e MCP pertencem a `packages/contracts`; regras e validações financeiras pertencem a `packages/domain`.
+Decisão registrada no [ADR 0002](adr/0002-application-stack.md), implementada nos workspaces atuais. Contratos HTTP compartilhados por web e MCP pertencem a `packages/contracts`; regras e validações financeiras pertencem a `packages/domain`.
 
 | Camada | Escolha definida | Observação |
 |---|---|---|
@@ -130,7 +138,7 @@ Não armazenar credenciais bancárias nesta tabela.
 | `institution_id` | UUID NULL | FK `institutions` (pode ser nulo para dinheiro) |
 | `name` | TEXT | obrigatório |
 | `type` | TEXT | `checking`, `savings`, `cash`, `credit_card` |
-| `currency` | CHAR(3) | ex.: `BRL`, `PLN`, `EUR` |
+| `currency` | CHAR(3) | exclusivamente `BRL` |
 | `opening_balance_minor` | BIGINT | padrão `0`; assinado |
 | `opening_date` | DATE | obrigatório |
 | `is_archived` | BOOLEAN | padrão `false` |
@@ -401,14 +409,14 @@ Descontos, antecipações, cancelamentos, reembolsos e estornos devem preservar 
 6. **Cashback na fatura:** nova transação de crédito (`account_entry` positiva no cartão), com item de fatura negativo.
 7. **Faturas encerradas:** preservar itens históricos; mudanças devem seguir um fluxo de ajuste/retificação identificável.
 8. **Parcelamento da fatura** é diferente de **parcelamento de uma compra**: envolve financiamento, encargos e novos prazos; **fora do MVP**, exige modelagem específica.
-9. **Moeda por conta:** cada conta tem uma moeda-base. No escopo atual, exibir saldos e relatórios separados por moeda; conversão, consolidação cambial e transferências entre moedas ficam fora do escopo.
+9. **Moeda por conta:** contas e previsões usam exclusivamente BRL. Não há câmbio.
 10. **Conta sem saldo suficiente:** não impedir por padrão operações legítimas de cartão/passivo; saldo negativo da conta corrente pode gerar aviso, dependendo da configuração.
 
 ## 8. Cálculos e consultas de domínio
 
 **Saldo da conta:** saldo inicial + movimentações até a data de corte. 
 
-**Patrimônio líquido consolidado:** soma dos saldos das contas de ativo e dos passivos assinados **após converter a uma moeda-base**; até haver FX histórico confiável, apresentar totais separados por moeda.
+**Patrimônio líquido consolidado:** soma dos saldos das contas de ativo e dos passivos assinados em BRL, respeitando a data de abertura e o corte.
 
 **Classificação de despesas:** categorias identificam a operação original; parcelas e pagamento de fatura não criam novas despesas categorizadas. Orçamento mensal não integra o escopo inicial.
 
@@ -427,7 +435,7 @@ Descontos, antecipações, cancelamentos, reembolsos e estornos devem preservar 
 ### 9.1 Invariantes de integridade
 
 - FK para todos os relacionamentos; `ON DELETE RESTRICT` para histórico financeiro, com **archive/soft delete** em contas/categorias.
-- Valores monetários inteiros (`BIGINT`), moeda ISO 4217 validada e escala de unidades mínimas respeitada (BRL/PLN/EUR têm 2 casas; não presumir isso para toda moeda mundial).
+- Valores monetários inteiros (`BIGINT`), exclusivamente BRL com duas casas decimais.
 - `CHECK(installment_count >= 1)`, `CHECK(amount_minor > 0)` para cobrança/pagamento onde aplicável; créditos na fatura têm sinal negativo.
 - Um plano deve ter exatamente N itens numerados `1..N`, sem duplicidade, cuja soma = total da compra.
 - Compra no crédito deve ter uma entrada negativa integral no passivo e **não N entradas negativas de parcela**.
@@ -531,7 +539,7 @@ O servidor calcula primeiro vencimento, faturas futuras, distribuição dos cent
 10. **Transferência própria:** não muda patrimônio líquido total nem receita/despesa.
 11. **Retentativa MCP:** mesma chave retorna a mesma operação; não duplica compra nem parcelas.
 12. **Operação concorrente:** duas tentativas de pagamento da mesma fatura não excedem saldo nem criam pagamentos duplicados.
-13. **Multimoeda:** PLN e BRL não são somados sem FX; transferências cruzadas preservam ambos os valores.
+13. **BRL:** contratos e domínio rejeitam outras moedas; a migration recusa dados não BRL sem convertê-los.
 14. **Histórico:** mudança no dia de fechamento não redistribui parcelas de faturas históricas encerradas.
 15. **Compra com duas categorias:** alocações somam o total original uma única vez; parcelas e pagamento não duplicam a despesa categorizada.
 
@@ -585,13 +593,13 @@ Evitar importar código de interface no serviço MCP e evitar lógica financeira
 
 1. **Orçamento mensal — fora do escopo:** não haverá essa métrica no início. Não há decisão de competência orçamentária pendente para o MVP.
 2. **Compra no dia de fechamento — definido:** próxima fatura, mesmo quando o fechamento operacional for manual.
-3. **Moedas — definido:** uma moeda-base por conta, sem câmbio ou faturas com múltiplas moedas no escopo atual.
+3. **Moeda — definido:** exclusivamente BRL, com valores inteiros em centavos e sem câmbio. Ver ADR 0010.
 4. **Fechamento de faturas — definido:** modos manual e automático por cartão, com manual como padrão. A configuração pode ser alterada a qualquer momento, sem reabrir faturas encerradas nem mudar ciclos históricos. `closeDueAutomaticStatements(nowIso)` usa a data civil em `billing_timezone` e fecha em catch-up ciclos automáticos abertos com `closing_on` até hoje. É idempotente por estado e segura sob chamadas concorrentes; não cria movimentação nem dívida. Não há scheduler no domínio; o invocador operacional pertence à aplicação web.
 5. **Estornos — definido:** crédito imediato; manter parcelas futuras, com vínculo à compra original e sem duplicar o crédito.
 6. **Limite de crédito — definido:** usar o limite configurado no cartão, descontando a dívida comprometida conforme §8.
 7. **Previsões avulsas — implementadas no domínio/DB:** despesa não recorrente em conta não cartão, consultada por período/moeda. Projeção não afeta saldo nem relatório realizado; realização atômica reutiliza o fluxo da despesa e concilia uma única transação; cancelamento preserva a linha. Não há recorrência. Ver ADR 0006.
 8. **Correções — implementadas no domínio/DB:** metadados e categorias recebem revisões append-only com motivo, ator, origem e sequência; leitura efetiva aplica a revisão sem substituir a origem. `actor` e `source` são contexto confiável do caller, não campos públicos da requisição. Alterações de valor/conta/data exigem reversão compensatória vinculada, opcionalmente seguida de receita/despesa avulsa/transferência no mesmo commit. Reversões de pagamentos de fatura, qualquer conta de cartão, despesa reembolsada e estorno encadeado são recusadas; crédito de compra usa estorno vinculado, preservando parcelas. Ver ADR 0006.
-9. **Dashboards — definido:** totais separados por moeda; câmbio e patrimônio convertido ficam para evolução futura.
+9. **Dashboards — definido:** totais em BRL; envelopes por moeda permanecem por compatibilidade, sem suporte a outras moedas.
 10. **Login web — definido:** uma senha local e sessão web, para uma pessoa usuária, sem cadastro multiusuário ou login complexo. Armazenar apenas hash da senha; autenticação MCP separada. Ver ADR 0004.
 
 ---

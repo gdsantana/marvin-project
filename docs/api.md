@@ -1,6 +1,6 @@
 # API HTTP do web
 
-Esta é a API v1 implementada em `apps/web`; o navegador e o MCP usam os mesmos endpoints. Todos os valores monetários na API são **strings decimais de unidades mínimas** (centavos para BRL, PLN e EUR). A API valida entradas e saídas com os schemas exportados de `@finance/contracts`. O `apps/web` injeta `FinanceRepository` no `FinanceService`; regras de saldo, fatura, parcelamento, reembolso, preview e relatório ficam no domínio.
+Esta é a API v1 implementada em `apps/web`; o navegador e o MCP usam os mesmos endpoints. Todos os valores monetários na API são **strings decimais de unidades mínimas** (centavos de BRL, única moeda suportada). A API valida entradas e saídas com os schemas exportados de `@finance/contracts`. O `apps/web` injeta `FinanceRepository` no `FinanceService`; regras de saldo, fatura, parcelamento, reembolso, preview e relatório ficam no domínio.
 
 Base local: `http://localhost:3000/api`. Em produção, use a origem HTTPS privada configurada em `APP_ORIGIN`.
 
@@ -281,3 +281,9 @@ Consultas de transações retornam a transação efetiva, lista de revisões (mo
 - Login recebe até 4 KiB; demais corpos JSON até 64 KiB.
 - As respostas públicas da API são validadas pelos contratos de `packages/contracts` antes do envio.
 - Não há exclusão de histórico financeiro. Correções só revisam metadata/categorias; alterações de valor/conta exigem reversão e, se necessário, um novo lançamento.
+
+## Leituras e campos derivados
+
+Contas e previsões aceitam somente `BRL`. Relatórios mensais agrupam receita, despesa e saldo por moeda, sem conversão. `GET /v1/reports/monthly-series?from=YYYY-MM-DD&to=YYYY-MM-DD` retorna `{ "value": [...] }`, com um `monthlySummaryResponseSchema` por mês e intervalo inclusivo.
+
+Leituras de faturas e previsões aceitam `includePending=true|false` opcional para incluir itens pendentes do período na resposta. O status da fatura é derivado dos itens e pagamentos; uma fatura fechada com saldo restante zero é `paid`. Detalhes de conta incluem `creditBalanceMinor`, exposição assinada do cartão, e `canReverse`, indicando se a operação pode ser revertida pelas regras atuais.

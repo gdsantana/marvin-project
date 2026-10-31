@@ -36,3 +36,9 @@ DATABASE_URL_TEST='postgresql://<user>:<password>@<host>:5432/<database_descarta
 O teste exige uma base PostgreSQL descartável com permissão para criar e remover schemas. Cria um schema aleatório isolado, aplica todas as migrations SQL em ordem (sem reescrever `0000`, já aplicada em ambientes anteriores) e o remove ao terminar. Exercita o `FinanceService` real, concorrência de realizações/reversões, ordenação de revisões, migração sequencial e triggers append-only de lançamentos/alocações/previsões. Não configure `DATABASE_URL_TEST` para uma base com dados de usuário. Sem essa variável, o teste de integração é marcado como skipped.
 
 Validação executada neste checkpoint: PostgreSQL 18.6 descartável sob `/tmp`, acessível somente por loopback, e teste de integração aplicado a schema isolado, removido ao fim. `DATABASE_URL_TEST=... pnpm --filter @finance/db test` passou com 1 integração e 0 skipped. Nenhuma base de usuário foi usada. Nenhuma migration foi aplicada a banco persistente; deploy não foi validado aqui. O ensaio descartável de backup/restore passou, conforme [docs/recovery-validation.md](recovery-validation.md); backup/restore em produção ou no homelab continuam não validados.
+
+## Migration 0002 — BRL-only
+
+A migration `0002_brl_only.sql` estabelece BRL como a única moeda suportada para contas e previsões. Antes de adicionar as constraints, executa um preflight; se existir qualquer registro com outra moeda (por exemplo, EUR), aborta com `BRL migration blocked`. Não converte nem remove dados. Resolva os registros explicitamente antes de aplicar a migration.
+
+O preflight e a adição das constraints devem ser executados em uma transação para que uma falha preserve o esquema e os dados existentes. Esta documentação descreve o comportamento da migration versionada; não indica que ela foi aplicada em ambiente de produção.

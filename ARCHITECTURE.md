@@ -1,6 +1,6 @@
 # Arquitetura — marvin-project
 
-> **Estado:** implementação web/API/MCP/domínio/DB presente. Typecheck, lint, 35 testes sem skips, build, recovery, E2E dev/produção e validação visual passaram. Docker build e deploy no homelab não foram executados porque o socket Docker está inacessível. Ver [matriz de verificação](docs/verification.md).
+> **Estado atual:** implementação presente; decisões de consistência e BRL em [ADR 0010](docs/adr/0010-platform-consistency-and-brl.md). Evidências datadas e limitações operacionais estão em [verification.md](docs/verification.md).
 
 ## 1. Contexto e topologia atual
 
@@ -34,7 +34,7 @@ Os limites descrevem a estrutura pretendida e a organização observada. Compila
 
 ## 3. API, contratos e autenticação
 
-`packages/contracts` centraliza schemas runtime e contratos de entradas/saídas. A API web oferece leituras de contas, categorias, transações, resumo, distribuição por categoria, faturas, configurações de cartão e previsões; escritas de instituição, contas, categorias, receitas, despesas, transferências, compras no crédito, cashback, estornos, pagamentos/fechamento de faturas, previsões, correções e reversões. Toda escrita POST exige chave de idempotência e valida os corpos com Zod.
+`packages/contracts` centraliza schemas runtime e contratos de entradas/saídas, exclusivamente em BRL. A API web oferece leituras de contas, categorias, transações, resumo, distribuição por categoria, faturas, configurações de cartão e previsões; escritas de instituição, contas, categorias, receitas, despesas, transferências, compras no crédito, cashback, estornos, pagamentos/fechamento de faturas, previsões, correções e reversões. Toda escrita POST exige chave de idempotência e valida os corpos com Zod.
 
 Limites atuais da API:
 
@@ -46,6 +46,9 @@ Limites atuais da API:
 Web usa cookie de sessão assinado, token CSRF e proteção básica de tentativas no login. MCP usa bearer token próprio para Hermes e token de serviço distinto para a API. `.env.example` e Compose incluem `APP_ORIGIN` e `WEB_PASSWORD_HASH`, nomes lidos pela rota de login.
 
 ## 4. Domínio financeiro e persistência
+
+A plataforma atual aceita somente BRL. Preparação financeira por operação é compartilhada por preview e commit; o commit revalida em transação. Datas persistidas de faturas prevalecem sobre templates. Situação de pagamento/atraso e crédito são derivados na leitura. Relatórios usam `reporting.load()` com seis buscas em lote dentro de um snapshot, compartilhando projeção de operações efetivas; a série mensal evita uma consulta HTTP por mês. Ver ADR 0010.
+
 
 `FinanceService` trabalha com `bigint` e `packages/contracts` transmite valores monetários como strings inteiras. O serviço implementa operações idempotentes, saldos derivados de entradas, validação de categorias/moedas, alocação de compra parcelada, cashback, estorno proporcional e pagamentos parciais. O repositório PostgreSQL usa transações serializáveis com retry limitado para falhas de serialização/deadlock; claims idempotentes guardam hash do payload e resultado.
 
@@ -69,7 +72,7 @@ O tema é exclusivamente escuro: `.dark` na raiz e `color-scheme: dark`, sem pal
 
 A refatoração não altera domínio, contratos, persistência, API, MCP ou autenticação. Valores continuam usando formatação inteira e moedas separadas. Recursos sem suporte real no Figma são omitidos, inclusive gráficos sem séries completas, metas, sincronização e análises por IA; previsões e demais operações existentes permanecem disponíveis. A organização é mobile first, com estados de carregamento, vazio, erro e sucesso e suporte de foco e movimento reduzido no código.
 
-Typecheck, lint, build, 35 testes sem skips e integração de produção passaram nesta refatoração. As evidências e limitações dos cenários de navegador, capturas e medições de contraste estão em [docs/ui-validation.md](docs/ui-validation.md).
+Resultados datados e limites da validação ficam em [docs/verification.md](docs/verification.md); capturas e verificações de interface estão em [docs/ui-validation.md](docs/ui-validation.md).
 
 ## 7. Desenvolvimento e validação
 
@@ -85,7 +88,7 @@ pnpm test
 pnpm build
 ```
 
-`pnpm test` executa os workspaces configurados; o gate `bash scripts/test-postgres.sh` passou com 35 testes e zero skips. `pnpm typecheck`, `pnpm lint`, build serial, recovery e E2E dev/produção passaram. Compose config passou, mas Docker build não pôde ser executado por falta de acesso ao socket. Nenhum deploy no homelab foi realizado. Veja [docs/integration-validation.md](docs/integration-validation.md) para comandos e evidências.
+`pnpm test` executa os workspaces configurados. `bash scripts/test-postgres.sh` provisiona somente PostgreSQL descartável e exige zero skips. Resultados atuais de typecheck, lint, testes, builds Docker/local, E2E e limitações estão em [docs/verification.md](docs/verification.md).
 
 Para desenvolvimento local, `pnpm db:up` aplica `infra/compose.dev.yml`: preserva o volume, publica PostgreSQL somente em localhost e adiciona uma rede bridge de desenvolvimento apenas ao DB. Os scripts de carga/limpeza preferem `DEVELOPMENT_DATABASE_URL`; a conexão interna `DATABASE_URL` dos containers é preservada. O Compose de deploy continua sem publicar o banco. Veja [ADR 0009](docs/adr/0009-local-development-database.md).
 

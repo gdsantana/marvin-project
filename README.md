@@ -1,6 +1,6 @@
 # marvin-project — Controle Financeiro Pessoal
 
-Aplicação pessoal de finanças, com UI web em pt-BR, API HTTP e servidor MCP separado para Hermes. O monorepo pnpm contém domínio, persistência PostgreSQL, UI, API, MCP, migrations e Compose. O gate local aprovou typecheck, lint, 35 testes sem skips, build, E2E dev/produção, recovery e validação visual. Docker build e deploy no homelab não foram executados porque o Docker socket está inacessível neste ambiente. Consulte a [auditoria do MVP](docs/verification.md).
+Aplicação pessoal de finanças em reais brasileiros, com UI web em pt-BR, API HTTP e servidor MCP separado para Hermes. O monorepo pnpm contém domínio, persistência PostgreSQL, UI, API, MCP, migrations e Compose. As decisões atuais estão no [ADR 0010](docs/adr/0010-platform-consistency-and-brl.md); comandos executados, resultados datados e limites operacionais ficam na [matriz de verificação](docs/verification.md).
 
 O modelo financeiro e seus invariantes estão em [docs/data-model.md](docs/data-model.md). As decisões aceitas de acesso e comportamento do MVP estão em [ADR 0004](docs/adr/0004-mvp-behavior-and-access.md); decisões operacionais implementadas estão em [ADR 0005](docs/adr/0005-mvp-operational-behavior.md).
 
@@ -19,7 +19,7 @@ Isso descreve funcionalidades implementadas; E2E dev e produção passaram pelos
 
 A interface em pt-BR usa exclusivamente tema escuro, tokens CSS semânticos, shadcn/ui `base-nova` com Base UI e fontes locais Geist e JetBrains Mono via `@fontsource-variable` (SIL OFL 1.1). A navegação e os formulários têm apresentação separada, preservando os fluxos existentes; funcionalidades do Figma sem suporte real são omitidas. Tema claro e seletor de aparência ficam para uma entrega futura. Veja o [ADR 0008](docs/adr/0008-web-visual-system.md) e a [arquitetura §6](ARCHITECTURE.md#6-ui).
 
-A refatoração passou por typecheck, lint, build, 35 testes sem skips e integração de produção. Evidências e limites da validação de interface estão em [docs/ui-validation.md](docs/ui-validation.md).
+Evidências e limites de validação estão em [docs/verification.md](docs/verification.md) e [docs/ui-validation.md](docs/ui-validation.md).
 
 ## Estrutura
 
@@ -37,7 +37,7 @@ Ver [ARCHITECTURE.md](ARCHITECTURE.md) para dependências e [docs/deployment.md]
 
 ## Desenvolvimento
 
-Requer Node.js, pnpm 12 e, para os fluxos da aplicação, PostgreSQL configurado por `DATABASE_URL`. Scripts e nomes de comandos abaixo correspondem aos `package.json` atuais:
+Requer Node.js, pnpm 12 e, para os fluxos da aplicação, PostgreSQL. Scripts e nomes de comandos abaixo correspondem aos `package.json` atuais:
 
 ```bash
 pnpm install
@@ -49,7 +49,17 @@ pnpm test
 pnpm build
 ```
 
-`pnpm test` percorre os workspaces que têm script de teste. O gate atual executou `bash scripts/test-postgres.sh` (35 aprovados, 0 skips), `pnpm typecheck`, `pnpm lint`, `bash scripts/validate-recovery.sh`, E2E dev, build serial e E2E produção; todos passaram. A ordem E2E dev → build → produção é necessária porque Next dev substitui `.next`. Veja [docs/integration-validation.md](docs/integration-validation.md) e [docs/verification.md](docs/verification.md) para evidências e comandos.
+Para executar a aplicação no host, mantenha as conexões separadas: `.env` na raiz configura o Compose (`DATABASE_URL` usa o host interno `db`), enquanto `apps/web/.env.local` configura o Next.js local com a URL publicada em `127.0.0.1`. Crie o banco com `pnpm db:up` e coloque a URL local também em `DEVELOPMENT_DATABASE_URL` no `.env` para seed e limpeza. Use credenciais literais; arquivos `.env` não são copiados para as imagens.
+
+```bash
+cp .env.example .env
+pnpm db:up
+printf '%s\n' 'DATABASE_URL=postgresql://marvin:SUA_SENHA@127.0.0.1:5432/marvin' > apps/web/.env.local
+```
+
+Substitua `SUA_SENHA` pela senha local configurada no `.env`; não compartilhe nem versione esses arquivos. Se a porta publicada for diferente de 5432, use `DEV_DB_HOST_PORT` no endereço.
+
+`pnpm test` percorre os workspaces configurados; integrações PostgreSQL exigem uma base descartável. `bash scripts/test-postgres.sh` prepara um cluster local ou container temporário e exige zero skips. Consulte [docs/verification.md](docs/verification.md) para resultados de testes, build e E2E. Execute E2E dev antes do build e E2E de produção depois dele, pois Next dev substitui `.next`.
 
 Para popular um banco **exclusivo de desenvolvimento**, aplique primeiro as migrations e execute a carga fictícia com a URL desse banco:
 
@@ -97,7 +107,7 @@ Variáveis para Compose estão exemplificadas em [.env.example](.env.example), i
 - Dinheiro é inteiro em unidades mínimas; saldo deriva do saldo inicial e de `account_entries`.
 - Transferências próprias e pagamento de fatura não são despesas novas.
 - Compra parcelada cria uma dívida integral e parcelas de fatura que somam exatamente o total.
-- Receitas, despesas, projeções de fatura e saldos são separados por moeda; não há câmbio.
+- Receitas, despesas, projeções e saldos usam exclusivamente BRL; não há câmbio.
 - MCP não acessa PostgreSQL nem mantém regras contábeis próprias.
 
 O conjunto exigido de cenários está em [docs/data-model.md §11](docs/data-model.md#11-testes-de-aceitação-de-domínio--obrigatórios-antes-de-produção); evidências e lacunas estão em [docs/verification.md](docs/verification.md).

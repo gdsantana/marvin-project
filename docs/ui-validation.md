@@ -116,3 +116,10 @@ Resultados completos: [results.json](screenshots/refatoracao-visual/results.json
 | Relatórios | [PNG](screenshots/refatoracao-visual/390-dark-P1-P4-reports.png) | [PNG](screenshots/refatoracao-visual/1440-dark-P1-P4-reports.png) |
 
 Também foram preservadas capturas de receita, despesa e parcelamento em ambas as larguras, no mesmo diretório. Os números grandes e as descrições extensas nas imagens são casos deliberados de teste, sem dados pessoais.
+
+
+## Correções de plataforma — 31/10/2026
+
+Roteiro `scripts/validate-visual.ts --audit` aprovado com Chromium real, API interceptada e credenciais fictícias. Foram verificadas seis rotas em 390×844 e 1440×900, filtros de período, visibilidade de cancelamentos, navegação móvel pelo menu Mais e criação de conta sem seletor de moeda. Capturas finais: `/tmp/marvin-visual-d2yAM7`. A inspeção visual corrigiu um caso em que descrição extensa comprimia o valor mobile; não houve rolagem horizontal ou erro JavaScript nos cenários finais.
+
+O modo histórico sem `--audit` contém seletores da navegação anterior; não representa um gate aprovado atual. Evidências globais e limites estão em [verification.md](verification.md). Não foram repetidos contraste integral, leitor de tela ou dispositivo físico.

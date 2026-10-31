@@ -1,5 +1,33 @@
 # Auditoria dos requisitos do MVP
 
+## Verificação atual — correções de 31/10/2026
+
+Entrega vinculada aos achados em [platform-fixes-2026-10-31.md](platform-fixes-2026-10-31.md) e às decisões do [ADR 0010](adr/0010-platform-consistency-and-brl.md). Dados e credenciais de teste foram fictícios; nenhum banco persistente do usuário foi acessado.
+
+| Verificação | Resultado |
+|---|---|
+| `pnpm typecheck` e `pnpm lint` | Aprovados em todos os workspaces |
+| `bash scripts/test-postgres.sh` | 65 testes aprovados, zero falhas/skips: domínio 21, MCP 4, DB 11, web 29; PostgreSQL 17.11 Docker descartável |
+| Migration 0002 | Aplicação em schema vazio/upgrade com BRL; preflight com EUR recusa sem alterar dados |
+| Snapshot concorrente | Resumo conserva receita/saldo anteriores enquanto outra transação confirma receita; próxima leitura contém ambos atualizados |
+| `pnpm build` | Aprovado; Next e artefato MCP emitidos |
+| E2E dev | Aprovado com PostgreSQL real, migrations, HTTP e MCP |
+| E2E produção | Aprovado com PostgreSQL real e servidores compilados |
+| Docker web e MCP | Builds aprovados; inspeção de 20 camadas web e 17 MCP sem caminhos `.env*` ou `.git` |
+| Chromium `validate-visual.ts --audit` | 12 telas em 390×844 e 1440×900, sem rolagem horizontal/erros de página; períodos, cancelamentos e navegação testados |
+
+Comandos E2E: `pnpm --filter @finance/web exec node --import tsx ../../scripts/validate-integration.ts`, acrescentando `--production` depois do build. O harness provisiona PostgreSQL Docker quando o runtime local não está disponível e encerra os recursos próprios.
+
+Roteiro visual: `VISUAL_ISOLATED=1 PLAYWRIGHT_MODULE=<playwright externo>/package.json CHROMIUM_EXECUTABLE=/usr/bin/chromium VISUAL_BASE_URL=http://127.0.0.1:32991 pnpm --filter @finance/web exec node --import tsx ../../scripts/validate-visual.ts --audit`. As APIs são interceptadas com fixtures e o servidor usa conexão fictícia. Capturas finais em `/tmp/marvin-visual-d2yAM7`; as telas de lançamentos mobile e visão geral desktop foram inspecionadas, identificando e corrigindo a compressão de valores por descrições extensas. O roteiro histórico sem `--audit` usa seletores antigos e não foi aprovado nesta entrega.
+
+Limites: migration não aplicada em banco persistente; deploy e restore no homelab não realizados. O teste local de recovery não foi repetido nesta rodada. Timeouts da revisão automática interromperam tentativas de iniciar comandos de validação/rebuild; as repetições autorizadas concluíram o gate e a imagem final. O aviso de depreciação do pg 8 não impede o gate.
+
+Imagens locais: `marvin-audit-web:local` ID `sha256:f7d0285cb22fe1ae50b17c92dc8c2d134f7b63a27de7484d507fbc104e2ce908`; `marvin-audit-mcp:local` ID `sha256:245cb3d37c4b8411b05b8a486b175e987ca3bd10619fa416690ff3d9dec5a840`. A imagem web foi reconstruída após a última correção de calendário; o hash SHA-256 de `packages/domain/src/index.ts` dentro dela correspondeu ao checkout: `0aa7210bfd94ad13cbad0cbb2982cb43c5fbc0b9c7d6c82a7517316a06c146a8`. A inspeção final percorreu nomes de membros em todas as camadas, sem ler conteúdo de ambientes. Marcadores fictícios root/nested foram removidos.
+
+O primeiro build parcial revelou `.env.local` por causa dos ignores específicos antigos. Ele foi cancelado; cache intermediário local pode conservar o arquivo. As imagens finais não o contêm. Não foi executado prune global porque os registros desse cache não puderam ser isolados com segurança.
+
+## Histórico de verificações anteriores
+
 **Snapshot:** 2026-10-26. Validação executada em PostgreSQL 18.6 descartável; nenhum dado real foi usado. O gate local de dev e produção passou. Docker build e deploy não foram feitos.
 
 ## Estado do gate
