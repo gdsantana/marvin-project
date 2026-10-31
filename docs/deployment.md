@@ -109,3 +109,9 @@ Não passe secrets como argumentos de build. O `.env` é carregado pelo Compose 
 ## Limites pendentes
 
 O deploy, proxy, rotação de credenciais, política de retenção e teste periódico de restore não foram validados no homelab. A entrega de secrets por Compose environment também depende da segurança do host; usar Docker secrets/file mounts poderá ser apropriado conforme o ambiente.
+
+## PostgreSQL para desenvolvimento local
+
+Para executar scripts pnpm do host usando o banco Docker existente, execute `pnpm db:up`. Esse comando aplica também `infra/compose.dev.yml`, publica a porta apenas em `127.0.0.1` e mantém o volume. A configuração é exclusiva do desenvolvimento; os comandos de deploy acima continuam usando apenas `infra/compose.yml`.
+
+Configure `DEVELOPMENT_DATABASE_URL` com as credenciais literais do banco e o host `127.0.0.1`, porta `DEV_DB_HOST_PORT` ou 5432. Seed e limpeza preferem essa URL. A conexão interna `DATABASE_URL` deve continuar com o host `db` para os containers. Para migrations locais, passe a URL local explicitamente como `DATABASE_URL`. Instruções e efeitos da limpeza estão no README; decisão em [ADR 0009](adr/0009-local-development-database.md).

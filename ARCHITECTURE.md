@@ -87,6 +87,10 @@ pnpm build
 
 `pnpm test` executa os workspaces configurados; o gate `bash scripts/test-postgres.sh` passou com 35 testes e zero skips. `pnpm typecheck`, `pnpm lint`, build serial, recovery e E2E dev/produção passaram. Compose config passou, mas Docker build não pôde ser executado por falta de acesso ao socket. Nenhum deploy no homelab foi realizado. Veja [docs/integration-validation.md](docs/integration-validation.md) para comandos e evidências.
 
+Para desenvolvimento local, `pnpm db:up` aplica `infra/compose.dev.yml`: preserva o volume, publica PostgreSQL somente em localhost e adiciona uma rede bridge de desenvolvimento apenas ao DB. Os scripts de carga/limpeza preferem `DEVELOPMENT_DATABASE_URL`; a conexão interna `DATABASE_URL` dos containers é preservada. O Compose de deploy continua sem publicar o banco. Veja [ADR 0009](docs/adr/0009-local-development-database.md).
+
+O pacote DB também fornece `pnpm db:seed` e `pnpm db:clean`, exclusivos para PostgreSQL local de desenvolvimento com confirmação `SEED_DEVELOPMENT=true` e bloqueio em produção. O seed primeiro trunca as tabelas da aplicação, preservando schema e migrations, e cria três meses relativos à data de São Paulo usando `FinanceService`: compras, receitas, despesas e parcelas, com faturas anteriores pagas e atuais abertas em modo manual. A limpeza também pode ser executada separadamente. A carga é atômica por operação, não globalmente; detalhes e efeitos destrutivos estão no README. Essa ferramenta de desenvolvimento não altera as regras de histórico da API.
+
 ## 8. Segurança e dados
 
 - Não expor PostgreSQL à rede externa; MCP deve conversar apenas com API HTTP autenticada.

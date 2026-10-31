@@ -9,7 +9,10 @@
     "build": "pnpm -r build",
     "dev:web": "pnpm --filter @finance/web dev",
     "dev:mcp": "pnpm --filter @finance/mcp dev",
-    "db:migrate": "pnpm --filter @finance/db db:migrate"
+    "db:migrate": "pnpm --filter @finance/db db:migrate",
+    "db:up": "docker compose --env-file .env -f infra/compose.yml -f infra/compose.dev.yml up -d db",
+    "db:clean": "pnpm --filter @finance/db db:clean",
+    "db:seed": "pnpm --filter @finance/db db:seed"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

@@ -1,0 +1,11 @@
+# Development only. Keep the deployment Compose database network private.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DEV_DB_HOST_PORT:-5432}:5432"
+    networks:
+      - development
+
+networks:
+  development:
+    driver: bridge
