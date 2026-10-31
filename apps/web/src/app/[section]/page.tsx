@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { Workspace } from "@/components/workspace";
 
-const sections = ["accounts", "cards", "entries", "statements", "reports"] as const;
+const sections = ["new", "accounts", "cards", "entries", "statements", "reports"] as const;
 
 export default async function SectionPage({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;

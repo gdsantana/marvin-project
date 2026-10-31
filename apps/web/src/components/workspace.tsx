@@ -1,23 +1,25 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowDownLeftIcon, ArrowUpRightIcon, WalletIcon } from "lucide-react";
+import type { CategoryReport } from "@finance/contracts";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
 import { AppShell } from "./app-shell";
+import { recentMonths } from "./finance-chart-data";
+import { DashboardOverview } from "./dashboard-overview";
+import { TransactionList } from "./transaction-list";
+import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
 import { actionLabels, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
 import { formatDate, formatMinor, parseMajorToMinor } from "./finance-format";
 
 const titles: Record<Section, { title: string; intro: string }> = {
+  new: { title: "Nova transação", intro: "Registre uma receita ou despesa." },
   overview: { title: "Visão geral", intro: "Uma visão simples do que está acontecendo nas suas contas." },
   accounts: { title: "Contas", intro: "Instituições e contas que fazem parte da sua vida financeira." },
   cards: { title: "Cartões", intro: "Acompanhe limites, compras e próximos vencimentos." },
@@ -59,10 +61,10 @@ export function Workspace({ section }: { section: Section }) {
   const router = useRouter();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [csrf, setCsrf] = useState("");
-  const [form, setForm] = useState<Action | null>(null);
+  const [form, setForm] = useState<Action | null>(section === "new" ? "expense" : null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [range, setRange] = useState("month");
+  const [range, setRange] = useState<ReportRange>("month");
   const [references, setReferences] = useState<References>({ accounts: [], categories: [], transactions: [], statements: [], institutions: [] });
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
@@ -70,6 +72,9 @@ export function Workspace({ section }: { section: Section }) {
   const [reportError, setReportError] = useState("");
   const [reportLoading, setReportLoading] = useState(true);
   const [reportReload, setReportReload] = useState(0);
+  const [analytics, setAnalytics] = useState<{ range: string; series: ReportData[]; categories: CategoryReport[] } | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
   const [pendingRequest, setPendingRequest] = useState<{ signature: string; key: string } | null>(null);
   const [pendingPreview, setPendingPreview] = useState<{ signature: string; data: Record<string, unknown> } | null>(null);
@@ -77,6 +82,11 @@ export function Workspace({ section }: { section: Section }) {
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionOption | null>(null);
   const [selectedForecast, setSelectedForecast] = useState<ExpenseForecastOption | null>(null);
   const [pendingReverseReview, setPendingReverseReview] = useState<{ signature: string; reason: string; replacement: Record<string, unknown> | null } | null>(null);
+
+  useEffect(() => {
+    setForm(section === "new" ? "expense" : null);
+    setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null);
+  }, [section]);
 
   useEffect(() => {
     fetch("/api/auth/session", { cache: "no-store" }).then(response => response.json()).then(result => {
@@ -132,12 +142,36 @@ export function Workspace({ section }: { section: Section }) {
     return () => controller.abort();
   }, [authenticated, range, reloadToken, reportReload, router]);
 
+  useEffect(() => {
+    if (!authenticated || (section !== "overview" && section !== "reports")) return;
+    const controller = new AbortController();
+    const { from, to } = periodRange(range);
+    const urls = [
+      `/api/v1/reports/categories?from=${from}&to=${to}`,
+      ...recentMonths(to, range === "year" ? 12 : 6).map(month => `/api/v1/reports/summary?from=${month.from}&to=${month.to}`),
+    ];
+    setAnalyticsLoading(true); setAnalyticsError("");
+    Promise.all(urls.map(url => fetch(url, { cache: "no-store", signal: controller.signal })))
+      .then(async responses => {
+        if (responses.some(response => response.status === 401)) { router.replace("/login"); return null; }
+        if (responses.some(response => !response.ok)) throw new Error("Não foi possível carregar os gráficos.");
+        return Promise.all(responses.map(response => response.json()));
+      })
+      .then(results => {
+        if (!controller.signal.aborted && results) setAnalytics({ range, categories: results[0].data as CategoryReport[], series: results.slice(1).map(result => result.data as ReportData) });
+      })
+      .catch(() => { if (!controller.signal.aborted) setAnalyticsError("Não foi possível carregar os gráficos. Tente novamente."); })
+      .finally(() => { if (!controller.signal.aborted) setAnalyticsLoading(false); });
+    return () => controller.abort();
+  }, [authenticated, section, range, reloadToken, reportReload, router]);
+
+  const currentAnalytics = analytics?.range === range && !analyticsError ? analytics : null;
   const currentReport = report?.range === range && !reportError ? report.data : null;
 
   const current = titles[section];
   const openTransactionAction = (action: "correct" | "reverse", transaction: TransactionOption) => { setSelectedTransaction(transaction); setSelectedForecast(null); setPendingReverseReview(null); setPendingPreview(null); setForm(action); };
   const openForecastAction = (action: "realizeForecast" | "cancelForecast", forecast: ExpenseForecastOption) => { setSelectedForecast(forecast); setSelectedTransaction(null); setPendingPreview(null); setForm(action); };
-  const closeDialog = useCallback(() => { setForm(null); setMessage(""); setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null); }, []);
+  const closeDialog = useCallback(() => { setForm(null); setMessage(""); setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null); if (section === "new") router.push("/entries"); }, [section, router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!form) return;
@@ -240,7 +274,7 @@ export function Workspace({ section }: { section: Section }) {
       const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": csrf, "idempotency-key": idempotencyKey }, body: JSON.stringify(body) });
       const result = await response.json().catch(() => null);
       if (!response.ok) { setMessage(result?.error?.message ?? "Não foi possível salvar."); return; }
-      setPendingRequest(null); setPendingPreview(null); setPendingReverseReview(null); setForm(null); setSelectedForecast(null); setSelectedTransaction(null); setMessage("Registro salvo."); setReloadToken(value => value + 1); router.refresh();
+      setPendingRequest(null); setPendingPreview(null); setPendingReverseReview(null); setForm(null); setSelectedForecast(null); setSelectedTransaction(null); setMessage("Registro salvo."); setReloadToken(value => value + 1); if (section === "new") router.push("/entries"); else router.refresh();
     } catch { setMessage("Falha de conexão. Tente novamente; a mesma chave de idempotência será reutilizada."); }
     finally { setBusy(false); }
   }
@@ -252,49 +286,22 @@ export function Workspace({ section }: { section: Section }) {
     onSignOut={async () => { await fetch("/api/auth/session", { method: "DELETE", headers: { "x-csrf-token": csrf } }); router.replace("/login"); }}>
         {dataError && <Alert variant="destructive" className="mb-5"><AlertDescription>{dataError}{!dataError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReloadToken(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {message && !form && <Alert role="status" className="mb-5"><AlertDescription>{message}</AlertDescription></Alert>}
+        {(section === "overview" || section === "reports") && analyticsError && <Alert variant="destructive" className="mb-5"><AlertDescription>{analyticsError}<Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button></AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="mb-3 text-sm text-muted-foreground">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
         {dataLoading ? <div role="status" className="grid gap-4"><span className="sr-only">Carregando seus dados</span><Skeleton className="h-36 w-full" /><Skeleton className="h-52 w-full" /></div> : dataError ? null : <>
-          {section === "overview" && <Overview setForm={setForm} range={range} setRange={setRange} references={references} report={currentReport} reportError={Boolean(reportError)} />}
+          {section === "overview" && <DashboardOverview series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError)} />}
           {section === "accounts" && <ResourceSection title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." action="account" setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} />}
           {section === "cards" && <ResourceSection title="Seus cartões" detail="Cartões, limites disponíveis e configurações de fechamento." action="account" secondaryAction="configureCard" setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
           {section === "entries" && <>
-            <ResourceSection title="Histórico registrado" detail="Movimentações efetivas. Correções acrescentam revisões; reversões criam lançamentos compensatórios vinculados." action="income" setForm={setForm} rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
+            <TransactionList rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
             <ExpenseForecasts forecasts={forecasts} references={references} setForm={setForm} onRealize={forecast => openForecastAction("realizeForecast", forecast)} onCancel={forecast => openForecastAction("cancelForecast", forecast)} />
           </>}
           {section === "statements" && <ResourceSection title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={setForm} rows={references.statements} />}
-          {section === "reports" && !reportError && <Reports range={range} setRange={setRange} report={currentReport} />}
+          {section === "reports" && !reportError && <ReportsDashboard series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} range={range} onRangeChange={setRange} report={currentReport} />}
         </>}
-    {form && <ActionDialog action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} />}
+    {form && (section !== "new" || (!dataLoading && !dataError)) && <ActionDialog presentation={section === "new" ? "inline" : "dialog"} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} />}
   </AppShell>;
-}
-
-function PeriodSelect({ range, setRange, label }: { range: string; setRange: (range: string) => void; label: string }) {
-  return <NativeSelect aria-label={label} value={range} onChange={event => setRange(event.target.value)}><NativeSelectOption value="month">Este mês</NativeSelectOption><NativeSelectOption value="last-month">Mês passado</NativeSelectOption><NativeSelectOption value="year">Este ano</NativeSelectOption></NativeSelect>;
-}
-
-function Overview({ setForm, range, setRange, references, report, reportError }: { setForm: (action: Action) => void; range: string; setRange: (range: string) => void; references: References; report: ReportData | null; reportError: boolean }) {
-  const balances = Object.entries(report?.balancesByCurrency ?? {});
-  return <div className="flex flex-col gap-6">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-medium">Resumo financeiro</h2><PeriodSelect range={range} setRange={setRange} label="Período do resumo" /></div>
-    <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr_1fr]">
-      <SummaryTile label="Saldo nas contas" values={balances} note="Saldos registrados, separados por moeda" kind="balance" loading={!report && !reportError} unavailable={reportError} />
-      <div className="grid grid-cols-2 gap-4 lg:col-span-2">
-        <SummaryTile label="Receitas no período" values={Object.entries(report?.incomeMinorByCurrency ?? {})} note="Entradas classificadas" kind="income" loading={!report && !reportError} unavailable={reportError} />
-        <SummaryTile label="Despesas no período" values={Object.entries(report?.expenseMinorByCurrency ?? {})} note="Compras e gastos classificados" kind="expense" loading={!report && !reportError} unavailable={reportError} />
-      </div>
-    </div>
-    <div className="grid items-start gap-6 lg:grid-cols-[1.45fr_1fr]">
-      <Card><CardHeader><CardTitle><h2>Movimentações recentes</h2></CardTitle><CardDescription>Seu histórico mais recente</CardDescription></CardHeader><CardContent><Rows rows={references.transactions.slice(-5).reverse()} empty="Seus lançamentos aparecerão aqui depois de registrados." /></CardContent><CardFooter><Link href="/entries" className="inline-flex min-h-11 items-center text-sm text-primary">Ver lançamentos</Link></CardFooter></Card>
-      <Card><CardHeader><CardTitle><h2>Próximas faturas</h2></CardTitle><CardDescription>Parcelas e pagamentos</CardDescription></CardHeader><CardContent><Rows rows={references.statements.filter(statement => statement.status !== "paid").slice(0, 4)} empty="Cadastre um cartão para acompanhar suas faturas." /></CardContent><CardFooter><Link href="/statements" className="inline-flex min-h-11 items-center text-sm text-primary">Ver faturas</Link></CardFooter></Card>
-    </div>
-    <Card><CardHeader><CardTitle><h2>Organize suas finanças</h2></CardTitle><CardDescription>Contas e categorias para seus registros</CardDescription></CardHeader><CardContent className="grid gap-3 sm:grid-cols-3"><Button variant="outline" onClick={() => setForm("account")}>Adicionar conta</Button><Button variant="outline" onClick={() => setForm("category")}>Criar categoria</Button><Button onClick={() => setForm("income")}>Registrar receita</Button></CardContent></Card>
-  </div>;
-}
-
-function SummaryTile({ label, values, note, kind, loading, unavailable }: { label: string; values: [string, string][]; note: string; kind: "balance" | "income" | "expense"; loading?: boolean; unavailable?: boolean }) {
-  const Icon = kind === "income" ? ArrowDownLeftIcon : kind === "expense" ? ArrowUpRightIcon : WalletIcon;
-  return <Card className="h-full"><CardHeader><div className="flex items-start justify-between gap-2"><p className="font-mono text-xs text-muted-foreground">{label}</p><Icon aria-hidden="true" className={cn("size-4 shrink-0", kind === "income" ? "text-success" : kind === "expense" ? "text-destructive" : "text-primary")} /></div></CardHeader><CardContent className="min-w-0 flex-1">{loading ? <Skeleton className="h-10 w-3/4" /> : unavailable ? <p className="text-sm text-muted-foreground">Indisponível</p> : values.length ? <div className="flex flex-col gap-2">{values.map(([currency, amount]) => <p key={currency} className={cn("break-words font-mono text-lg font-medium tracking-tight tabular-nums sm:text-2xl", kind === "balance" ? "text-foreground lg:text-3xl" : kind === "income" ? "text-success" : "text-destructive")}>{formatMinor(amount, currency)}</p>)}</div> : <p className="text-sm text-muted-foreground">Sem movimentações</p>}</CardContent><CardFooter><p className="text-xs text-muted-foreground">{note}</p></CardFooter></Card>;
 }
 
 function EmptyInline({ text }: { text: string }) { return <Empty><EmptyDescription>{text}</EmptyDescription></Empty>; }
@@ -338,9 +345,4 @@ function ExpenseForecasts({ forecasts, references, setForm, onRealize, onCancel 
       })}</ul> : <p className="mt-2 text-sm text-muted-foreground">Nenhuma previsão {status === "projected" ? "projetada" : status === "realized" ? "realizada" : "cancelada"} neste período.</p>}</section>;
     })}</CardContent>
   </Card>;
-}
-
-function Reports({ range, setRange, report }: { range: string; setRange: (range: string) => void; report: ReportData | null }) {
-  const currencies = new Set([...Object.keys(report?.incomeMinorByCurrency ?? {}), ...Object.keys(report?.expenseMinorByCurrency ?? {})]);
-  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-col gap-1"><CardTitle><h2>Receitas e despesas</h2></CardTitle><CardDescription>Totais por moeda, sem conversão cambial.</CardDescription></div><PeriodSelect range={range} setRange={setRange} label="Período do relatório" /></div></CardHeader><CardContent>{!report ? <div role="status" className="grid gap-4 sm:grid-cols-2"><span className="sr-only">Carregando relatório</span><Skeleton className="h-36 w-full" /><Skeleton className="h-36 w-full" /></div> : <div className="grid gap-4 sm:grid-cols-2">{[...currencies].map(currency => <section key={currency} className="rounded-lg border border-border p-4"><h3 className="font-mono text-sm">{currency}</h3><dl className="mt-4 grid gap-4"><div><dt className="text-sm text-muted-foreground">Receitas</dt><dd className="mt-1 break-words font-mono text-xl text-success">{formatMinor(report.incomeMinorByCurrency[currency] ?? "0", currency)}</dd></div><div><dt className="text-sm text-muted-foreground">Despesas</dt><dd className="mt-1 break-words font-mono text-xl text-destructive">{formatMinor(report.expenseMinorByCurrency[currency] ?? "0", currency)}</dd></div></dl></section>)}{!currencies.size && <EmptyInline text="Não há movimentações classificadas neste período." />}</div>}</CardContent></Card>;
 }

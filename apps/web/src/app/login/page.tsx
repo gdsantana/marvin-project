@@ -7,7 +7,7 @@ export default function LoginPage() {
       <section className="flex flex-col gap-12 px-6 pt-8 sm:px-10 md:justify-between md:border-r md:border-border md:bg-card md:p-12 lg:p-16" aria-label="Marvin">
         <div className="flex items-center gap-3 text-lg font-semibold tracking-tight">
           <Brand />
-          marvin
+          Marvin Finanças
         </div>
         <div className="hidden max-w-lg flex-col gap-6 md:flex">
           <p className="font-mono text-xs text-primary">Finanças pessoais, com clareza</p>

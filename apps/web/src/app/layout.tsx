@@ -4,7 +4,8 @@ import "@fontsource-variable/jetbrains-mono/wght.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Marvin — finanças pessoais",
+  title: "Marvin Finanças",
+  icons: { icon: "/brand/marvin.webp", apple: "/brand/marvin.webp" },
   description: "Seu dinheiro, com clareza.",
 };
 

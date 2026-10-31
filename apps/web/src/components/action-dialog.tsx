@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { type FormEvent, createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -7,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Field, FieldError, FieldGroup, FieldLabel, FieldSet, FieldLegend } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { formatDate, formatMinor, majorInputFromMinor } from "./finance-format";
+import { formatDate, formatMinor, majorInputFromMinor, parseMajorToMinor } from "./finance-format";
 import { actionLabels, primaryActions, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type References } from "./workspace-types";
 
 const PendingContext = createContext(false);
@@ -17,7 +19,7 @@ function todayLocal() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-function FormField({ label, name, type = "text", required = true, options, placeholder, min, step, value, defaultValue, onChange }: { label: string; name: string; type?: string; required?: boolean; options?: [string, string][]; placeholder?: string; min?: string; step?: string; value?: string; defaultValue?: string; onChange?: React.ChangeEventHandler<HTMLInputElement | HTMLSelectElement> }) {
+function FormField({ label, name, type = "text", required = true, options, placeholder, min, step, value, defaultValue, onChange, className, inputClassName, labelClassName, prefix }: { label: string; name: string; type?: string; required?: boolean; options?: [string, string][]; placeholder?: string; min?: string; step?: string; value?: string; defaultValue?: string; onChange?: React.ChangeEventHandler<HTMLInputElement | HTMLSelectElement>; className?: string; inputClassName?: string; labelClassName?: string; prefix?: string }) {
   const disabled = useContext(PendingContext);
   const amount = name === "amountMinor" || name === "totalAmountMinor";
   const controlled = value === undefined ? {} : { value };
@@ -36,11 +38,46 @@ function FormField({ label, name, type = "text", required = true, options, place
     },
     ...controlled, ...initial,
   };
-  return <Field data-invalid={Boolean(error)} data-disabled={disabled} className={amount ? "sm:col-span-2" : undefined}>
-    <FieldLabel htmlFor={id}>{label}</FieldLabel>
-    {options ? <NativeSelect className="w-full" {...props}>{options.map(([optionValue, text]) => <option key={optionValue} value={optionValue}>{text}</option>)}</NativeSelect> : <Input {...props} variant={amount ? "amount" : "default"} type={type} inputMode={name.endsWith("Minor") || name === "amountMinor" || name === "totalAmountMinor" ? "decimal" : undefined} placeholder={placeholder} min={min} step={step} />}
+  return <Field data-invalid={Boolean(error)} data-disabled={disabled} className={[amount ? "sm:col-span-2" : "", className ?? ""].filter(Boolean).join(" ")}>
+    <FieldLabel className={labelClassName} htmlFor={id}>{label}</FieldLabel>
+    {options ? <NativeSelect className={`w-full ${inputClassName ?? ""}`} {...props}>{options.map(([optionValue, text]) => <option key={optionValue} value={optionValue}>{text}</option>)}</NativeSelect> : prefix ? <div className="relative w-full"><span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center font-mono text-sm text-muted-foreground">{prefix}</span><Input className={`pl-10 ${inputClassName ?? ""}`} {...props} variant={amount ? "amount" : "default"} type={type} inputMode={name.endsWith("Minor") || name === "amountMinor" || name === "totalAmountMinor" ? "decimal" : undefined} placeholder={placeholder} min={min} step={step} /></div> : <Input className={inputClassName} {...props} variant={amount ? "amount" : "default"} type={type} inputMode={name.endsWith("Minor") || name === "amountMinor" || name === "totalAmountMinor" ? "decimal" : undefined} placeholder={placeholder} min={min} step={step} />}
     {error && <FieldError id={`${id}-error`}>{error}</FieldError>}
   </Field>;
+}
+
+function TransactionAmountField({ action, clearPreview }: { action: "income" | "expense"; clearPreview: () => void }) {
+  const [value, setValue] = useState("");
+  const tone = action === "expense" ? "text-destructive" : "text-primary";
+  const adjust = (minor: bigint) => {
+    clearPreview();
+    setValue(current => {
+      const parsed = current.trim() ? parseMajorToMinor(current) : "0";
+      if (parsed === null) return current;
+      return majorInputFromMinor(String(BigInt(parsed) + minor));
+    });
+  };
+  return <section className="sm:col-span-2 rounded-xl bg-background p-4 sm:p-6">
+    <FormField label="Valor da operação" labelClassName="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground" name="amountMinor" placeholder="0,00" value={value} onChange={event => setValue(event.target.value)} prefix="R$" inputClassName={`min-h-14 border-0 bg-transparent pl-10 font-mono text-3xl font-semibold tabular-nums shadow-none focus-visible:ring-0 sm:text-4xl ${tone}`} />
+    <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Atalhos de valor">
+      {[10, 50, 100].map(amount => <Button key={amount} type="button" size="sm" variant="secondary" onClick={() => adjust(BigInt(amount) * 100n)}>+{amount}</Button>)}
+      <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => { clearPreview(); setValue(""); }}>Limpar</Button>
+    </div>
+  </section>;
+}
+
+function TransactionKindPicker({ action, setAction, clearPreview, busy }: { action: "income" | "expense"; setAction: (action: Action) => void; clearPreview: () => void; busy: boolean }) {
+  const choose = (next: "income" | "expense") => {
+    if (action === next) return;
+    clearPreview();
+    setAction(next);
+  };
+  return <div role="group" aria-label="Tipo de registro" className="grid grid-cols-2 gap-1 rounded-xl bg-background p-1 sm:grid-cols-[1fr_1fr_minmax(10rem,1fr)]">
+    {(["expense", "income"] as const).map(kind => <Button key={kind} type="button" disabled={busy} aria-pressed={action === kind} onClick={() => choose(kind)} variant={action === kind ? "secondary" : "ghost"} className={`min-h-11 ${action === kind && kind === "expense" ? "text-destructive" : ""}`}>{kind === "expense" ? "Despesa" : "Receita"}</Button>)}
+    <NativeSelect aria-label="Outros tipos de registro" disabled={busy} value={action !== "income" && action !== "expense" ? action : ""} onChange={event => { if (event.target.value) { clearPreview(); setAction(event.target.value as Action); } }} className="col-span-2 min-h-11 bg-background sm:col-span-1">
+      <option value="">Outros tipos…</option>
+      {primaryActions.filter(kind => kind !== "income" && kind !== "expense").map(kind => <option key={kind} value={kind}>{actionLabels[kind]}</option>)}
+    </NativeSelect>
+  </div>;
 }
 
 function NotesField({ defaultValue }: { defaultValue?: string }) {
@@ -130,7 +167,7 @@ function ReversalFields({ references }: { references: References }) {
   return <><Alert role="note" className="sm:col-span-2"><AlertDescription>A reversão é definitiva e cria uma compensação, preservando o lançamento original. Não é possível reverter operações ligadas a cartões, faturas, reembolsos ou lançamentos já revertidos.</AlertDescription></Alert><FormField label="Data da compensação" name="occurredOn" type="date" defaultValue={todayLocal()} /><FormField label="Motivo" name="reason" placeholder="Ex.: lançamento duplicado" /><FormField label="Substituir por um novo lançamento?" name="replacementKind" required={false} value={replacementKind} onChange={event => setReplacementKind(event.target.value)} options={[["", "Não criar substituição"], ["income", "Nova receita"], ["expense", "Nova despesa"], ["transfer", "Nova transferência"]]} />{replacementKind && <><FormField label="Descrição do novo lançamento" name="replacementDescription" placeholder="Descreva o registro correto" /><FormField label="Data do novo lançamento" name="replacementOn" type="date" defaultValue={todayLocal()} /><FormField label="Valor (R$)" name="amountMinor" placeholder="85,00" />{replacementKind === "transfer" ? <><FormField label="Conta de origem" name="replacementFromAccountId" options={accountOptions(account => account.type !== "credit_card")} /><FormField label="Conta de destino" name="replacementToAccountId" options={accountOptions(account => account.type !== "credit_card")} /></> : <><FormField label="Conta" name="replacementAccountId" options={accountOptions(account => account.type !== "credit_card")} />{replacementKind === "income" ? <FormField label="Categoria" name="replacementCategoryId" required={false} options={[["", "Sem categoria"], ...categories.map(category => [category.id, category.name] as [string, string])]} /> : <><FormField label="Forma de pagamento" name="replacementPaymentMethod" options={[["pix", "Pix"], ["debit", "Débito"], ["cash", "Dinheiro"], ["other", "Outra"]]} /><CategorySplits categories={categories} /></>}</>}{<FormField label="Status do novo lançamento" name="replacementReviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} />}</>}</>;
 }
 
-export function ActionDialog({ action, busy, message, close, submit, references, selectedTransaction, selectedForecast, setAction, pendingPreview, pendingReverseReview, clearPreview }: { action: Action; busy: boolean; message: string; close: () => void; submit: (event: FormEvent<HTMLFormElement>) => void; references: References; selectedTransaction: TransactionOption | null; selectedForecast: ExpenseForecastOption | null; setAction: (action: Action) => void; pendingPreview: { signature: string; data: Record<string, unknown> } | null; pendingReverseReview: { signature: string; reason: string; replacement: Record<string, unknown> | null } | null; clearPreview: () => void }) {
+export function ActionDialog({ action, busy, message, close, submit, references, selectedTransaction, selectedForecast, setAction, pendingPreview, pendingReverseReview, clearPreview, presentation = "dialog" }: { action: Action; busy: boolean; message: string; close: () => void; submit: (event: FormEvent<HTMLFormElement>) => void; references: References; selectedTransaction: TransactionOption | null; selectedForecast: ExpenseForecastOption | null; setAction: (action: Action) => void; pendingPreview: { signature: string; data: Record<string, unknown> } | null; pendingReverseReview: { signature: string; reason: string; replacement: Record<string, unknown> | null } | null; clearPreview: () => void; presentation?: "dialog" | "inline" }) {
   const [returnFocus] = useState(() => typeof document === "undefined" ? null : document.activeElement as HTMLElement | null);
   const formRef = useRef<HTMLFormElement>(null);
   const [cardSettingsReady, setCardSettingsReady] = useState(false);
@@ -141,14 +178,16 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     const statementOptions: [string, string][] = references.statements.map(statement => [statement.id, `${statement.cardAccountName} · vence ${formatDate(statement.dueOn)} · ${statement.status}`]);
     const purchaseOptions: [string, string][] = references.transactions.filter(transaction => transaction.kind === "expense").map(transaction => [transaction.id, `${transaction.description} · ${formatDate(transaction.occurredOn)}`]);
     const accountField = (label: string, name: string, filter?: (account: AccountOption) => boolean, required = true) => <FormField label={label} name={name} required={required} options={accountOptions(filter)} />;
-    const shared = <><FormField label="Descrição" name="description" placeholder="Ex.: Mercado do mês" /><FormField label="Data da operação" name="occurredOn" type="date" defaultValue={todayLocal()} /><FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} placeholder="Opcional" /><NotesField /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
+    const descriptionField = <FormField label="Descrição" name="description" placeholder="Ex.: Mercado do mês" />;
+    const operationDateField = <FormField label="Data da operação" name="occurredOn" type="date" defaultValue={todayLocal()} />;
+    const shared = <>{descriptionField}{operationDateField}<FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} placeholder="Opcional" /><NotesField /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
     switch (action) {
       case "institution": return <FormField label="Nome da instituição" name="name" placeholder="Ex.: Banco do Brasil" />;
       case "account": return <AccountFields references={references} />;
       case "configureCard": return <CardSettingsFields accounts={references.accounts} onReady={setCardSettingsReady} />;
       case "category": return <><FormField label="Nome da categoria" name="name" placeholder="Ex.: Moradia" /><FormField label="Tipo" name="type" options={[["expense", "Despesa"], ["income", "Receita"]]} /><FormField label="Categoria superior" name="parentId" required={false} options={[["", "Sem categoria superior"], ...categoryOptions()]} /></>;
-      case "income": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="2500,00" /><FormField label="Conta" name="accountId" options={accountOptions(account => account.type !== "credit_card")} /><FormField label="Categoria" name="categoryId" required={false} options={[["", "Sem categoria"] , ...categoryOptions("income")]} />{shared}</>;
-      case "expense": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="85,00" />{accountField("Conta", "accountId", account => account.type !== "credit_card")}<FormField label="Forma de pagamento" name="paymentMethod" options={[["pix", "Pix"], ["debit", "Débito"], ["cash", "Dinheiro"], ["other", "Outra"]]} /><CategorySplits categories={references.categories.filter(category => category.type === "expense" && !category.isArchived)} />{shared}</>;
+      case "income": return <><TransactionAmountField action="income" clearPreview={clearPreview} />{descriptionField}<FormField label="Categoria" name="categoryId" required={false} options={[["", "Sem categoria"] , ...categoryOptions("income")]} />{operationDateField}<FormField label="Conta" name="accountId" options={accountOptions(account => account.type !== "credit_card")} /><FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} placeholder="Opcional" /><NotesField /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
+      case "expense": return <><TransactionAmountField action="expense" clearPreview={clearPreview} />{descriptionField}<CategorySplits categories={references.categories.filter(category => category.type === "expense" && !category.isArchived)} />{operationDateField}{accountField("Conta", "accountId", account => account.type !== "credit_card")}<FormField label="Forma de pagamento" name="paymentMethod" options={[["pix", "Pix"], ["debit", "Débito"], ["cash", "Dinheiro"], ["other", "Outra"]]} /><FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} placeholder="Opcional" /><NotesField /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
       case "transfer": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="500,00" />{accountField("Conta de origem", "fromAccountId", account => account.type !== "credit_card")}{accountField("Conta de destino", "toAccountId", account => account.type !== "credit_card")}{shared}</>;
       case "purchase": return <><FormField label="Valor total (R$)" name="totalAmountMinor" placeholder="1000,00" />{accountField("Cartão", "cardAccountId", account => account.type === "credit_card")}<FormField label="Número de parcelas" name="installmentCount" type="number" min="1" /><CategorySplits categories={references.categories.filter(category => category.type === "expense" && !category.isArchived)} />{shared}</>;
       case "cashback": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="25,00" />{accountField("Conta ou cartão", "accountId")}<FormField label="Categoria" name="categoryId" required={false} options={[["", "Sem categoria"], ...categoryOptions("income")]} /><FormField label="Fatura (crédito no cartão)" name="cardStatementId" required={false} options={[["", "Nenhuma fatura"], ...statementOptions]} />{shared}</>;
@@ -163,27 +202,56 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     }
   }, [action, references, selectedTransaction, selectedForecast]);
 
+  const typePicker = !selectedTransaction && !selectedForecast && (action === "income" || action === "expense" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={primaryActions.map(key => [key, actionLabels[key]])} />);
+  const form = <>
+    <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
+    <form ref={formRef} className="flex flex-col gap-4" onChange={clearPreview} onSubmit={submit} aria-busy={busy}>
+      <fieldset disabled={busy} className="min-w-0 border-0 p-0">
+        <FieldGroup key={action} className="grid grid-cols-1 sm:grid-cols-2">{fields}</FieldGroup>
+      </fieldset>
+      {pendingPreview && <PreviewSummary result={pendingPreview.data} references={references} />}
+      {pendingReverseReview && selectedTransaction && <ReversalReview transaction={selectedTransaction} references={references} reason={pendingReverseReview.reason} replacement={pendingReverseReview.replacement} />}
+      {message && <Alert variant="destructive"><AlertDescription>{message}</AlertDescription></Alert>}
+      <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+        <Button type="button" onClick={close} disabled={busy} variant="outline">Cancelar</Button>
+        <Button type="submit" disabled={busy || (action === "configureCard" && !cardSettingsReady)}>{busy ? "Validando…" : pendingReverseReview ? "Confirmar reversão" : pendingPreview ? "Confirmar e salvar" : ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment"].includes(action) ? "Revisar operação" : action === "cancelForecast" ? "Confirmar cancelamento" : action === "reverse" ? "Revisar reversão" : actionLabels[action]}</Button>
+      </div>
+    </form>
+  </>;
+  const title = action === "income" || action === "expense" ? "Nova transação" : actionLabels[action];
+  const description = action === "cancelForecast" ? "Confira a previsão antes de cancelar." : "Confira os dados da operação. Para valores em reais, use o formato 2500,00.";
+
+  if (presentation === "inline") return <PendingContext value={busy}>
+    <div className="w-full">
+      <header className="mb-6 pb-2">
+        <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Contabilidade pessoal <span aria-hidden="true">·</span> <span className="text-primary">Novo registro</span></p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-[32px]">{title}</h1>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{description}</p>
+      </header>
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)]">
+      <section className="min-w-0 rounded-xl bg-card p-4 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-5">
+          {typePicker}
+          {form}
+        </div>
+      </section>
+      <aside aria-label="Contexto da operação" className="grid min-w-0 gap-5">
+        <Card><CardHeader><CardTitle>Suas contas</CardTitle><CardDescription>Saldos atuais por moeda</CardDescription></CardHeader><CardContent><ul className="grid gap-2">{references.accounts.filter(account => account.type !== "credit_card").map(account => <li key={account.id} className="flex min-w-0 flex-wrap justify-between gap-2 rounded-lg bg-background p-3"><span className="min-w-0 break-words text-sm">{account.name}</span><span className="break-words font-mono text-sm">{formatMinor(account.balanceMinor, account.currency)}</span></li>)}</ul>{!references.accounts.some(account => account.type !== "credit_card") && <p className="text-sm text-muted-foreground">Adicione uma conta para registrar movimentações.</p>}<Link href="/accounts" className="mt-3 inline-flex min-h-11 items-center text-sm text-primary">Ver contas</Link></CardContent></Card>
+        <Card><CardHeader><CardTitle>Movimentações recentes</CardTitle><CardDescription>Consulte seus últimos registros</CardDescription></CardHeader><CardContent><ul className="grid gap-2">{[...references.transactions].sort((a, b) => b.occurredOn.localeCompare(a.occurredOn)).slice(0, 3).map(transaction => <li key={transaction.id} className="rounded-lg bg-background p-3"><p className="truncate text-sm" title={transaction.description}>{transaction.description}</p><p className="mt-1 font-mono text-xs text-muted-foreground">{formatDate(transaction.occurredOn)}</p></li>)}</ul>{!references.transactions.length && <p className="text-sm text-muted-foreground">Seu histórico aparecerá depois do primeiro registro.</p>}<Link href="/entries" className="mt-3 inline-flex min-h-11 items-center text-sm text-primary">Ver transações</Link></CardContent></Card>
+      </aside>
+      </div>
+    </div>
+  </PendingContext>;
+
   return <PendingContext value={busy}><Dialog open onOpenChange={open => { if (!open && !busy) close(); }}>
-    <DialogContent showCloseButton={false} className="overscroll-contain sm:max-w-xl" finalFocus={returnFocus ? { current: returnFocus } : true} initialFocus={() => formRef.current?.querySelector<HTMLElement>("input,select,textarea,button") ?? true}>
+    <DialogContent showCloseButton={false} className={`overscroll-contain ${action === "income" || action === "expense" ? "sm:max-w-2xl" : "sm:max-w-xl"}`} finalFocus={returnFocus ? { current: returnFocus } : true} initialFocus={() => formRef.current?.querySelector<HTMLElement>("input,select,textarea,button") ?? true}>
       <DialogHeader>
-        <DialogTitle>{actionLabels[action]}</DialogTitle>
-        <DialogDescription>{action === "cancelForecast" ? "Confira a previsão antes de cancelar." : "Confira os dados da operação. Para valores em reais, use o formato 2500,00."}</DialogDescription>
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>{description}</DialogDescription>
         <Button type="button" variant="ghost" size="icon" disabled={busy} onClick={close} aria-label="Fechar" className="absolute top-2 right-2">×</Button>
       </DialogHeader>
-      {!selectedTransaction && !selectedForecast && <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={primaryActions.map(key => [key, actionLabels[key]])} />}
-      <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
-      <form ref={formRef} className="flex flex-col gap-4" onChange={clearPreview} onSubmit={submit} aria-busy={busy}>
-        <fieldset disabled={busy} className="min-w-0 border-0 p-0">
-          <FieldGroup key={action} className="grid grid-cols-1 sm:grid-cols-2">{fields}</FieldGroup>
-        </fieldset>
-        {pendingPreview && <PreviewSummary result={pendingPreview.data} references={references} />}
-        {pendingReverseReview && selectedTransaction && <ReversalReview transaction={selectedTransaction} references={references} reason={pendingReverseReview.reason} replacement={pendingReverseReview.replacement} />}
-        {message && <Alert variant="destructive"><AlertDescription>{message}</AlertDescription></Alert>}
-        <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-          <Button type="button" onClick={close} disabled={busy} variant="outline">Cancelar</Button>
-          <Button type="submit" disabled={busy || (action === "configureCard" && !cardSettingsReady)}>{busy ? "Validando…" : pendingReverseReview ? "Confirmar reversão" : pendingPreview ? "Confirmar e salvar" : ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment"].includes(action) ? "Revisar operação" : action === "cancelForecast" ? "Confirmar cancelamento" : action === "reverse" ? "Revisar reversão" : actionLabels[action]}</Button>
-        </div>
-      </form>
+      {typePicker}
+      {form}
     </DialogContent>
   </Dialog></PendingContext>;
 }

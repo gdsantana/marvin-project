@@ -1,4 +1,4 @@
-export type Section = "overview" | "accounts" | "cards" | "entries" | "statements" | "reports";
+export type Section = "overview" | "new" | "accounts" | "cards" | "entries" | "statements" | "reports";
 export type Action = "institution" | "account" | "configureCard" | "category" | "income" | "expense" | "transfer" | "purchase" | "cashback" | "refund" | "payment" | "close" | "forecast" | "realizeForecast" | "cancelForecast" | "correct" | "reverse";
 export type AccountOption = { id: string; name: string; type: string; currency: string; balanceMinor: string; availableCreditMinor?: string | null };
 export type CategoryOption = { id: string; name: string; type: "income" | "expense"; isArchived: boolean };

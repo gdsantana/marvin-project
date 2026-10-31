@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatDate, formatMinor, majorInputFromMinor, parseMajorToMinor } from "../components/finance-format";
+import { formatDate, formatMinor, majorInputFromMinor, parseMajorToMinor, percentChangeBasisPoints } from "../components/finance-format";
 
 test("form money conversion accepts decimal comma or period without floating-point math", () => {
   assert.equal(parseMajorToMinor("1.234,50"), null);
@@ -22,4 +22,12 @@ test("civil date labels use Brazilian order without timezone conversion", () => 
   assert.equal(formatDate("2026-10-26"), "26/10/2026");
   assert.equal(formatDate("2024-02-29"), "29/02/2024");
   assert.equal(formatDate(""), "");
+});
+
+
+test("period variation handles zero, negative baselines and large amounts exactly", () => {
+  assert.equal(percentChangeBasisPoints(0n, 10n), null);
+  assert.equal(percentChangeBasisPoints(10000n, 12500n), 2500n);
+  assert.equal(percentChangeBasisPoints(-10000n, -5000n), 5000n);
+  assert.equal(percentChangeBasisPoints(100000000000000000000n, 90000000000000000000n), -1000n);
 });
