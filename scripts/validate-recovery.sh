@@ -2,8 +2,14 @@
 set -Eeuo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-pg_bin_dir="${PG_BIN_DIR:-/tmp/marvin-pg-runtime/usr/bin}"
-pg_lib_dir="${PG_LIB_DIR:-/tmp/marvin-pg-runtime/usr/lib}"
+pg_bin_dir="${PG_BIN_DIR:-}"
+pg_lib_dir="${PG_LIB_DIR:-}"
+if [[ -z "$pg_bin_dir" ]]; then
+  if command -v initdb >/dev/null 2>&1; then pg_bin_dir="$(dirname "$(command -v initdb)")"
+  elif [[ -x /tmp/marvin-pg-runtime/usr/bin/initdb ]]; then pg_bin_dir=/tmp/marvin-pg-runtime/usr/bin
+  else printf 'PostgreSQL local não encontrado. Defina PG_BIN_DIR; recovery Docker requer ferramentas de cluster locais.\n' >&2; exit 2
+  fi
+fi
 temp_root="$(mktemp -d "${TMPDIR:-/tmp}/marvin-recovery.XXXXXXXX")"
 fixture_file="$repo_root/apps/web/.validate-recovery-$$.ts"
 log_file="$temp_root/command.log"
@@ -36,14 +42,14 @@ for binary in initdb pg_ctl postgres; do
 done
 for binary in pg_dump pg_restore createdb psql; do
   command -v "$binary" >/dev/null || { printf 'Utilitário PostgreSQL ausente no PATH: %s\n' "$binary" >&2; exit 2; }
-  [[ "$("$binary" --version)" == *"18.6"* ]] || { printf 'O utilitário %s deve ser PostgreSQL 18.6.\n' "$binary" >&2; exit 2; }
+  [[ "$("$binary" --version)" == *" 17."* || "$("$binary" --version)" == *" 18."* ]] || { printf 'O utilitário %s deve ser PostgreSQL 17 ou 18.\n' "$binary" >&2; exit 2; }
 done
-[[ "$("$pg_bin_dir/postgres" --version)" == *"18.6"* ]] || { printf 'O runtime esperado é PostgreSQL 18.6.\n' >&2; exit 2; }
+[[ "$("$pg_bin_dir/postgres" --version)" == *" 17."* || "$("$pg_bin_dir/postgres" --version)" == *" 18."* ]] || { printf 'Use PostgreSQL 17 ou 18 para corresponder às imagens suportadas do projeto.\n' >&2; exit 2; }
 
 export PATH="$pg_bin_dir:$PATH"
-export LD_LIBRARY_PATH="$pg_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [[ -n "$pg_lib_dir" ]]; then export LD_LIBRARY_PATH="$pg_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi
 
-printf 'Preparando dois clusters PostgreSQL 18.6 descartáveis...\n'
+printf 'Preparando dois clusters PostgreSQL descartáveis...\n'
 run_quiet 'inicialização do cluster origem' "$pg_bin_dir/initdb" -D "$temp_root/source" --auth-local=trust --auth-host=trust --no-instructions
 run_quiet 'inicialização do cluster destino' "$pg_bin_dir/initdb" -D "$temp_root/restore" --auth-local=trust --auth-host=trust --no-instructions
 run_quiet 'inicialização da origem' "$pg_bin_dir/pg_ctl" -D "$temp_root/source" -l "$temp_root/source.log" -o "-p $source_port -h 127.0.0.1 -k $temp_root" -w start

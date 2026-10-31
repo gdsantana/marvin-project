@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src next.config.ts",
     "build": "next build",
-    "test": "tsx --test src/server/*.test.ts"
+    "test": "node --import tsx --test --test-isolation=none src/server/*.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

@@ -5,5 +5,16 @@ node_modules
 .git
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 backups
+**/backups
+**/*.dump
+**/*.backup
+**/*.tar
+**/*.tar.gz
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
