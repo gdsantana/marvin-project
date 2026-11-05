@@ -123,3 +123,42 @@ Também foram preservadas capturas de receita, despesa e parcelamento em ambas a
 Roteiro `scripts/validate-visual.ts --audit` aprovado com Chromium real, API interceptada e credenciais fictícias. Foram verificadas seis rotas em 390×844 e 1440×900, filtros de período, visibilidade de cancelamentos, navegação móvel pelo menu Mais e criação de conta sem seletor de moeda. Capturas finais: `/tmp/marvin-visual-d2yAM7`. A inspeção visual corrigiu um caso em que descrição extensa comprimia o valor mobile; não houve rolagem horizontal ou erro JavaScript nos cenários finais.
 
 O modo histórico sem `--audit` contém seletores da navegação anterior; não representa um gate aprovado atual. Evidências globais e limites estão em [verification.md](verification.md). Não foram repetidos contraste integral, leitor de tela ou dispositivo físico.
+
+
+## Nova transação simplificada — 01/11/2026
+
+Receita e despesa usam campos principais compartilhados; os atalhos de valor e cards de contexto foram removidos. Categoria única recebe o total da despesa sem redigitação; o rateio continua disponível explicitamente. Data de postagem, estabelecimento/pessoa, notas e status ficam em “Mais detalhes”. A prévia substitui visualmente os campos, permite editar e mantém confirmação explícita antes da escrita.
+
+Validação reproduzível com API simulada, Chromium externo e servidor Next.js isolado sem banco pessoal:
+
+```bash
+VISUAL_ISOLATED=1 VISUAL_BASE_URL=http://127.0.0.1:3012 PLAYWRIGHT_MODULE=/caminho/node_modules/playwright/package.json CHROMIUM_EXECUTABLE=/usr/bin/chromium node scripts/validate-new-transaction.cjs
+```
+
+Aprovado em 320×900, 390×900 e 1440×900: preservação de valor, descrição, conta, data e notas ao alternar receita/despesa; detalhes recolhidos; categoria única e rateio com centavos exatos; revisão sem escrita; edição e nova prévia; falha simulada seguida de retry com mesmo payload e chave de idempotência; ausência de contas; ausência de overflow horizontal e erros JavaScript. Capturas sintéticas em `/tmp/marvin-new-transaction-NVAcxm`, com inspeção visual das versões mobile e desktop.
+
+Testes unitários em `transaction-form-data.test.ts` cobrem categoria única, ausência de categoria, valores grandes, entradas inválidas e rateio. A suíte web passou com 31 testes aprovados e uma integração PostgreSQL ignorada por falta de banco descartável configurado. Não foram verificados teclado virtual em dispositivo físico, leitor de tela ou escritas financeiras reais nesta rodada.
+
+
+### Cartão de crédito no formulário — 01/11/2026
+
+“Cartão de crédito” está disponível em “Forma de pagamento”. Sua seleção mantém os campos comuns, troca a conta pelo cartão e apresenta parcelas com valor inicial 1. Compras usam o fluxo de preview e escrita `credit_purchase`, inclusive em uma parcela; não são enviadas como despesas em conta corrente. Categoria única recebe o total da compra e o rateio permanece opcional.
+
+O roteiro `scripts/validate-new-transaction.cjs` passou novamente em 320, 390 e 1440 px, verificando cartão, total, categoria, 1 e 3 parcelas no payload de preview e retorno ao débito sem perder o valor. API simulada, sem escrita real em banco. Evidências da rodada: `/tmp/marvin-new-transaction-4LlsXa`. Suíte web: 32 testes aprovados e uma integração PostgreSQL ignorada.
+
+
+## Criação de categoria durante uma nova transação — 2026-11-01
+
+`category-picker.tsx` permite criar categoria raiz ou subcategoria de mesmo tipo e selecioná-la sem perder os campos da transação. A escrita é separada e essa consequência aparece no diálogo. Reutiliza `POST /api/v1/categories`, CSRF e a mesma chave idempotente em uma nova tentativa do mesmo payload. Categorias locais equivalentes por nome, tipo e pai são selecionadas sem outra escrita.
+
+Validação `scripts/validate-inline-category.cjs` aprovada com Chromium em 320, 390 e 1440 px, servidor de produção em cópia temporária sem arquivos `.env`, conexão DB inválida e API interceptada. Cobriu categoria de receita, subcategoria de despesa, rateio, crédito, criação em diálogo aninhado, preservação de valor/descrição/conta/data, cancelamento sem escrita, falha e retry, headers CSRF/idempotência e categoria existente. Sem erros JavaScript ou overflow horizontal; capturas mobile e desktop inspecionadas. Evidências: `/tmp/marvin-inline-category-evidence-7x1Uuh`.
+
+Typecheck e lint web aprovados; build da cópia isolada aprovado com aviso já existente de plugin Next no ESLint. Suíte web: 33 testes aprovados, zero falhas, uma integração PostgreSQL ignorada por falta de `DATABASE_URL_TEST`. Não houve gravação em produção, teste em telefone físico ou nova validação de banco.
+
+Reexecução com servidor isolado e Playwright externo:
+
+```bash
+VISUAL_ISOLATED=1 VISUAL_BASE_URL=http://127.0.0.1:3029 \
+PLAYWRIGHT_MODULE=/caminho/node_modules/playwright/package.json \
+CHROMIUM_EXECUTABLE=/usr/bin/chromium node scripts/validate-inline-category.cjs
+```

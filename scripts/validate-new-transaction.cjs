@@ -1,0 +1,138 @@
+const assert = require("node:assert/strict");
+const { createRequire } = require("node:module");
+const { resolve, join } = require("node:path");
+const { mkdtemp } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+(async () => {
+ assert.equal(process.env.VISUAL_ISOLATED, "1", "Use somente servidor isolado sem banco pessoal.");
+ const base = new URL(process.env.VISUAL_BASE_URL);
+ assert(["localhost", "127.0.0.1", "[::1]"].includes(base.hostname) && base.protocol === "http:");
+ const { chromium } = createRequire(resolve(process.env.PLAYWRIGHT_MODULE))("playwright");
+ const output = await mkdtemp(join(tmpdir(), "marvin-new-transaction-"));
+ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE, headless: true });
+ try {
+ for (const width of [320, 390, 1440]) {
+  const context = await browser.newContext({ viewport: {width, height: 900}, locale:"pt-BR", reducedMotion:"reduce" });
+  const writes = [], previews = [], errors = [];
+  let noAccounts = false, failSave = true;
+  await context.route("**/*", async route => {
+   if (new URL(route.request().url()).origin !== base.origin) return route.abort();
+   if (!new URL(route.request().url()).pathname.startsWith("/api/")) return route.continue();
+   const url = new URL(route.request().url()), path = url.pathname;
+   const reply = data => route.fulfill({json:{data}});
+   if(path === "/api/auth/session") return reply({authenticated:true, csrfToken:"synthetic"});
+   if(route.request().method() === "GET") {
+    if(path === "/api/v1/accounts") return reply(noAccounts ? [] : [{id:"account",name:"Conta teste",type:"checking",currency:"BRL",balanceMinor:"25000"},{id:"card",name:"Cartão teste",type:"credit_card",currency:"BRL",balanceMinor:"0"}]);
+    if(path === "/api/v1/categories") return reply([{id:"food",name:"Alimentação",type:"expense",isArchived:false},{id:"salary",name:"Salário",type:"income",isArchived:false}]);
+    return reply([]);
+   }
+   const body = route.request().postDataJSON();
+   if(path.endsWith("/preview")) {
+    previews.push(body);
+    return reply({operation:body.operation,kind:body.operation,entries:[{accountId:"account",amountMinor:body.operation === "expense" || body.operation === "credit_purchase" ? "-"+(body.totalAmountMinor ?? body.amountMinor) : body.amountMinor}],allocations:body.allocations ?? []});
+   }
+   writes.push({body,key:route.request().headers()["idempotency-key"]});
+   if (failSave) {
+    failSave = false;
+    return route.fulfill({status:503,json:{error:{message:"Falha simulada. Tente novamente."}}});
+   }
+   return reply({id:"saved"});
+  });
+  const page = await context.newPage();
+  page.on("pageerror", e => errors.push(e.message));
+  await page.goto(new URL("/new", base).href);
+  await page.getByLabel("Valor",{exact:true}).fill("123,45");
+  await page.getByLabel("Descrição",{exact:true}).fill("Mercado");
+  await page.getByLabel("Conta",{exact:true}).selectOption("account");
+  await page.getByLabel("Data",{exact:true}).fill("2026-10-15");
+  assert.equal(await page.getByLabel("Notas",{exact:true}).isVisible(), false);
+  await page.getByText("Mais detalhes",{exact:true}).click();
+  await page.getByLabel("Notas",{exact:true}).fill("Nota preservada");
+  await page.getByRole("button",{name:"Receita",exact:true}).click();
+  assert.equal(await page.getByLabel("Valor",{exact:true}).inputValue(),"123,45");
+  assert.equal(await page.getByLabel("Descrição",{exact:true}).inputValue(),"Mercado");
+  assert.equal(await page.getByLabel("Conta",{exact:true}).inputValue(),"account");
+  assert.equal(await page.getByLabel("Data",{exact:true}).inputValue(),"2026-10-15");
+  assert.equal(await page.getByLabel("Notas",{exact:true}).inputValue(),"Nota preservada");
+  await page.getByRole("button",{name:"Despesa",exact:true}).click();
+  await page.getByLabel("Categoria",{exact:true}).selectOption("food");
+  await page.getByText("Mais detalhes",{exact:true}).click();
+  await page.getByRole("button",{name:"Revisar transação",exact:true}).click();
+  await page.getByRole("button",{name:"Confirmar e salvar",exact:true}).waitFor();
+  assert.equal(await page.getByLabel("Valor",{exact:true}).isVisible(),false);
+  assert.equal(writes.length,0);
+  assert.deepEqual(previews.at(-1).allocations,[{categoryId:"food",amountMinor:"12345"}]);
+  assert.equal(previews.at(-1).notes,"Nota preservada");
+  assert(!("allocationMode" in previews.at(-1)));
+  assert(await page.getByText("Mercado",{exact:true}).isVisible());
+  assert(await page.getByText("15/10/2026",{exact:true}).isVisible());
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.screenshot({path:join(output, width+"-review.png"),fullPage:true});
+  await page.getByRole("button",{name:"Editar dados",exact:true}).click();
+  assert.equal(await page.getByLabel("Valor",{exact:true}).inputValue(),"123,45");
+  await page.getByLabel("Valor",{exact:true}).fill("200,01");
+  await page.getByRole("button",{name:"Revisar transação",exact:true}).click();
+  await page.getByRole("button",{name:"Confirmar e salvar",exact:true}).waitFor();
+  assert.equal(previews.at(-1).amountMinor,"20001");
+  await page.getByRole("button",{name:"Confirmar e salvar",exact:true}).click();
+  await page.getByRole("alert").filter({hasText:"Falha simulada"}).waitFor();
+  assert.equal(writes.length,1);
+  await page.getByRole("button",{name:"Confirmar e salvar",exact:true}).click();
+  await page.waitForURL("**/entries");
+  assert.equal(writes.length,2);
+  assert.equal(writes[0].key,writes[1].key);
+  assert.deepEqual(writes[0].body,writes[1].body);
+  assert(writes[0].key);
+  assert.equal(writes[0].body.amountMinor,"20001");
+  await page.goto(new URL("/new", base).href);
+  await page.getByLabel("Valor",{exact:true}).waitFor();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.screenshot({path:join(output, width+"-form.png"),fullPage:true});
+  await page.getByLabel("Valor",{exact:true}).fill("10,01");
+  await page.getByLabel("Descrição",{exact:true}).fill("Rateio");
+  await page.getByLabel("Conta",{exact:true}).selectOption("account");
+  await page.getByRole("button",{name:"Dividir entre categorias",exact:true}).click();
+  await page.getByLabel("Categoria 1",{exact:true}).selectOption("food");
+  await page.getByLabel("Valor (R$)",{exact:true}).fill("5,00");
+  await page.getByRole("button",{name:/Outra categoria/}).click();
+  await page.getByLabel("Valor (R$)",{exact:true}).nth(1).fill("5,01");
+  await page.getByRole("button",{name:"Revisar transação",exact:true}).click();
+  await page.getByRole("button",{name:"Confirmar e salvar",exact:true}).waitFor();
+  assert.deepEqual(previews.at(-1).allocations,[{categoryId:"food",amountMinor:"500"},{categoryId:null,amountMinor:"501"}]);
+  assert.equal(writes.length,2);
+  await page.getByRole("button",{name:"Editar dados",exact:true}).click();
+  await page.getByRole("button",{name:"Usar uma categoria",exact:true}).click();
+  await page.getByLabel("Forma de pagamento",{exact:true}).selectOption("credit");
+  assert.equal(await page.getByLabel("Valor total",{exact:true}).inputValue(),"10,01");
+  assert.equal(await page.getByLabel("Descrição",{exact:true}).inputValue(),"Rateio");
+  assert.equal(await page.getByLabel("Parcelas",{exact:true}).inputValue(),"1");
+  await page.getByLabel("Cartão",{exact:true}).selectOption("card");
+  await page.getByLabel("Categoria",{exact:true}).selectOption("food");
+  await page.getByRole("button",{name:"Revisar transação",exact:true}).click();
+  await page.getByRole("button",{name:"Confirmar e salvar",exact:true}).waitFor();
+  assert.equal(previews.at(-1).operation,"credit_purchase");
+  assert.equal(previews.at(-1).cardAccountId,"card");
+  assert.equal(previews.at(-1).totalAmountMinor,"1001");
+  assert.equal(previews.at(-1).installmentCount,1);
+  assert.deepEqual(previews.at(-1).allocations,[{categoryId:"food",amountMinor:"1001"}]);
+  assert(!("paymentMethod" in previews.at(-1)));
+  await page.getByRole("button",{name:"Editar dados",exact:true}).click();
+  await page.getByLabel("Parcelas",{exact:true}).fill("3");
+  await page.getByRole("button",{name:"Revisar transação",exact:true}).click();
+  await page.getByRole("button",{name:"Confirmar e salvar",exact:true}).waitFor();
+  assert.equal(previews.at(-1).installmentCount,3);
+  await page.getByRole("button",{name:"Editar dados",exact:true}).click();
+  await page.getByLabel("Forma de pagamento",{exact:true}).selectOption("debit");
+  assert.equal(await page.getByLabel("Valor",{exact:true}).inputValue(),"10,01");
+  assert.equal(await page.getByLabel("Forma de pagamento",{exact:true}).inputValue(),"debit");
+  noAccounts=true;
+  await page.reload();
+  await page.getByRole("link",{name:"Adicionar conta",exact:true}).waitFor();
+  assert.equal(await page.getByRole("button",{name:"Revisar transação",exact:true}).count(),0);
+  assert.deepEqual(errors,[]);
+  console.log("PASS",width,"preserved inputs, disclosure, single allocation, review/edit/save, idempotency key, empty accounts, no overflow");
+  await context.close();
+ }
+ console.log("Evidências:",output);
+ } finally { await browser.close(); }
+})().catch(e => { console.error(e); process.exitCode=1; });

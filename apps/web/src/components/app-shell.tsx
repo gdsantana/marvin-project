@@ -12,8 +12,8 @@ import { actionLabels, primaryActions, type Action, type Section } from "./works
 
 const navigation = [
   { id: "overview", href: "/", label: "Início", mobileLabel: "Início", icon: HouseIcon },
-  { id: "new", href: "/new", label: "Nova transação", mobileLabel: "Nova", icon: PlusCircleIcon },
   { id: "entries", href: "/entries", label: "Transações", mobileLabel: "Transações", icon: ArrowDownUpIcon },
+  { id: "new", href: "/new", label: "Nova transação", mobileLabel: "Nova", icon: PlusCircleIcon },
   { id: "accounts", href: "/accounts", label: "Contas", mobileLabel: "Contas", icon: WalletIcon },
   { id: "cards", href: "/cards", label: "Cartões", mobileLabel: "Cartões", icon: CreditCardIcon },
   { id: "statements", href: "/statements", label: "Faturas", mobileLabel: "Faturas", icon: ReceiptTextIcon },
@@ -37,12 +37,11 @@ export function AppShell({ section, title, description, onCreate, onSignOut, cre
           <Link href="/entries" className="hidden min-h-9 w-64 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-xs text-muted-foreground md:flex"><ArrowDownUpIcon className="size-3.5" aria-hidden="true" />Buscar transações…</Link>
           <div className="flex min-w-0 items-center gap-2">
             <NativeSelect disabled={createDisabled} aria-label="Criar novo registro" value="" onChange={event => { if (event.target.value) onCreate(event.target.value as Action); }} className="hidden max-w-48 md:flex"><NativeSelectOption value="">Novo registro</NativeSelectOption>{primaryActions.map(action => <NativeSelectOption key={action} value={action}>{actionLabels[action]}</NativeSelectOption>)}</NativeSelect>
-            <Link href="/new" aria-label="Nova transação" className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-surface md:hidden"><PlusCircleIcon className="size-5" aria-hidden="true" /></Link>
           </div>
         </div>
       </header>
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-7xl px-4 py-6 outline-none sm:px-6 lg:px-6 lg:py-6">
-        <div className={cn("mb-6 flex flex-col gap-2", section === "new" && "sr-only")}><span className="hidden font-mono text-[10px] tracking-widest text-primary md:block">● SISTEMA OPERACIONAL FINANCEIRO</span><h1 className="sr-only text-2xl font-semibold tracking-tight md:not-sr-only lg:text-3xl">{title}</h1><p className="hidden max-w-2xl text-sm leading-6 text-muted-foreground md:block">{description}</p></div>
+        <div className={cn("mb-6 flex flex-col gap-2", section === "new" && "hidden md:flex")}><span className="hidden font-mono text-[10px] tracking-widest text-primary md:block">● SISTEMA OPERACIONAL FINANCEIRO</span><h1 className="sr-only text-2xl font-semibold tracking-tight md:not-sr-only lg:text-3xl">{title}</h1><p className="hidden max-w-2xl text-sm leading-6 text-muted-foreground md:block">{description}</p></div>
         {children}
       </main>
     </div>

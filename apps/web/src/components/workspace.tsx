@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import type { CategoryReport } from "@finance/contracts";
+import { createdIdResponseSchemaEnvelope, type CreateCategoryInput, type CategoryReport } from "@finance/contracts";
+import { CategoryCreationContext } from "./category-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -11,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { AppShell } from "./app-shell";
 import { recentMonths } from "./finance-chart-data";
 import { DashboardOverview } from "./dashboard-overview";
+import { readCategoryAllocations } from "./transaction-form-data";
+import { DateRangeSelect } from "./date-range-select";
 import { TransactionList } from "./transaction-list";
 import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
@@ -169,6 +172,17 @@ export function Workspace({ section }: { section: Section }) {
   const openForecastAction = (action: "realizeForecast" | "cancelForecast", forecast: ExpenseForecastOption) => { setSelectedForecast(forecast); setSelectedTransaction(null); setPendingPreview(null); setForm(action); };
   const closeDialog = useCallback(() => { setForm(null); setMessage(""); setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null); if (section === "new") router.push("/entries"); }, [section, router]);
 
+  async function createInlineCategory(input: CreateCategoryInput, key: string): Promise<CategoryOption> {
+    const response = await fetch("/api/v1/categories", { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": csrf, "idempotency-key": key }, body: JSON.stringify(input) });
+    if (!response.ok) throw new Error("Category creation failed");
+    const result = createdIdResponseSchemaEnvelope.parse(await response.json());
+    if (!result.ok) throw new Error("Category creation failed");
+    const category = { ...input, id: result.data.id, isArchived: false };
+    setReferences(current => ({ ...current, categories: [...current.categories.filter(item => item.id !== category.id), category] }));
+    setPendingPreview(null);
+    return category;
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!form) return;
     setBusy(true); setMessage("");
@@ -183,17 +197,10 @@ export function Workspace({ section }: { section: Section }) {
         body[key] = minor;
       } else if (key === "creditLimitMinor") body[key] = null;
     }
-    const readAllocations = () => {
-      const categoryIds = formData.getAll("allocationCategoryId").map(value => String(value));
-      const splitAmounts = formData.getAll("allocationAmount").map(value => String(value));
-      const allocations = categoryIds.map((categoryId, index) => ({ categoryId: categoryId || null, amountMinor: parseMajorToMinor(splitAmounts[index] ?? "") }));
-      if (allocations.some(allocation => allocation.amountMinor === null || BigInt(allocation.amountMinor) <= 0n)) return null;
-      return allocations.map(allocation => ({ categoryId: allocation.categoryId, amountMinor: allocation.amountMinor }));
-    };
     const needsAllocations = form === "expense" || form === "purchase"
       || (form === "correct" && formData.get("replaceCategories") === "on")
       || (form === "reverse" && formData.get("replacementKind") === "expense");
-    const allocations = needsAllocations ? readAllocations() : null;
+    const allocations = needsAllocations ? readCategoryAllocations(formData, form === "expense" || form === "purchase") : null;
     if (needsAllocations && !allocations) { setBusy(false); setMessage("Informe valores positivos para cada categoria."); return; }
     if (form === "expense" || form === "purchase") body.allocations = allocations;
     if (form === "correct") {
@@ -227,7 +234,9 @@ export function Workspace({ section }: { section: Section }) {
     for (const key of ["institutionId", "parentId", "categoryId"]) if (body[key] === "") body[key] = null;
     for (const key of ["postedOn", "counterpartyName", "notes"]) if (body[key] === "") body[key] = null;
     if (body.cardStatementId === "") delete body.cardStatementId;
-    delete body.allocationCategoryId; delete body.allocationAmount;
+    delete body.allocationCategoryId; delete body.allocationAmount; delete body.allocationMode;
+    if (form === "expense" || form === "purchase") delete body.categoryId;
+    if (form === "purchase") delete body.paymentMethod;
     if (form === "institution") Object.assign(body, { name: entries.name });
     if (form === "category") Object.assign(body, { name: entries.name, type: entries.type, parentId: entries.parentId || null });
     for (const key of ["installmentCount", "closingDay", "dueDay"]) if (typeof body[key] === "string" && body[key] !== "") body[key] = Number(body[key]);
@@ -270,7 +279,7 @@ export function Workspace({ section }: { section: Section }) {
       const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": csrf, "idempotency-key": idempotencyKey }, body: JSON.stringify(body) });
       const result = await response.json().catch(() => null);
       if (!response.ok) { setMessage(result?.error?.message ?? "Não foi possível salvar."); return; }
-      setPendingRequest(null); setPendingPreview(null); setPendingReverseReview(null); setForm(null); setSelectedForecast(null); setSelectedTransaction(null); setMessage("Registro salvo."); setReloadToken(value => value + 1); if (section === "new") router.push("/entries"); else router.refresh();
+      setPendingRequest(null); setPendingPreview(null); setPendingReverseReview(null); setForm(null); setSelectedForecast(null); setSelectedTransaction(null); setMessage(["income", "expense", "transfer", "purchase", "cashback", "refund", "payment"].includes(form) ? "Transação salva." : "Registro salvo."); setReloadToken(value => value + 1); if (section === "new") router.push("/entries"); else router.refresh();
     } catch { setMessage("Falha de conexão. Tente novamente; a mesma chave de idempotência será reutilizada."); }
     finally { setBusy(false); }
   }
@@ -289,7 +298,8 @@ export function Workspace({ section }: { section: Section }) {
           {section === "overview" && <DashboardOverview series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError)} />}
           {section === "accounts" && <ResourceSection title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." action="account" setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} />}
           {section === "cards" && <ResourceSection title="Seus cartões" detail="Cartões, limites disponíveis e configurações de fechamento." action="account" secondaryAction="configureCard" setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
-          {(section === "entries" || section === "statements") && <div className="mb-4 flex flex-wrap gap-3">
+          {section === "entries" && <div className="mb-4 w-full"><DateRangeSelect value={historyPeriod} onChange={setHistoryPeriod} /></div>}
+          {section === "statements" && <div className="mb-4 flex flex-wrap gap-3">
             <label className="grid gap-1 text-sm">De<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.from} max={historyPeriod.to} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, from: event.target.value })); }} /></label>
             <label className="grid gap-1 text-sm">Até<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.to} min={historyPeriod.from} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, to: event.target.value })); }} /></label>
           </div>}
@@ -300,7 +310,7 @@ export function Workspace({ section }: { section: Section }) {
           {section === "statements" && <ResourceSection title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={setForm} rows={references.statements} />}
           {section === "reports" && !reportError && <ReportsDashboard series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} range={range} onRangeChange={setRange} report={currentReport} />}
         </>}
-    {form && (section !== "new" || (!dataLoading && !dataError)) && <ActionDialog presentation={section === "new" ? "inline" : "dialog"} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} />}
+    {form && (section !== "new" || (!dataLoading && !dataError)) && <CategoryCreationContext value={createInlineCategory}><ActionDialog presentation={section === "new" ? "inline" : "dialog"} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} /></CategoryCreationContext>}
   </AppShell>;
 }
 

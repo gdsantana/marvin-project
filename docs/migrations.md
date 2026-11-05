@@ -42,3 +42,7 @@ Validação executada neste checkpoint: PostgreSQL 18.6 descartável sob `/tmp`,
 A migration `0002_brl_only.sql` estabelece BRL como a única moeda suportada para contas e previsões. Antes de adicionar as constraints, executa um preflight; se existir qualquer registro com outra moeda (por exemplo, EUR), aborta com `BRL migration blocked`. Não converte nem remove dados. Resolva os registros explicitamente antes de aplicar a migration.
 
 O preflight e a adição das constraints devem ser executados em uma transação para que uma falha preserve o esquema e os dados existentes. Esta documentação descreve o comportamento da migration versionada; não indica que ela foi aplicada em ambiente de produção.
+
+## Carga inicial de categorias
+
+Depois de aplicar as migrations, `pnpm db:bootstrap-categories` usa `DATABASE_URL` para cadastrar as 13 categorias básicas em uma transação. O comando pode rodar em produção e ser repetido; preserva registros existentes, incluindo categorias arquivadas, e não cria dados financeiros fictícios. A identificação considera nome sem diferença de caixa/espaços externos, tipo e categoria raiz. Um bloqueio da tabela serializa escritas durante a carga, sem nova constraint ou migration. Execução via Compose em [deployment.md](deployment.md). O teste de integração cobre replay concorrente, preservação de dados e rollback em PostgreSQL descartável.

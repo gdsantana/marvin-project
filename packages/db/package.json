@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:clean": "node --env-file-if-exists=../../.env --import tsx src/clean.ts",
-    "db:seed": "node --env-file-if-exists=../../.env --import tsx src/seed.ts"
+    "db:seed": "SEED_DEVELOPMENT=true node --env-file-if-exists=../../.env --import tsx src/seed.ts",
+    "db:bootstrap-categories": "node --env-file-if-exists=../../.env --import tsx src/bootstrap-categories.ts"
   },
   "dependencies": {
     "@finance/domain": "workspace:*",

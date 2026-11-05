@@ -65,10 +65,10 @@ Para popular um banco **exclusivo de desenvolvimento**, aplique primeiro as migr
 
 ```bash
 DATABASE_URL='postgresql://usuario:senha@localhost:5432/marvin_dev' pnpm db:migrate
-DEVELOPMENT_DATABASE_URL='postgresql://usuario:senha@localhost:5432/marvin_dev' SEED_DEVELOPMENT=true pnpm db:seed
+DEVELOPMENT_DATABASE_URL='postgresql://usuario:senha@localhost:5432/marvin_dev' pnpm db:seed
 ```
 
-O seed carrega automaticamente o `.env` da raiz, se existir. Com `DEVELOPMENT_DATABASE_URL` ou `DATABASE_URL` local já configurada nesse arquivo, execute `SEED_DEVELOPMENT=true pnpm db:seed`. Variáveis exportadas no terminal têm prioridade sobre o arquivo. O comando continua bloqueado quando `NODE_ENV=production`; não altere essa proteção para carregar dados fictícios em produção.
+O seed carrega automaticamente o `.env` da raiz, se existir. Com `DEVELOPMENT_DATABASE_URL` ou `DATABASE_URL` local já configurada nesse arquivo, execute `pnpm db:seed`. Variáveis exportadas no terminal têm prioridade sobre o arquivo. O comando `db:seed` já define `SEED_DEVELOPMENT=true` automaticamente e continua bloqueado quando `NODE_ENV=production`; não altere essa proteção para carregar dados fictícios em produção.
 
 **O seed limpa todos os dados da aplicação antes de inserir a carga**, inclusive registros manuais e chaves de idempotência. O schema e o histórico de migrations são preservados. Para executar somente a limpeza:
 
@@ -76,14 +76,14 @@ O seed carrega automaticamente o `.env` da raiz, se existir. Com `DEVELOPMENT_DA
 SEED_DEVELOPMENT=true pnpm db:clean
 ```
 
-Os dois comandos carregam o `.env` da raiz e exigem `SEED_DEVELOPMENT=true`, `NODE_ENV` diferente de `production` e uma URL PostgreSQL local com host `localhost`, `127.0.0.1` ou `[::1]`. Não aceitam sobrescrita de host por parâmetros da URL. Para um PostgreSQL em Docker, execute o comando no host usando a porta local publicada. Essas proteções não distinguem dados reais de fictícios: use exclusivamente um banco de desenvolvimento e pare a aplicação durante a limpeza/carga.
+Os dois comandos carregam o `.env` da raiz e exigem `NODE_ENV` diferente de `production` e uma URL PostgreSQL local com host `localhost`, `127.0.0.1` ou `[::1]`. A limpeza avulsa com `db:clean` continua exigindo `SEED_DEVELOPMENT=true` explícito. Não aceitam sobrescrita de host por parâmetros da URL. Para um PostgreSQL em Docker, execute o comando no host usando a porta local publicada. Essas proteções não distinguem dados reais de fictícios: use exclusivamente um banco de desenvolvimento e pare a aplicação durante a limpeza/carga.
 
 Para usar o PostgreSQL Docker do projeto no desenvolvimento:
 
 ```bash
 pnpm db:up
 SEED_DEVELOPMENT=true pnpm db:clean
-SEED_DEVELOPMENT=true pnpm db:seed
+pnpm db:seed
 ```
 
 `pnpm db:up` aplica `infra/compose.dev.yml`, publica o banco apenas em `127.0.0.1:${DEV_DB_HOST_PORT:-5432}` e preserva o volume existente. O override adiciona uma rede bridge somente ao banco para permitir a publicação da porta, mantendo a rede interna. A primeira aplicação pode interromper conexões brevemente ao recriar o container. O Compose de deploy continua sem publicar PostgreSQL.
@@ -111,3 +111,7 @@ Variáveis para Compose estão exemplificadas em [.env.example](.env.example), i
 - MCP não acessa PostgreSQL nem mantém regras contábeis próprias.
 
 O conjunto exigido de cenários está em [docs/data-model.md §11](docs/data-model.md#11-testes-de-aceitação-de-domínio--obrigatórios-antes-de-produção); evidências e lacunas estão em [docs/verification.md](docs/verification.md).
+
+### Categorias básicas em produção
+
+Após as migrations, execute `pnpm db:bootstrap-categories` com `DATABASE_URL` configurada. O comando carrega o `.env` da raiz e insere somente categorias básicas ausentes, preservando dados existentes; não usa `DEVELOPMENT_DATABASE_URL`. Não cria contas nem lançamentos fictícios. Para execução no Docker, veja [deploy](docs/deployment.md). A lista contém as mesmas 13 categorias do seed de desenvolvimento, mas este comando não limpa dados e pode rodar em produção.

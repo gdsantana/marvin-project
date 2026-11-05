@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { type FormEvent, createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -9,8 +8,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Field, FieldError, FieldGroup, FieldLabel, FieldSet, FieldLegend } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { formatDate, formatMinor, majorInputFromMinor, parseMajorToMinor, todayCivil } from "./finance-format";
+import { formatDate, formatMinor, majorInputFromMinor, todayCivil } from "./finance-format";
 import { actionLabels, primaryActions, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type References } from "./workspace-types";
+
+import { CategoryPicker } from "./category-picker";
+import { categoryPath } from "./category-path";
 
 const PendingContext = createContext(false);
 
@@ -41,37 +43,74 @@ function FormField({ label, name, type = "text", required = true, options, place
   </Field>;
 }
 
-function TransactionAmountField({ action, clearPreview }: { action: "income" | "expense"; clearPreview: () => void }) {
-  const [value, setValue] = useState("");
-  const tone = action === "expense" ? "text-destructive" : "text-primary";
-  const adjust = (minor: bigint) => {
-    clearPreview();
-    setValue(current => {
-      const parsed = current.trim() ? parseMajorToMinor(current) : "0";
-      if (parsed === null) return current;
-      return majorInputFromMinor(String(BigInt(parsed) + minor));
-    });
-  };
-  return <section className="sm:col-span-2 rounded-xl bg-background p-4 sm:p-6">
-    <FormField label="Valor da operação" labelClassName="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground" name="amountMinor" placeholder="0,00" value={value} onChange={event => setValue(event.target.value)} prefix="R$" inputClassName={`min-h-14 border-0 bg-transparent pl-10 font-mono text-3xl font-semibold tabular-nums shadow-none focus-visible:ring-0 sm:text-4xl ${tone}`} />
-    <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Atalhos de valor">
-      {[10, 50, 100].map(amount => <Button key={amount} type="button" size="sm" variant="secondary" onClick={() => adjust(BigInt(amount) * 100n)}>+{amount}</Button>)}
-      <Button type="button" size="sm" variant="ghost" className="text-muted-foreground" onClick={() => { clearPreview(); setValue(""); }}>Limpar</Button>
-    </div>
-  </section>;
+function TransactionAmountField({ action }: { action: "income" | "expense" | "purchase" }) {
+  return <div className="sm:col-span-2">
+    <FormField label={action === "purchase" ? "Valor total" : "Valor"} name={action === "purchase" ? "totalAmountMinor" : "amountMinor"} placeholder="0,00" prefix="R$" inputClassName={`font-mono text-3xl tabular-nums sm:text-4xl ${action !== "income" ? "text-destructive" : "text-primary"}`} />
+  </div>;
 }
 
-function TransactionKindPicker({ action, setAction, clearPreview, busy }: { action: "income" | "expense"; setAction: (action: Action) => void; clearPreview: () => void; busy: boolean }) {
+function TransactionCategory({ action, categories }: { action: "income" | "expense"; categories: CategoryOption[] }) {
+  const [split, setSplit] = useState(false);
+  const disabled = useContext(PendingContext);
+  return <div className="grid gap-2 sm:col-span-2">
+    <input type="hidden" name="allocationMode" value={action === "expense" && split ? "split" : "single"} />
+    {action === "expense" && split ? <CategorySplits categories={categories} type={action} /> : <CategoryPicker categories={categories} type={action} disabled={disabled} />}
+    {action === "expense" && <Button type="button" variant="ghost" className="justify-self-start" onClick={() => setSplit(!split)}>{split ? "Usar uma categoria" : "Dividir entre categorias"}</Button>}
+  </div>;
+}
+
+function SimpleTransactionFields({ action, references, setAction }: { action: "income" | "expense" | "purchase"; references: References; setAction: (action: Action) => void }) {
+  const credit = action === "purchase";
+  const kind = action === "income" ? "income" : "expense";
+  const accounts = references.accounts.filter(account => credit ? account.type === "credit_card" : account.type !== "credit_card");
+  const [paymentMethod, setPaymentMethod] = useState("pix");
+  const [accountId, setAccountId] = useState("");
+  const account = accounts.find(item => item.id === accountId);
+  return <>
+    <TransactionAmountField action={action} />
+    <FormField label="Descrição" name="description" placeholder="Ex.: Mercado do mês" className="sm:col-span-2" />
+    <div className="grid gap-4 min-[375px]:grid-cols-2 sm:col-span-2">
+    <div className="grid min-w-0 content-start gap-1">
+      <FormField label={credit ? "Cartão" : "Conta"} name={credit ? "cardAccountId" : "accountId"} value={accountId} onChange={event => setAccountId(event.target.value)} options={[["", credit ? "Selecione um cartão" : "Selecione uma conta"], ...accounts.map(account => [account.id, account.name] as [string, string])]} />
+      {account && <p className="break-words text-xs text-muted-foreground">Saldo atual: {formatMinor(account.balanceMinor, account.currency)}</p>}
+    </div>
+    <FormField label="Data" name="occurredOn" type="date" defaultValue={todayCivil()} className="min-w-0" />
+    </div>
+    <TransactionCategory key={kind} action={kind} categories={references.categories.filter(category => !category.isArchived && category.type === kind)} />
+    {kind === "expense" && <FormField label="Forma de pagamento" name="paymentMethod" value={credit ? "credit" : paymentMethod} onChange={event => {
+      const method = event.target.value;
+      if ((method === "credit") !== credit) {
+        setAccountId("");
+        setAction(method === "credit" ? "purchase" : "expense");
+      }
+      if (method !== "credit") setPaymentMethod(method);
+    }} options={[["pix", "Pix"], ["debit", "Débito"], ["credit", "Cartão de crédito"], ["cash", "Dinheiro"], ["other", "Outra"]]} />}
+    {credit && <FormField label="Parcelas" name="installmentCount" type="number" min="1" defaultValue="1" />}
+    <details key="details" className="sm:col-span-2">
+      <summary className="flex min-h-11 cursor-pointer items-center text-sm text-muted-foreground">Mais detalhes</summary>
+      <div className="grid gap-4 pt-3 sm:grid-cols-2">
+        <FormField label="Data de postagem" name="postedOn" type="date" required={false} />
+        <FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} />
+        <NotesField />
+        <FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} />
+      </div>
+    </details>
+  </>;
+}
+
+const transactionActions: Action[] = ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "forecast"];
+
+function TransactionKindPicker({ action, setAction, clearPreview, busy }: { action: "income" | "expense" | "purchase"; setAction: (action: Action) => void; clearPreview: () => void; busy: boolean }) {
   const choose = (next: "income" | "expense") => {
-    if (action === next) return;
+    if (action === next || (action === "purchase" && next === "expense")) return;
     clearPreview();
     setAction(next);
   };
   return <div role="group" aria-label="Tipo de registro" className="grid grid-cols-2 gap-1 rounded-xl bg-background p-1 sm:grid-cols-[1fr_1fr_minmax(10rem,1fr)]">
-    {(["expense", "income"] as const).map(kind => <Button key={kind} type="button" disabled={busy} aria-pressed={action === kind} onClick={() => choose(kind)} variant={action === kind ? "secondary" : "ghost"} className={`min-h-11 ${action === kind && kind === "expense" ? "text-destructive" : ""}`}>{kind === "expense" ? "Despesa" : "Receita"}</Button>)}
-    <NativeSelect aria-label="Outros tipos de registro" disabled={busy} value={action !== "income" && action !== "expense" ? action : ""} onChange={event => { if (event.target.value) { clearPreview(); setAction(event.target.value as Action); } }} className="col-span-2 min-h-11 bg-background sm:col-span-1">
+    {(["expense", "income"] as const).map(kind => <Button key={kind} type="button" disabled={busy} aria-pressed={action === kind || (action === "purchase" && kind === "expense")} onClick={() => choose(kind)} variant={action === kind || (action === "purchase" && kind === "expense") ? "secondary" : "ghost"} className={`min-h-11 ${(action === kind || action === "purchase") && kind === "expense" ? "text-destructive" : ""}`}>{kind === "expense" ? "Despesa" : "Receita"}</Button>)}
+    <NativeSelect aria-label="Outros tipos de registro" disabled={busy} value="" onChange={event => { if (event.target.value) { clearPreview(); setAction(event.target.value as Action); } }} className="col-span-2 min-h-11 w-full bg-background sm:col-span-1">
       <option value="">Outros tipos…</option>
-      {primaryActions.filter(kind => kind !== "income" && kind !== "expense").map(kind => <option key={kind} value={kind}>{actionLabels[kind]}</option>)}
+      {transactionActions.filter(kind => kind !== "income" && kind !== "expense").map(kind => <option key={kind} value={kind}>{actionLabels[kind]}</option>)}
     </NativeSelect>
   </div>;
 }
@@ -81,11 +120,12 @@ function NotesField({ defaultValue }: { defaultValue?: string }) {
   return <Field><FieldLabel htmlFor={id}>Notas</FieldLabel><textarea id={id} className="min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50" name="notes" placeholder="Detalhes para você lembrar" defaultValue={defaultValue} /></Field>;
 }
 
-function CategorySplits({ categories, initial = [] }: { categories: CategoryOption[]; initial?: { categoryId: string | null; amountMinor: string }[] }) {
+function CategorySplits({ categories, type, initial = [] }: { categories: CategoryOption[]; type?: "income" | "expense"; initial?: { categoryId: string | null; amountMinor: string }[] }) {
   const [rows, setRows] = useState(() => initial.length ? initial.map((_item, index) => index) : [0]);
   const [nextId, setNextId] = useState(initial.length || 1);
-  const options: [string, string][] = [["", "Sem categoria"], ...categories.map(category => [category.id, category.name] as [string, string])];
-  return <FieldSet className="rounded-xl border p-3 sm:col-span-2"><FieldLegend>Categorias desta operação</FieldLegend><FieldGroup><p className="text-xs leading-5 text-muted-foreground">A soma das categorias deve ser igual ao valor total.</p>{rows.map((id, index) => <FieldGroup key={id} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><div className="min-w-0"><FormField label={`Categoria ${index + 1}`} name="allocationCategoryId" required={false} options={options} defaultValue={initial[index]?.categoryId ?? ""} /></div><FormField label="Valor (R$)" name="allocationAmount" placeholder="Ex.: 85,00" defaultValue={majorInputFromMinor(initial[index]?.amountMinor ?? null)} /><Button type="button" aria-label={`Remover categoria ${index + 1}`} disabled={rows.length === 1} onClick={() => setRows(current => current.filter(item => item !== id))} variant="outline" className="mb-px">−</Button></FieldGroup>)}<Button type="button" onClick={() => { setRows(current => [...current, nextId]); setNextId(value => value + 1); }} variant="outline" className="w-fit">＋ Outra categoria</Button></FieldGroup></FieldSet>;
+  const disabled = useContext(PendingContext);
+  const options: [string, string][] = [["", "Sem categoria"], ...categories.map(category => [category.id, categoryPath(category, categories)] as [string, string])];
+  return <FieldSet className="rounded-xl border p-3 sm:col-span-2"><FieldLegend>Categorias desta operação</FieldLegend><FieldGroup><p className="text-xs leading-5 text-muted-foreground">A soma das categorias deve ser igual ao valor total.</p>{rows.map((id, index) => <FieldGroup key={id} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><div className="min-w-0">{type ? <CategoryPicker label={`Categoria ${index + 1}`} name="allocationCategoryId" categories={categories} type={type} defaultValue={initial[index]?.categoryId ?? ""} disabled={disabled} /> : <FormField label={`Categoria ${index + 1}`} name="allocationCategoryId" required={false} options={options} defaultValue={initial[index]?.categoryId ?? ""} />}</div><FormField label="Valor (R$)" name="allocationAmount" placeholder="Ex.: 85,00" defaultValue={majorInputFromMinor(initial[index]?.amountMinor ?? null)} /><Button type="button" aria-label={`Remover categoria ${index + 1}`} disabled={rows.length === 1} onClick={() => setRows(current => current.filter(item => item !== id))} variant="outline" className="mb-px">−</Button></FieldGroup>)}<Button type="button" onClick={() => { setRows(current => [...current, nextId]); setNextId(value => value + 1); }} variant="outline" className="w-fit">＋ Outra categoria</Button></FieldGroup></FieldSet>;
 }
 
 function CardSettingsFields({ accounts, onReady }: { accounts: AccountOption[]; onReady: (ready: boolean) => void }) {
@@ -135,13 +175,13 @@ function AccountFields({ references }: { references: References }) {
   </>;
 }
 
-function PreviewSummary({ result, references }: { result: Record<string, unknown>; references: References }) {
+function PreviewSummary({ result, references, description, occurredOn }: { result: Record<string, unknown>; references: References; description: string; occurredOn: string }) {
   const entries = (result.entries ?? []) as { accountId: string; amountMinor: string }[];
   const allocations = (result.allocations ?? []) as { categoryId: string | null; amountMinor: string }[];
   const installments = (result.installments ?? []) as { number: number; amountMinor: string; closingOn: string; dueOn: string }[];
   const currency = references.accounts.find(account => account.id === entries[0]?.accountId)?.currency ?? "BRL";
   const plannedStatement = result.plannedStatement as { cycleStartOn: string; closingOn: string; dueOn: string } | undefined;
-  return <section className="sm:col-span-2 rounded-xl border border-border bg-muted p-4"><h3 className="font-semibold">Revise antes de gravar</h3><p className="mt-1 text-xs text-muted-foreground">Confira os dados antes de confirmar. Nenhum dado foi salvo ainda.</p>{entries.map((entry, index) => { const account = references.accounts.find(item => item.id === entry.accountId); return <p key={`${entry.accountId}-${index}`} className="mt-3 flex flex-wrap justify-between gap-3 text-sm [&>span]:min-w-0 [&>span]:break-words [&>strong]:max-w-full [&>strong]:break-words"><span>{account?.name ?? "Conta"}</span><strong className="tabular-nums">{formatMinor(entry.amountMinor, account?.currency ?? currency)}</strong></p>; })}{allocations.length > 0 && <div className="mt-3"><p className="text-xs font-medium text-muted-foreground">Alocação por categoria</p>{allocations.map((allocation, index) => { const category = references.categories.find(item => item.id === allocation.categoryId); return <p key={`${allocation.categoryId}-${index}`} className="mt-1 flex flex-wrap justify-between gap-3 text-sm [&>span]:min-w-0 [&>span]:break-words [&>strong]:max-w-full [&>strong]:break-words"><span>{category?.name ?? "Sem categoria"}</span><strong className="tabular-nums">{formatMinor(allocation.amountMinor, currency)}</strong></p>; })}</div>}{installments.length > 0 && <div className="mt-4"><p className="text-xs font-medium text-muted-foreground">Parcelas previstas</p><ul className="mt-2 grid gap-1">{installments.map(item => <li key={item.number} className="flex flex-wrap justify-between gap-3 text-sm [&>span]:min-w-0 [&>span]:break-words [&>strong]:max-w-full [&>strong]:break-words"><span>{item.number}/{installments.length} · vence {formatDate(item.dueOn)}</span><strong className="tabular-nums">{formatMinor(item.amountMinor, currency)}</strong></li>)}</ul></div>}{plannedStatement && <p className="mt-3 text-sm">A previsão abre um ciclo novo: {formatDate(plannedStatement.cycleStartOn)} a {formatDate(plannedStatement.closingOn)}, vencimento {formatDate(plannedStatement.dueOn)}.</p>}{typeof result.remainingStatementMinor === "string" && <p className="mt-3 text-sm">Saldo restante da fatura: <strong>{formatMinor(result.remainingStatementMinor, currency)}</strong></p>}</section>;
+  return <section className="sm:col-span-2 rounded-xl border border-border bg-muted p-4"><h3 className="font-semibold">Revise antes de gravar</h3><p className="mt-1 text-xs text-muted-foreground">Confira os dados antes de confirmar. Nenhum dado foi salvo ainda.</p><p className="mt-3 break-words text-sm">{description}</p><p className="text-xs text-muted-foreground">{formatDate(occurredOn)}</p>{entries.map((entry, index) => { const account = references.accounts.find(item => item.id === entry.accountId); return <p key={`${entry.accountId}-${index}`} className="mt-3 flex flex-wrap justify-between gap-3 text-sm [&>span]:min-w-0 [&>span]:break-words [&>strong]:max-w-full [&>strong]:break-words"><span>{account?.name ?? "Conta"}</span><strong className="tabular-nums">{formatMinor(entry.amountMinor, account?.currency ?? currency)}</strong></p>; })}{allocations.length > 0 && <div className="mt-3"><p className="text-xs font-medium text-muted-foreground">Alocação por categoria</p>{allocations.map((allocation, index) => { const category = references.categories.find(item => item.id === allocation.categoryId); return <p key={`${allocation.categoryId}-${index}`} className="mt-1 flex flex-wrap justify-between gap-3 text-sm [&>span]:min-w-0 [&>span]:break-words [&>strong]:max-w-full [&>strong]:break-words"><span>{category ? categoryPath(category, references.categories) : "Sem categoria"}</span><strong className="tabular-nums">{formatMinor(allocation.amountMinor, currency)}</strong></p>; })}</div>}{installments.length > 0 && <div className="mt-4"><p className="text-xs font-medium text-muted-foreground">Parcelas previstas</p><ul className="mt-2 grid gap-1">{installments.map(item => <li key={item.number} className="flex flex-wrap justify-between gap-3 text-sm [&>span]:min-w-0 [&>span]:break-words [&>strong]:max-w-full [&>strong]:break-words"><span>{item.number}/{installments.length} · vence {formatDate(item.dueOn)}</span><strong className="tabular-nums">{formatMinor(item.amountMinor, currency)}</strong></li>)}</ul></div>}{plannedStatement && <p className="mt-3 text-sm">A previsão abre um ciclo novo: {formatDate(plannedStatement.cycleStartOn)} a {formatDate(plannedStatement.closingOn)}, vencimento {formatDate(plannedStatement.dueOn)}.</p>}{typeof result.remainingStatementMinor === "string" && <p className="mt-3 text-sm">Saldo restante da fatura: <strong>{formatMinor(result.remainingStatementMinor, currency)}</strong></p>}</section>;
 }
 
 function ReversalReview({ transaction, references, reason, replacement }: { transaction: TransactionOption; references: References; reason: string; replacement: Record<string, unknown> | null }) {
@@ -166,6 +206,15 @@ function ReversalFields({ references }: { references: References }) {
 export function ActionDialog({ action, busy, message, close, submit, references, selectedTransaction, selectedForecast, setAction, pendingPreview, pendingReverseReview, clearPreview, presentation = "dialog" }: { action: Action; busy: boolean; message: string; close: () => void; submit: (event: FormEvent<HTMLFormElement>) => void; references: References; selectedTransaction: TransactionOption | null; selectedForecast: ExpenseForecastOption | null; setAction: (action: Action) => void; pendingPreview: { signature: string; data: Record<string, unknown> } | null; pendingReverseReview: { signature: string; reason: string; replacement: Record<string, unknown> | null } | null; clearPreview: () => void; presentation?: "dialog" | "inline" }) {
   const [returnFocus] = useState(() => typeof document === "undefined" ? null : document.activeElement as HTMLElement | null);
   const formRef = useRef<HTMLFormElement>(null);
+  const reviewRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const [reviewDetails, setReviewDetails] = useState({ description: "", occurredOn: "" });
+  useEffect(() => {
+    if (message) errorRef.current?.focus();
+  }, [message]);
+  useEffect(() => {
+    if (pendingPreview) reviewRef.current?.focus();
+  }, [pendingPreview]);
   const [cardSettingsReady, setCardSettingsReady] = useState(false);
 
   const fields = useMemo(() => {
@@ -182,15 +231,15 @@ export function ActionDialog({ action, busy, message, close, submit, references,
       case "account": return <AccountFields references={references} />;
       case "configureCard": return <CardSettingsFields accounts={references.accounts} onReady={setCardSettingsReady} />;
       case "category": return <><FormField label="Nome da categoria" name="name" placeholder="Ex.: Moradia" /><FormField label="Tipo" name="type" options={[["expense", "Despesa"], ["income", "Receita"]]} /><FormField label="Categoria superior" name="parentId" required={false} options={[["", "Sem categoria superior"], ...categoryOptions()]} /></>;
-      case "income": return <><TransactionAmountField action="income" clearPreview={clearPreview} />{descriptionField}<FormField label="Categoria" name="categoryId" required={false} options={[["", "Sem categoria"] , ...categoryOptions("income")]} />{operationDateField}<FormField label="Conta" name="accountId" options={accountOptions(account => account.type !== "credit_card")} /><FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} placeholder="Opcional" /><NotesField /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
-      case "expense": return <><TransactionAmountField action="expense" clearPreview={clearPreview} />{descriptionField}<CategorySplits categories={references.categories.filter(category => category.type === "expense" && !category.isArchived)} />{operationDateField}{accountField("Conta", "accountId", account => account.type !== "credit_card")}<FormField label="Forma de pagamento" name="paymentMethod" options={[["pix", "Pix"], ["debit", "Débito"], ["cash", "Dinheiro"], ["other", "Outra"]]} /><FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} placeholder="Opcional" /><NotesField /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
+      case "income":
+      case "expense":
+      case "purchase": return <SimpleTransactionFields action={action} references={references} setAction={next => { clearPreview(); setAction(next); }} />;
       case "transfer": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="500,00" />{accountField("Conta de origem", "fromAccountId", account => account.type !== "credit_card")}{accountField("Conta de destino", "toAccountId", account => account.type !== "credit_card")}{shared}</>;
-      case "purchase": return <><FormField label="Valor total (R$)" name="totalAmountMinor" placeholder="1000,00" />{accountField("Cartão", "cardAccountId", account => account.type === "credit_card")}<FormField label="Número de parcelas" name="installmentCount" type="number" min="1" /><CategorySplits categories={references.categories.filter(category => category.type === "expense" && !category.isArchived)} />{shared}</>;
-      case "cashback": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="25,00" />{accountField("Conta ou cartão", "accountId")}<FormField label="Categoria" name="categoryId" required={false} options={[["", "Sem categoria"], ...categoryOptions("income")]} /><FormField label="Fatura (crédito no cartão)" name="cardStatementId" required={false} options={[["", "Nenhuma fatura"], ...statementOptions]} />{shared}</>;
+      case "cashback": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="25,00" />{accountField("Conta ou cartão", "accountId")}<CategoryPicker categories={references.categories} type="income" /><FormField label="Fatura (crédito no cartão)" name="cardStatementId" required={false} options={[["", "Nenhuma fatura"], ...statementOptions]} />{shared}</>;
       case "refund": return <><FormField label="Valor (R$)" name="amountMinor" placeholder="12,00" /><FormField label="Compra original" name="originalTransactionId" options={[["", "Selecione uma compra"], ...purchaseOptions]} />{accountField("Conta ou cartão", "accountId")}{shared}</>;
       case "payment": return <><FormField label="Valor do pagamento (R$)" name="amountMinor" placeholder="330,00" /><FormField label="Fatura" name="statementId" options={[["", "Selecione uma fatura"], ...references.statements.filter(statement => statement.status !== "open").map(statement => [statement.id, `${statement.cardAccountName} · vence ${formatDate(statement.dueOn)}`] as [string, string])]} />{accountField("Conta de origem", "fromAccountId", account => account.type !== "credit_card")}{shared}</>;
       case "close": return <><FormField label="Fatura" name="statementId" options={[["", "Selecione uma fatura"], ...references.statements.filter(statement => statement.status === "open").map(statement => [statement.id, `${statement.cardAccountName} · vence ${formatDate(statement.dueOn)}`] as [string, string])]} />{shared}</>;
-      case "forecast": return <><Alert role="note" className="sm:col-span-2"><AlertDescription>Uma previsão não cria lançamento nem altera saldo ou relatório. Ao realizar, o sistema registra uma despesa usando o mesmo valor e categoria.</AlertDescription></Alert><FormField label="Descrição" name="description" placeholder="Ex.: Seguro do carro" /><FormField label="Data esperada" name="expectedOn" type="date" defaultValue={todayCivil()} /><FormField label="Valor (R$)" name="amountMinor" placeholder="250,00" />{accountField("Conta de pagamento", "accountId", account => account.type !== "credit_card")}<FormField label="Categoria" name="categoryId" required={false} options={[["", "Sem categoria"], ...categoryOptions("expense")]} /></>;
+      case "forecast": return <><Alert role="note" className="sm:col-span-2"><AlertDescription>Uma previsão não cria lançamento nem altera saldo ou relatório. Ao realizar, o sistema registra uma despesa usando o mesmo valor e categoria.</AlertDescription></Alert><FormField label="Descrição" name="description" placeholder="Ex.: Seguro do carro" /><FormField label="Data esperada" name="expectedOn" type="date" defaultValue={todayCivil()} /><FormField label="Valor (R$)" name="amountMinor" placeholder="250,00" />{accountField("Conta de pagamento", "accountId", account => account.type !== "credit_card")}<CategoryPicker categories={references.categories} type="expense" /></>;
       case "realizeForecast": return <><Alert role="note" className="sm:col-span-2"><AlertDescription>{selectedForecast?.description} · {selectedForecast && formatMinor(selectedForecast.amountMinor, selectedForecast.currency)} · prevista para {selectedForecast ? formatDate(selectedForecast.expectedOn) : ""}. Realizar registra agora uma despesa e altera o saldo da conta.</AlertDescription></Alert><FormField label="Data da despesa" name="occurredOn" type="date" defaultValue={todayCivil()} /><FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Forma de pagamento" name="paymentMethod" options={[["pix", "Pix"], ["debit", "Débito"], ["cash", "Dinheiro"], ["other", "Outra"]]} /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
       case "cancelForecast": return <Alert role="note" className="sm:col-span-2"><AlertDescription>Cancelar “{selectedForecast?.description}” ({selectedForecast && formatMinor(selectedForecast.amountMinor, selectedForecast.currency)}) em {selectedForecast ? formatDate(selectedForecast.expectedOn) : ""}? O histórico continuará registrado e nenhum saldo será alterado.</AlertDescription></Alert>;
       case "correct": return selectedTransaction ? <CorrectionFields key={selectedTransaction.id} transaction={selectedTransaction} references={references} /> : <p>Selecione um lançamento para corrigir.</p>;
@@ -198,19 +247,24 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     }
   }, [action, references, selectedTransaction, selectedForecast]);
 
-  const typePicker = !selectedTransaction && !selectedForecast && (action === "income" || action === "expense" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={primaryActions.map(key => [key, actionLabels[key]])} />);
+  const typePicker = !selectedTransaction && !selectedForecast && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
   const form = <>
     <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
-    <form ref={formRef} className="flex flex-col gap-4" onChange={clearPreview} onSubmit={submit} aria-busy={busy}>
-      <fieldset disabled={busy} className="min-w-0 border-0 p-0">
-        <FieldGroup key={action} className="grid grid-cols-1 sm:grid-cols-2">{fields}</FieldGroup>
+    <form ref={formRef} className="flex flex-col gap-4" onChange={clearPreview} onSubmit={event => {
+      const data = new FormData(event.currentTarget);
+      setReviewDetails({ description: String(data.get("description") ?? ""), occurredOn: String(data.get("occurredOn") ?? "") });
+      submit(event);
+    }} aria-busy={busy}>
+      <fieldset hidden={Boolean(pendingPreview)} disabled={busy} className="min-w-0 border-0 p-0">
+        <FieldGroup key={action === "income" || action === "expense" || action === "purchase" ? "transaction" : action} className="grid grid-cols-1 gap-4 sm:grid-cols-2">{fields}</FieldGroup>
       </fieldset>
-      {pendingPreview && <PreviewSummary result={pendingPreview.data} references={references} />}
+      {pendingPreview && <div ref={reviewRef} tabIndex={-1} className="outline-none"><PreviewSummary result={pendingPreview.data} references={references} {...reviewDetails} /></div>}
       {pendingReverseReview && selectedTransaction && <ReversalReview transaction={selectedTransaction} references={references} reason={pendingReverseReview.reason} replacement={pendingReverseReview.replacement} />}
-      {message && <Alert variant="destructive"><AlertDescription>{message}</AlertDescription></Alert>}
-      <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-        <Button type="button" onClick={close} disabled={busy} variant="outline">Cancelar</Button>
-        <Button type="submit" disabled={busy || (action === "configureCard" && !cardSettingsReady)}>{busy ? "Validando…" : pendingReverseReview ? "Confirmar reversão" : pendingPreview ? "Confirmar e salvar" : ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment"].includes(action) ? "Revisar operação" : action === "cancelForecast" ? "Confirmar cancelamento" : action === "reverse" ? "Revisar reversão" : actionLabels[action]}</Button>
+      {message && <Alert ref={errorRef} tabIndex={-1} role="alert" variant="destructive"><AlertDescription>{message}</AlertDescription></Alert>}
+      <div className={`grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 border-t bg-card pt-3 sm:flex sm:justify-end ${presentation === "inline" ? "sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] pb-3 md:bottom-0" : ""}`}>
+        {pendingPreview && <Button type="button" variant="outline" disabled={busy} onClick={() => { clearPreview(); requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>("input:not([type=hidden]),select")?.focus()); }}>Editar dados</Button>}
+        {!pendingPreview && <Button type="button" onClick={close} disabled={busy} variant="outline">Cancelar</Button>}
+        <Button type="submit" disabled={busy || (action === "configureCard" && !cardSettingsReady)}>{busy ? (pendingPreview ? "Salvando…" : "Validando…") : pendingReverseReview ? "Confirmar reversão" : pendingPreview ? "Confirmar e salvar" : ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment"].includes(action) ? "Revisar transação" : action === "cancelForecast" ? "Confirmar cancelamento" : action === "reverse" ? "Revisar reversão" : actionLabels[action]}</Button>
       </div>
     </form>
   </>;
@@ -219,22 +273,16 @@ export function ActionDialog({ action, busy, message, close, submit, references,
 
   if (presentation === "inline") return <PendingContext value={busy}>
     <div className="w-full">
-      <header className="mb-6 pb-2">
-        <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">Contabilidade pessoal <span aria-hidden="true">·</span> <span className="text-primary">Novo registro</span></p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-[32px]">{title}</h1>
-        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{description}</p>
-      </header>
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)]">
+      <h1 className="sr-only md:hidden">{title}</h1>
+      <div className="grid items-start gap-4">
       <section className="min-w-0 rounded-xl bg-card p-4 shadow-sm sm:p-6">
         <div className="flex flex-col gap-5">
-          {typePicker}
-          {form}
+          {!pendingPreview && typePicker}
+          {action === "purchase" && !references.accounts.some(account => account.type === "credit_card") && <p className="text-sm text-muted-foreground">Adicione um cartão para registrar compras no crédito. <Link href="/cards" className="inline-flex min-h-11 items-center text-primary">Adicionar cartão</Link></p>}
+          {!references.accounts.some(account => account.type !== "credit_card") && (action === "income" || action === "expense") ? <div className="grid gap-3"><p>Adicione uma conta para registrar transações.</p><Link href="/accounts" className="inline-flex min-h-11 items-center text-primary">Adicionar conta</Link></div> : form}
         </div>
       </section>
-      <aside aria-label="Contexto da operação" className="grid min-w-0 gap-5">
-        <Card><CardHeader><CardTitle>Suas contas</CardTitle><CardDescription>Saldos atuais por moeda</CardDescription></CardHeader><CardContent><ul className="grid gap-2">{references.accounts.filter(account => account.type !== "credit_card").map(account => <li key={account.id} className="flex min-w-0 flex-wrap justify-between gap-2 rounded-lg bg-background p-3"><span className="min-w-0 break-words text-sm">{account.name}</span><span className="break-words font-mono text-sm">{formatMinor(account.balanceMinor, account.currency)}</span></li>)}</ul>{!references.accounts.some(account => account.type !== "credit_card") && <p className="text-sm text-muted-foreground">Adicione uma conta para registrar movimentações.</p>}<Link href="/accounts" className="mt-3 inline-flex min-h-11 items-center text-sm text-primary">Ver contas</Link></CardContent></Card>
-        <Card><CardHeader><CardTitle>Movimentações recentes</CardTitle><CardDescription>Consulte seus últimos registros</CardDescription></CardHeader><CardContent><ul className="grid gap-2">{[...references.transactions].sort((a, b) => b.occurredOn.localeCompare(a.occurredOn)).slice(0, 3).map(transaction => <li key={transaction.id} className="rounded-lg bg-background p-3"><p className="truncate text-sm" title={transaction.description}>{transaction.description}</p><p className="mt-1 font-mono text-xs text-muted-foreground">{formatDate(transaction.occurredOn)}</p></li>)}</ul>{!references.transactions.length && <p className="text-sm text-muted-foreground">Seu histórico aparecerá depois do primeiro registro.</p>}<Link href="/entries" className="mt-3 inline-flex min-h-11 items-center text-sm text-primary">Ver transações</Link></CardContent></Card>
-      </aside>
+
       </div>
     </div>
   </PendingContext>;
@@ -246,7 +294,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
         <DialogDescription>{description}</DialogDescription>
         <Button type="button" variant="ghost" size="icon" disabled={busy} onClick={close} aria-label="Fechar" className="absolute top-2 right-2">×</Button>
       </DialogHeader>
-      {typePicker}
+      {!pendingPreview && typePicker}
       {form}
     </DialogContent>
   </Dialog></PendingContext>;

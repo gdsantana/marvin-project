@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownLeftIcon, ArrowRightIcon, ArrowUpRightIcon, LandmarkIcon, PlusIcon, WalletIcon } from "lucide-react";
+import { ArrowRightIcon, LandmarkIcon, PlusIcon, WalletIcon } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,30 +35,44 @@ export function DashboardOverview({ references, report, reportError, series, cat
   const recent = [...visibleTransactions(references.transactions)].sort((a, b) => b.occurredOn.localeCompare(a.occurredOn)).slice(0, 5);
 
   return <div className="flex flex-col gap-4 pb-6 sm:gap-6">
-    <div className="flex justify-end">
-      <PeriodSelect range={range} setRange={setRange} />
-    </div>
-
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <MetricCard className="col-span-2 [&_p.font-mono]:text-3xl lg:col-span-1 lg:[&_p.font-mono]:text-xl" label="Patrimônio líquido" values={balances} tone="balance" icon={<WalletIcon aria-hidden="true" />} unavailable={reportError} />
-      <MetricCard label="Receitas" values={incomes} tone="income" icon={<ArrowDownLeftIcon aria-hidden="true" />} unavailable={reportError} />
-      <MetricCard label="Despesas" values={expenses} tone="expense" icon={<ArrowUpRightIcon aria-hidden="true" />} unavailable={reportError} />
-      <Card className="hidden lg:flex">
-        <CardContent className="flex min-h-28 flex-col justify-between p-4">
-          <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"><span>Contas conectadas</span><LandmarkIcon aria-hidden="true" className="size-4 text-primary" /></div>
-          <p className="font-mono text-2xl tabular-nums">{references.accounts.filter(account => account.type !== "credit_card").length}</p>
-          <span className="text-xs text-muted-foreground">contas registradas</span>
-        </CardContent>
-      </Card>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(240px,1fr)] lg:gap-6">
+    <Card>
+      <CardHeader className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5">
+        <CardTitle><h2 className="text-sm text-muted-foreground">Patrimônio líquido</h2></CardTitle>
+        <PeriodSelect range={range} setRange={setRange} />
+      </CardHeader>
+      <CardContent className="grid gap-2 px-4 sm:px-5">
+        <SummaryValues values={balances} unavailable={reportError} className="text-3xl text-foreground sm:text-4xl" />
+        <p className="text-xs text-muted-foreground">Saldo até o fim do período</p>
+      </CardContent>
+    </Card>
+    <Card className="hidden lg:flex">
+      <CardContent className="flex h-full flex-col justify-between gap-3 px-5">
+        <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground"><span>Contas registradas</span><LandmarkIcon aria-hidden="true" className="size-4" /></div>
+        <p className="font-mono text-3xl tabular-nums">{references.accounts.filter(account => account.type !== "credit_card").length}</p>
+        <Link href="/accounts" className="inline-flex min-h-11 items-center text-xs text-primary">Ver contas</Link>
+      </CardContent>
+    </Card>
     </div>
 
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(240px,1fr)] lg:gap-6">
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-3 space-y-0 px-4 pb-2 sm:px-5">
-          <div><CardTitle><h2 className="text-xl tracking-tight lg:text-base">Balanço mensal</h2></CardTitle><CardDescription>Comparativo dos últimos seis meses</CardDescription></div>
-          <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">{periodLabels[range] ?? "Período"}</span>
+        <CardHeader className="px-4 pb-0 sm:px-5">
+          <CardTitle><h2 className="text-lg tracking-tight">Balanço mensal</h2></CardTitle>
+          <CardDescription>{periodLabels[range] ?? "Período selecionado"}</CardDescription>
         </CardHeader>
-        <CardContent className="px-4 pb-4 sm:px-5">
+        <CardContent className="grid gap-4 px-4 sm:px-5">
+          <div className="grid grid-cols-2 gap-4 border-b border-border pb-4">
+            <div className="grid min-w-0 content-start gap-2">
+              <p className="flex items-center gap-2 text-xs text-muted-foreground"><span aria-hidden="true" className="size-2 rounded-full bg-chart-income" />Receitas</p>
+              <SummaryValues values={incomes} unavailable={reportError} className="text-base text-primary sm:text-xl" />
+            </div>
+            <div className="grid min-w-0 content-start gap-2">
+              <p className="flex items-center gap-2 text-xs text-muted-foreground"><span aria-hidden="true" className="size-2 rounded-full bg-chart-expense" />Despesas</p>
+              <SummaryValues values={expenses} unavailable={reportError} className="text-base text-destructive sm:text-xl" />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">Evolução dos últimos {range === "year" ? "12" : "seis"} meses</p>
           {analyticsLoading && !series.length ? <p role="status" className="py-8 text-center text-sm text-muted-foreground">Carregando balanço mensal…</p> : reportError ? <EmptyPanel text="O balanço não está disponível no momento." /> : <MonthlyBalanceChart series={series} />}
         </CardContent>
       </Card>
@@ -119,7 +133,7 @@ function MonthlyBalanceChart({ series }: { series: DashboardSeriesPoint[] }) {
         <MonthlyFinanceChart series={series} currency={currency} />
       </section>;
     })}
-    <p className="text-xs text-muted-foreground">Cada moeda é exibida separadamente. Reembolsos podem aparecer como saídas líquidas negativas.</p>
+    {series.some(point => Object.values(point.expenseMinorByCurrency).some(amount => safeMinor(amount) < 0n)) && <p className="text-xs text-muted-foreground">Reembolsos podem deixar despesas negativas.</p>}
   </div>;
 }
 
@@ -164,13 +178,10 @@ function safeMinor(value: string) {
 
 function abs(value: bigint) { return value < 0n ? -value : value; }
 
-function MetricCard({ label, values, tone, icon, unavailable, className = "" }: { label: string; values: [string, string][]; tone: "balance" | "income" | "expense"; icon: React.ReactNode; unavailable: boolean; className?: string }) {
-  const valueTone = tone === "income" ? "text-primary" : tone === "expense" ? "text-destructive" : "text-foreground";
-  return <Card className={`min-w-0 ${className}`}><CardContent className="flex min-h-32 flex-col justify-between gap-3 p-3 sm:p-4">
-    <div className="flex items-center justify-between gap-2"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground sm:text-[11px]">{label}</p><span className={`flex size-7 shrink-0 items-center justify-center rounded-full bg-muted [&_svg]:size-3.5 ${tone === "income" ? "text-primary" : tone === "expense" ? "text-destructive" : "text-muted-foreground"}`}>{icon}</span></div>
-    {unavailable ? <p className="text-sm text-muted-foreground">Indisponível</p> : values.length ? <div className="grid gap-1">{values.map(([currency, amount]) => <p key={currency} className={`[overflow-wrap:anywhere] font-mono text-lg font-medium tracking-tight tabular-nums sm:text-2xl ${valueTone}`}>{formatMinor(amount, currency)}</p>)}</div> : <p className="text-sm text-muted-foreground">Sem movimentações</p>}
-    <span className="text-[11px] text-muted-foreground">{tone === "balance" ? `${values.length ? values.length : 0} ${values.length === 1 ? "moeda" : "moedas"} · saldo até o fim do período` : "Totais do período selecionado"}</span>
-  </CardContent></Card>;
+function SummaryValues({ values, unavailable, className }: { values: [string, string][]; unavailable: boolean; className: string }) {
+  if (unavailable) return <p className="text-sm text-muted-foreground">Indisponível</p>;
+  if (!values.length) return <p className="text-sm text-muted-foreground">Sem movimentações</p>;
+  return <div className="grid min-w-0 gap-1">{values.map(([currency, amount]) => <p key={currency} className={`[overflow-wrap:anywhere] font-mono font-medium tracking-tight tabular-nums ${className}`}>{formatMinor(amount, currency)}</p>)}</div>;
 }
 
 function TransactionRow({ transaction }: { transaction: TransactionOption }) {

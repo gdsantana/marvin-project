@@ -30,11 +30,14 @@ docker compose --env-file .env -f infra/compose.yml config
 docker compose --env-file .env -f infra/compose.yml build web mcp
 docker compose --env-file .env -f infra/compose.yml up -d db
 docker compose --env-file .env -f infra/compose.yml run --rm migrate
+docker compose --env-file .env -f infra/compose.yml run --rm migrate pnpm --filter @finance/db db:bootstrap-categories
 docker compose --env-file .env -f infra/compose.yml up -d web mcp
 docker compose --env-file .env -f infra/compose.yml ps
 ```
 
 O serviço `migrate` é uma execução única sob demanda, não é iniciado em `up`. Execute-o após o backup e antes de atualizar web/MCP. A migration usa o `DATABASE_URL` e os arquivos versionados de `packages/db`. Não prossiga se ela falhar; revise logs sem copiar valores sensíveis.
+
+Após as migrations, `db:bootstrap-categories` cadastra 10 categorias de despesa e 3 de receita, sem contas ou lançamentos fictícios. Pode ser repetido: insere somente categorias raiz ausentes por nome e tipo, comparando nomes sem diferença de maiúsculas/minúsculas e espaços externos. Categorias existentes, inclusive arquivadas, não são alteradas. A carga é atômica e bloqueia escritas na tabela de categorias brevemente para serializar execuções concorrentes. Não execute `db:seed` em produção: ele limpa dados e cria uma carga fictícia.
 
 Health checks consultam `pg_isready`, `/api/health` e `/healthz`, sem retornar dados privados. `unhealthy` não reinicia container por si só; `unless-stopped` reinicia processos que saírem. Web depende de DB saudável e MCP depende de web saudável.
 
