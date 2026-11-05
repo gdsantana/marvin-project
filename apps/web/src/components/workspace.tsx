@@ -17,11 +17,12 @@ import { DateRangeSelect } from "./date-range-select";
 import { TransactionList } from "./transaction-list";
 import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
-import { actionLabels, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
+import { settingsActions, actionLabels, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
 import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod } from "./finance-format";
 
 const titles: Record<Section, { title: string; intro: string }> = {
+  settings: { title: "Configurações", intro: "Gerencie instituições, contas, cartões e categorias da plataforma." },
   new: { title: "Nova transação", intro: "Registre uma receita ou despesa." },
   overview: { title: "Visão geral", intro: "Uma visão simples do que está acontecendo nas suas contas." },
   accounts: { title: "Contas", intro: "Instituições e contas que fazem parte da sua vida financeira." },
@@ -296,8 +297,9 @@ export function Workspace({ section }: { section: Section }) {
         {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="mb-3 text-sm text-muted-foreground">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
         {dataLoading ? <div role="status" className="grid gap-4"><span className="sr-only">Carregando seus dados</span><Skeleton className="h-36 w-full" /><Skeleton className="h-52 w-full" /></div> : dataError ? null : <>
           {section === "overview" && <DashboardOverview series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError)} />}
-          {section === "accounts" && <ResourceSection title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." action="account" setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} />}
-          {section === "cards" && <ResourceSection title="Seus cartões" detail="Cartões, limites disponíveis e configurações de fechamento." action="account" secondaryAction="configureCard" setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
+          {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
+          {section === "accounts" && <ResourceSection title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} />}
+          {section === "cards" && <ResourceSection title="Seus cartões" detail="Cartões e limites disponíveis." setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
           {section === "entries" && <div className="mb-4 w-full"><DateRangeSelect value={historyPeriod} onChange={setHistoryPeriod} /></div>}
           {section === "statements" && <div className="mb-4 flex flex-wrap gap-3">
             <label className="grid gap-1 text-sm">De<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.from} max={historyPeriod.to} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, from: event.target.value })); }} /></label>
@@ -316,8 +318,8 @@ export function Workspace({ section }: { section: Section }) {
 
 function EmptyInline({ text }: { text: string }) { return <Empty><EmptyDescription>{text}</EmptyDescription></Empty>; }
 
-function ResourceSection({ title, detail, action, secondaryAction, setForm, rows, transactionActions }: { title: string; detail: string; action: Action; secondaryAction?: Action; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
-  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{secondaryAction && <Button variant="outline" onClick={() => setForm(secondaryAction)}>{actionLabels[secondaryAction]}</Button>}<Button onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button></div></div></CardHeader><CardContent><Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} /></CardContent></Card>;
+function ResourceSection({ title, detail, action, setForm, rows, transactionActions }: { title: string; detail: string; action?: Action; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
+  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{action && <Button onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button>}</div></div></CardHeader><CardContent><Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} /></CardContent></Card>;
 }
 
 function Rows({ rows, empty, transactionActions }: { rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; empty: string; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {

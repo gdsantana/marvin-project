@@ -99,7 +99,6 @@ export function DashboardOverview({ references, report, reportError, series, cat
         <CardHeader className="px-5 pb-1"><CardTitle><h2 className="text-base">Contas</h2></CardTitle><CardDescription>Saldos por conta e moeda</CardDescription></CardHeader>
         <CardContent className="px-5 pb-4">
           {references.accounts.length ? <ul className="divide-y divide-border">{references.accounts.slice(0, 5).map(account => <li key={account.id} className="flex min-w-0 items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{account.name}</p><p className="mt-1 text-xs text-muted-foreground">{account.type === "credit_card" ? "Cartão" : "Conta"} · {account.currency}</p></div><strong className="max-w-[48%] break-words text-right font-mono text-xs tabular-nums">{formatMinor(account.balanceMinor, account.currency)}</strong></li>)}</ul> : <EmptyPanel text="Adicione uma conta para acompanhar seus saldos." />}
-          <Button className="mt-2 w-full" variant="outline" onClick={() => setForm("account")}><PlusIcon data-icon="inline-start" />Adicionar conta</Button><Button className="mt-2 w-full" variant="outline" onClick={() => setForm("category")}>Criar categoria</Button>
         </CardContent>
       </Card>
     </div>
@@ -110,9 +109,7 @@ export function DashboardOverview({ references, report, reportError, series, cat
     </Card>
 
     <div className="grid grid-cols-2 gap-3 lg:hidden">
-      <QuickAction label="Adicionar conta" onClick={() => setForm("account")} />
       <QuickAction label="Registrar receita" onClick={() => setForm("income")} />
-      <QuickAction label="Criar categoria" onClick={() => setForm("category")} />
       <Link href="/statements" className="inline-flex min-h-11 items-center justify-center rounded-lg border border-border text-sm">Ver faturas</Link>
     </div>
   </div>;

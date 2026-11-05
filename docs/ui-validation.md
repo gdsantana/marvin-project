@@ -162,3 +162,9 @@ VISUAL_ISOLATED=1 VISUAL_BASE_URL=http://127.0.0.1:3029 \
 PLAYWRIGHT_MODULE=/caminho/node_modules/playwright/package.json \
 CHROMIUM_EXECUTABLE=/usr/bin/chromium node scripts/validate-inline-category.cjs
 ```
+
+## Configurações da plataforma — issue #1
+
+Validação local em 2026-11-04: build de produção, typecheck e lint do workspace web aprovados. Testes web: 35 aprovados e um teste de integração PostgreSQL ignorado por ausência de banco de teste configurado.
+
+Verificação com Chromium headless e respostas HTTP simuladas em 320, 390 e 1440 px: `/settings` acessível, quatro formulários existentes abrem e fecham, navegação desktop marca a página atual e navegação mobile oferece Configurações em Mais. Cadastros ausentes do menu Novo registro e das telas de contas/cartões. Sem overflow horizontal na nova aba ou erros de execução no navegador. Capturas mobile e desktop inspecionadas visualmente. Nenhuma escrita em banco real foi executada; persistência dos formulários não foi revalidada nesta mudança de navegação.

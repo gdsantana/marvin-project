@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import logo from "../../marvin-logo.webp";
-import { ArrowDownUpIcon, ChartNoAxesCombinedIcon, CreditCardIcon, HouseIcon, LogOutIcon, PlusCircleIcon, ReceiptTextIcon, WalletIcon } from "lucide-react";
+import { ArrowDownUpIcon, ChartNoAxesCombinedIcon, CreditCardIcon, HouseIcon, LogOutIcon, PlusCircleIcon, ReceiptTextIcon, SettingsIcon, WalletIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ const navigation = [
   { id: "cards", href: "/cards", label: "Cartões", mobileLabel: "Cartões", icon: CreditCardIcon },
   { id: "statements", href: "/statements", label: "Faturas", mobileLabel: "Faturas", icon: ReceiptTextIcon },
   { id: "reports", href: "/reports", label: "Relatórios", mobileLabel: "Relatórios", icon: ChartNoAxesCombinedIcon },
+  { id: "settings", href: "/settings", label: "Configurações", mobileLabel: "Configurações", icon: SettingsIcon },
 ] as const;
 
 export function AppShell({ section, title, description, onCreate, onSignOut, createDisabled, children }: { section: Section; title: string; description: string; onCreate: (action: Action) => void; onSignOut: () => void; createDisabled?: boolean; children: ReactNode }) {
