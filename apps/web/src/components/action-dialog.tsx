@@ -206,9 +206,20 @@ function ReversalFields({ references }: { references: References }) {
 export function ActionDialog({ action, busy, message, close, submit, references, selectedTransaction, selectedForecast, setAction, pendingPreview, pendingReverseReview, clearPreview, presentation = "dialog" }: { action: Action; busy: boolean; message: string; close: () => void; submit: (event: FormEvent<HTMLFormElement>) => void; references: References; selectedTransaction: TransactionOption | null; selectedForecast: ExpenseForecastOption | null; setAction: (action: Action) => void; pendingPreview: { signature: string; data: Record<string, unknown> } | null; pendingReverseReview: { signature: string; reason: string; replacement: Record<string, unknown> | null } | null; clearPreview: () => void; presentation?: "dialog" | "inline" }) {
   const [returnFocus] = useState(() => typeof document === "undefined" ? null : document.activeElement as HTMLElement | null);
   const formRef = useRef<HTMLFormElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const reviewRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const [reviewDetails, setReviewDetails] = useState({ description: "", occurredOn: "" });
+  useEffect(() => {
+    if (presentation !== "inline" || !actionsRef.current || !formRef.current) return;
+    const form = formRef.current;
+    const actions = actionsRef.current;
+    const reserveSpace = () => form.style.setProperty("--form-actions-height", `${actions.getBoundingClientRect().height}px`);
+    reserveSpace();
+    const observer = new ResizeObserver(reserveSpace);
+    observer.observe(actions);
+    return () => observer.disconnect();
+  }, [presentation, action, references.accounts.length]);
   useEffect(() => {
     if (message) errorRef.current?.focus();
   }, [message]);
@@ -250,18 +261,18 @@ export function ActionDialog({ action, busy, message, close, submit, references,
   const typePicker = !selectedTransaction && !selectedForecast && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
   const form = <>
     <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
-    <form ref={formRef} className="flex flex-col gap-4" onChange={clearPreview} onSubmit={event => {
+    <form ref={formRef} className={`flex flex-col gap-4 ${presentation === "inline" ? "pb-[var(--form-actions-height,6rem)] md:pb-0" : ""}`} onChange={clearPreview} onSubmit={event => {
       const data = new FormData(event.currentTarget);
       setReviewDetails({ description: String(data.get("description") ?? ""), occurredOn: String(data.get("occurredOn") ?? "") });
       submit(event);
     }} aria-busy={busy}>
       <fieldset hidden={Boolean(pendingPreview)} disabled={busy} className="min-w-0 border-0 p-0">
-        <FieldGroup key={action === "income" || action === "expense" || action === "purchase" ? "transaction" : action} className="grid grid-cols-1 gap-4 sm:grid-cols-2">{fields}</FieldGroup>
+        <FieldGroup key={action === "income" || action === "expense" || action === "purchase" ? "transaction" : action} className={`grid grid-cols-1 sm:grid-cols-2 ${presentation === "inline" ? "gap-5 sm:gap-4" : "gap-4"}`}>{fields}</FieldGroup>
       </fieldset>
       {pendingPreview && <div ref={reviewRef} tabIndex={-1} className="outline-none"><PreviewSummary result={pendingPreview.data} references={references} {...reviewDetails} /></div>}
       {pendingReverseReview && selectedTransaction && <ReversalReview transaction={selectedTransaction} references={references} reason={pendingReverseReview.reason} replacement={pendingReverseReview.replacement} />}
       {message && <Alert ref={errorRef} tabIndex={-1} role="alert" variant="destructive"><AlertDescription>{message}</AlertDescription></Alert>}
-      <div className={`grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 border-t bg-card pt-3 sm:flex sm:justify-end ${presentation === "inline" ? "sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] pb-3 md:bottom-0" : ""}`}>
+      <div ref={actionsRef} className={`grid border-t sm:flex sm:justify-end ${presentation === "inline" ? "fixed inset-x-0 bottom-[var(--mobile-navigation-height)] z-20 grid-cols-[auto_minmax(0,1fr)] gap-3 bg-card p-4 sm:px-6 md:static md:mt-2 md:px-0 md:pb-0 [&>button]:h-auto [&>button]:min-h-11 [&>button]:whitespace-normal [&>button]:py-3" : "grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 bg-card pt-3"}`}>
         {pendingPreview && <Button type="button" variant="outline" disabled={busy} onClick={() => { clearPreview(); requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>("input:not([type=hidden]),select")?.focus()); }}>Editar dados</Button>}
         {!pendingPreview && <Button type="button" onClick={close} disabled={busy} variant="outline">Cancelar</Button>}
         <Button type="submit" disabled={busy || (action === "configureCard" && !cardSettingsReady)}>{busy ? (pendingPreview ? "Salvando…" : "Validando…") : pendingReverseReview ? "Confirmar reversão" : pendingPreview ? "Confirmar e salvar" : ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment"].includes(action) ? "Revisar transação" : action === "cancelForecast" ? "Confirmar cancelamento" : action === "reverse" ? "Revisar reversão" : actionLabels[action]}</Button>

@@ -52,6 +52,7 @@
 
 :root {
   color-scheme: dark;
+  --mobile-navigation-height: calc(3.5rem + max(.5rem, env(safe-area-inset-bottom)) + 1px);
   --radius: 0.75rem;
   --background: #09090b;
   --foreground: #fafafa;
