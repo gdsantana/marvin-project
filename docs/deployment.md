@@ -1,6 +1,6 @@
 # Deploy no homelab
 
-Deploy via Docker Compose em uma VM. Esta infraestrutura implementa os serviços e comandos abaixo; ainda não houve deploy no homelab nem restauração de backup validada.
+Deploy via Docker Compose em uma VM. Esta infraestrutura implementa os serviços e comandos abaixo; o deploy e a restauração de um backup real ainda não foram validados no homelab. Existe um ensaio descartável descrito em [recovery-validation.md](recovery-validation.md).
 
 ## Topologia
 
@@ -10,6 +10,17 @@ Deploy via Docker Compose em uma VM. Esta infraestrutura implementa os serviços
 - `migrate`: serviço temporário no profile `ops`, criado somente ao executar a migration explicitamente.
 
 O Compose cria uma rede `application` para web/MCP e outra rede interna `database` para web/DB. Web e MCP publicam portas no loopback do host por padrão; um reverse proxy privado instalado no host pode encaminhá-las. Para outro proxy dentro de container, configure os endereços de bind e a rede privada do proxy de modo explícito. Não exponha as portas à internet.
+
+## Pré-requisitos e preparação
+
+- VM Linux no Proxmox com Docker Engine e plugin Docker Compose, Git e acesso ao repositório privado e aos registries usados pelos Dockerfiles.
+- Disco persistente para o volume `postgres_data`, espaço para builds e dumps e destino de backup fora da VM. Dimensione CPU, memória e disco conforme o uso; o projeto não tem capacidade mínima medida.
+- DNS privado e reverse proxy com HTTPS confiável pelo navegador e pelo Hermes, acessíveis somente pela LAN/VPN. No host da VM, o proxy pode usar os binds loopback padrão. Um proxy em outra máquina precisa de binds no IP privado da VM e firewall restrito aos clientes/proxy autorizados.
+- Acesso administrativo ao Docker e ao diretório de backup. Node.js 24 e pnpm 12.15.0 no host são necessários apenas se executar os scripts pnpm fora dos containers; os builds Docker já incluem o runtime.
+
+Escolha uma revisão aprovada do código e registre `git rev-parse HEAD`, a tag PostgreSQL e o destino do backup no registro privado da implantação. Execute os comandos deste guia na raiz desse checkout. Não aplique `infra/compose.dev.yml` em produção.
+
+Antes da primeira implantação, defina o destino externo, a frequência e retenção dos backups e a perda de dados/tempo de recuperação aceitáveis. Não há agendamento automático no repositório. Snapshot da VM e volume persistente não substituem dump restaurável.
 
 ## Configuração e primeira subida
 
@@ -23,11 +34,23 @@ Edite `.env` no host, substitua todos os placeholders e restrinja suas permissõ
 
 `APP_ORIGIN` deve ser a origem HTTPS usada pelo navegador e definida na configuração do proxy confiável. Preserve os nomes de variáveis consumidos pelo web (`SESSION_SECRET`, `WEB_PASSWORD_HASH`, `MCP_API_TOKEN`, `DATABASE_URL`). `MCP_API_TOKEN` aparece nos ambientes de web e MCP e os valores devem ser idênticos; `MCP_HERMES_BEARER_TOKEN` só é entregue ao MCP. Variáveis do banco são entregues somente ao serviço `db` e o comando temporário `migrate` recebe apenas `DATABASE_URL`.
 
-Depois de preencher o `.env`:
+Para gerar o hash, use o helper existente em um checkout com dependências instaladas. Em Bash, a senha é lida sem eco e não entra no histórico nem nos argumentos do processo:
 
 ```bash
-docker compose --env-file .env -f infra/compose.yml config
-docker compose --env-file .env -f infra/compose.yml build web mcp
+read -r -s -p 'Senha web: ' MARVIN_WEB_PASSWORD
+printf '\n'
+export MARVIN_WEB_PASSWORD
+pnpm --filter @finance/web exec tsx -e 'import { hashPassword } from "./src/server/auth.ts"; hashPassword(process.env.MARVIN_WEB_PASSWORD!).then(console.log)'
+unset MARVIN_WEB_PASSWORD
+```
+
+Copie o resultado para `WEB_PASSWORD_HASH` usando aspas simples no `.env`, por exemplo `WEB_PASSWORD_HASH='scrypt$...'`, para preservar os caracteres `$` na interpolação do Compose. Não use o exemplo abreviado como hash real. Gere os demais secrets com `openssl rand -hex 32`, separadamente, e armazene-os apenas em local protegido. Para uma senha de banco com caracteres reservados, faça percent-encoding na URL; uma senha hexadecimal evita essa ambiguidade.
+
+Depois de preencher o `.env`, valide sem imprimir a configuração resolvida, pois ela contém secrets:
+
+```bash
+docker compose --env-file .env -f infra/compose.yml config --quiet
+docker compose --env-file .env -f infra/compose.yml build web mcp migrate
 docker compose --env-file .env -f infra/compose.yml up -d db
 docker compose --env-file .env -f infra/compose.yml run --rm migrate
 docker compose --env-file .env -f infra/compose.yml run --rm migrate pnpm --filter @finance/db db:bootstrap-categories
@@ -41,17 +64,50 @@ Após as migrations, `db:bootstrap-categories` cadastra 10 categorias de despesa
 
 Health checks consultam `pg_isready`, `/api/health` e `/healthz`, sem retornar dados privados. `unhealthy` não reinicia container por si só; `unless-stopped` reinicia processos que saírem. Web depende de DB saudável e MCP depende de web saudável.
 
-## Atualização
+## Verificação e operação diária
 
-Faça backup antes de atualizar schema ou imagem. Revise tags de imagem e compatibilidade; imagens web/MCP são construídas do código local. Em seguida, suba DB, execute migration e atualize aplicações:
+Com os binds e portas padrão, verifique no host:
 
 ```bash
-docker compose --env-file .env -f infra/compose.yml build web mcp
+curl --fail --silent --show-error http://127.0.0.1:3000/api/health
+curl --fail --silent --show-error http://127.0.0.1:3001/healthz
+docker compose --env-file .env -f infra/compose.yml ps
+docker compose --env-file .env -f infra/compose.yml logs --tail=100 web mcp
+```
+
+Adapte as URLs se alterar os binds/portas. O health check web comprova resposta HTTP, não consulta o banco. Pelo endereço HTTPS do proxy, faça login e consulte contas/categorias para verificar autenticação e persistência. Em produção o cookie é `Secure`; o login pelo endereço HTTP local não substitui esse teste. Não crie lançamentos fictícios para validar um banco real.
+
+Configure o Hermes para usar `https://<endereco-privado-mcp>/mcp` com bearer `MCP_HERMES_BEARER_TOKEN`, e teste uma consulta de leitura. O proxy deve preservar `Authorization`, permitir POST/GET/DELETE usados pelo transporte Streamable HTTP e encaminhar streaming sem buffering que interrompa respostas. `http://web:3000/api/` é exclusivo do cliente MCP dentro do Compose, não é o endereço do Hermes. Ver [mcp.md](mcp.md).
+
+Se houver erro, confira `ps`, logs restritos, DNS/TLS do proxy, correspondência de `APP_ORIGIN`, tokens e conexão com DB. Não compartilhe saída de `docker compose config`, `docker inspect` ou logs com credenciais/dados privados. Não use `down -v`: ele remove o volume de dados. Após reiniciar a VM, confira novamente saúde e acesso; containers parados explicitamente podem exigir `up -d`.
+
+## Atualização
+
+Registre a revisão atual e escolha a revisão aprovada de destino em um checkout limpo. Revise migrations, contratos e notas de compatibilidade; imagens web/MCP/migrate são construídas do código local, sem tags de release próprias. Não faça upgrade major do PostgreSQL apenas alterando `POSTGRES_IMAGE_TAG`: isso exige um procedimento separado de migração de dados e restauração ensaiada.
+
+Construa as imagens da revisão de destino antes da janela de manutenção. Inclua `migrate` explicitamente, pois tem build próprio e não deve usar uma imagem antiga:
+
+```bash
+docker compose --env-file .env -f infra/compose.yml config --quiet
+docker compose --env-file .env -f infra/compose.yml build web mcp migrate
+```
+
+Pause o acesso pelo proxy e o Hermes; pare os dois processos para interromper também o timer de fechamento de faturas. Faça o backup da seção seguinte **após** a parada e só prossiga se o dump terminar e passar pela inspeção. Guarde também a revisão e uma cópia protegida do `.env` e da configuração do proxy, fora do repositório.
+
+```bash
+docker compose --env-file .env -f infra/compose.yml stop mcp web
+```
+
+Com backup confirmado, mantenha DB disponível, aplique migrations uma única vez e recrie aplicações:
+
+```bash
 docker compose --env-file .env -f infra/compose.yml up -d db
 docker compose --env-file .env -f infra/compose.yml run --rm migrate
 docker compose --env-file .env -f infra/compose.yml up -d web mcp
 docker compose --env-file .env -f infra/compose.yml ps
 ```
+
+Execute cada etapa apenas se a anterior tiver sucesso. Se a migration falhar, mantenha web/MCP parados e revise o erro; não retome a versão antiga sem conferir o estado do schema. Após sucesso, repita as verificações de login, leitura e MCP antes de liberar o proxy/Hermes. A janela de manutenção abrange backup, migration e verificações.
 
 Não use atualização automática irrestrita. Voltar a uma imagem antiga não desfaz migration aplicada; restauração é um procedimento controlado, que pode descartar gravações posteriores.
 
@@ -60,23 +116,46 @@ Não use atualização automática irrestrita. Voltar a uma imagem antiga não d
 Salve o dump fora do volume PostgreSQL e do repositório, em armazenamento com acesso restrito. O exemplo cria dump custom-format em um caminho de backup no host:
 
 ```bash
+umask 077
 mkdir -p /srv/backups/marvin
 chmod 700 /srv/backups/marvin
-docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "/srv/backups/marvin/marvin-$(date -u +%Y%m%dT%H%M%SZ).dump"
+MARVIN_BACKUP="/srv/backups/marvin/marvin-$(date -u +%Y%m%dT%H%M%SZ).dump"
+if docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$MARVIN_BACKUP.partial"; then
+  if docker compose --env-file .env -f infra/compose.yml exec -T db pg_restore --list < "$MARVIN_BACKUP.partial" > /dev/null; then
+    mv "$MARVIN_BACKUP.partial" "$MARVIN_BACKUP"
+  fi
+fi
 ```
 
-Copie o arquivo para outro destino/host e aplique a política de retenção aprovada. Dumps contêm dados financeiros: não os envie a Git, logs ou serviços sem proteção. O projeto ainda não agenda backups nem define retenção.
+Confirme que o arquivo final existe e não está vazio (`test -s "$MARVIN_BACKUP"`). Qualquer erro interrompe a atualização: um `.partial` não é backup válido. A listagem valida o catálogo do dump, mas somente uma restauração confirma sua recuperabilidade. O usuário do host precisa de permissão em `/srv/backups/marvin`; provisione o diretório antes, se necessário.
+
+```bash
+sha256sum "$MARVIN_BACKUP" > "$MARVIN_BACKUP.sha256"
+```
+
+Copie o dump e seu checksum para outro destino/host e aplique a política de retenção aprovada. Dumps contêm dados financeiros: não os envie a Git, logs ou serviços sem proteção. O projeto ainda não agenda backups nem define retenção.
 
 ## Restauração isolada
 
 Faça primeiro um restore em base nova para validar o arquivo, sem sobrescrever a base em uso. Abaixo, substitua o caminho pelo dump desejado; `marvin_restore` deve ainda não existir:
 
 ```bash
-cat /srv/backups/marvin/arquivo.dump | docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'createdb -U "$POSTGRES_USER" marvin_restore && pg_restore --no-owner -U "$POSTGRES_USER" -d marvin_restore'
+docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'createdb -U "$POSTGRES_USER" marvin_restore && pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d marvin_restore' < /srv/backups/marvin/arquivo.dump
 docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d marvin_restore -c "select count(*) from accounts"'
 ```
 
-O segundo comando depende da tabela `accounts` existir após a migration incluída no dump. Confirme integridade adicional antes de qualquer recuperação. Para usar o restore, pare escritas, altere `DATABASE_URL` para `marvin_restore`, suba o web e confira o sistema pelo proxy; preserve a base anterior até a revisão terminar. Este procedimento precisa de ensaio no homelab antes de dados reais.
+A base nova está separada logicamente, mas compartilha o servidor/volume: não execute o ensaio sob carga sem avaliar recursos. Se o restore falhar, não use a base parcial; preserve-a para diagnóstico e repita em outra base nova.
+
+O segundo comando depende da tabela `accounts` existir após a migration incluída no dump. Confirme integridade adicional antes de qualquer recuperação. Compare também contas, saldos, faturas, histórico e integridade com os registros anteriores ao incidente; uma contagem isolada não basta.
+
+Para ativar a recuperação:
+
+1. Bloqueie o proxy/Hermes e execute `docker compose --env-file .env -f infra/compose.yml stop mcp web` antes da troca. Registre quais escritas posteriores ao dump serão perdidas e confirme essa perda antes de prosseguir.
+2. Use código/imagens da revisão compatível com o dump. Altere somente o nome da base em `DATABASE_URL` no `.env` para `marvin_restore`, preservando a conexão anterior em registro protegido. Não altere `POSTGRES_DB`: ele inicializa volumes vazios e não renomeia bases existentes.
+3. Execute `docker compose --env-file .env -f infra/compose.yml up -d --force-recreate web mcp`. Um simples `restart` não aplica variáveis alteradas. Não aplique migrations novas ao dump sem revisar a compatibilidade.
+4. Repita as verificações de saúde, login e consultas web/MCP antes de liberar acesso. Preserve a base anterior até concluir a revisão. Se precisar voltar e ainda não houver novas escritas, restaure a URL e a revisão compatível anteriores e recrie os serviços; com novas escritas, planeje reconciliação antes da troca.
+
+Em perda da VM, provisione outra com os mesmos pré-requisitos, recupere o checkout da revisão registrada, `.env` e proxy protegidos, construa imagens e suba somente DB. Copie e confira o checksum do dump, restaure na base nova e siga a ativação acima antes de iniciar aplicações. O dump inclui schema e histórico de migrations, mas não secrets, configuração do host/proxy nem roles globais; o usuário definido pelo Compose deve existir no destino. Este procedimento precisa de ensaio no homelab antes de dados reais.
 
 ### Ensaio descartável de recuperação
 
