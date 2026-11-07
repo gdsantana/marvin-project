@@ -2,14 +2,17 @@
 
 import { type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRightIcon, CircleAlertIcon, LockKeyholeIcon } from "lucide-react";
+import { ArrowRightIcon, CircleAlertIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 
 export function LoginForm() {
   const router = useRouter();
+  const [username, setUsername] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,10 +27,14 @@ export function LoginForm() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
       if (!response.ok) {
-        setError("Não foi possível entrar. Verifique sua senha e tente novamente.");
+        setError(response.status === 429
+          ? "Muitas tentativas. Aguarde 15 minutos e tente novamente."
+          : response.status === 401 || response.status === 400
+            ? "Usuário ou senha incorretos. Verifique os dados e tente novamente."
+            : "Não foi possível entrar agora. Tente novamente em instantes.");
         return;
       }
       router.replace("/");
@@ -41,27 +48,42 @@ export function LoginForm() {
 
   return (
     <div className="w-full max-w-sm">
-      <div className="mb-8 flex size-11 items-center justify-center rounded-xl border border-border bg-card text-primary">
-        <LockKeyholeIcon className="size-5" aria-hidden="true" />
-      </div>
-      <p className="mb-3 font-mono text-xs text-primary">Acesso pessoal</p>
-      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Bem-vindo de volta</h1>
-      <p className="mt-3 text-sm leading-6 text-muted-foreground">Entre com sua senha para acessar seu espaço financeiro.</p>
+      <h1 className="text-balance text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">Bem-vindo de volta</h1>
+      <p className="mt-3 text-pretty text-sm leading-6 text-muted-foreground">Entre com seu usuário e senha para acessar seu espaço financeiro.</p>
       <form onSubmit={submit} className="mt-8" aria-busy={busy}>
         <FieldGroup>
           <Field data-disabled={busy}>
+            <FieldLabel htmlFor="username">Usuário</FieldLabel>
+            <Input id="username" name="username" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} className="h-12 px-3" required maxLength={64} disabled={busy} value={username} onChange={event => setUsername(event.target.value)} />
+          </Field>
+          <Field data-disabled={busy}>
             <FieldLabel htmlFor="password">Senha</FieldLabel>
-            <Input
-              id="password"
-              name="password"
-              autoComplete="current-password"
-              autoFocus
-              type="password"
-              required
-              disabled={busy}
-              value={password}
-              onChange={event => setPassword(event.target.value)}
-            />
+            <InputGroup className="h-12">
+              <InputGroupInput
+                id="password"
+                name="password"
+                autoComplete="current-password"
+                type={showPassword ? "text" : "password"}
+                required
+                maxLength={1024}
+                disabled={busy}
+                value={password}
+                onChange={event => setPassword(event.target.value)}
+              />
+              <InputGroupAddon align="inline-end" className="py-0 pr-0.5">
+                <InputGroupButton
+                  size="icon-sm"
+                  className="size-11 touch-manipulation text-muted-foreground hover:text-foreground focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-inset"
+                  disabled={busy}
+                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  aria-controls="password"
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword(value => !value)}
+                >
+                  {showPassword ? <EyeOffIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
           </Field>
           {error && (
             <Alert variant="destructive">
@@ -70,7 +92,7 @@ export function LoginForm() {
             </Alert>
           )}
           <Field>
-            <Button type="submit" disabled={busy} className="w-full">
+            <Button type="submit" disabled={busy} className="h-12 w-full touch-manipulation">
               {busy ? "Verificando…" : "Entrar"}
               {!busy && <ArrowRightIcon data-icon="inline-end" aria-hidden="true" />}
             </Button>

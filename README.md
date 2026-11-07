@@ -7,7 +7,7 @@ O modelo financeiro e seus invariantes estão em [docs/data-model.md](docs/data-
 ## O que existe hoje
 
 - Workspaces pnpm: `apps/web`, `apps/mcp`, `packages/contracts`, `packages/domain` e `packages/db`.
-- UI responsiva inicial, login por senha local e sessão, API HTTP autenticada para sessão web ou token de serviço MCP.
+- UI responsiva inicial, login por usuário e senha no PostgreSQL e sessão revogável, API HTTP autenticada para sessão web ou token de serviço MCP.
 - Domínio com dinheiro em `bigint`, validação Zod nos contratos, receitas, despesas, transferências, compras parceladas, cashback, estornos, pagamentos/fechamento de faturas, previsões, revisões, reversões, relatórios e idempotência.
 - Schema Drizzle e migration PostgreSQL versionada, com constraints e append-only para entradas de conta, itens de fatura e pagamentos.
 - MCP HTTP Streamable autenticado, com ferramentas de consulta, preview e escrita — incluindo previsão, correção e reversão — que encaminham operações à API web.
@@ -49,7 +49,7 @@ pnpm test
 pnpm build
 ```
 
-Para executar a aplicação no host, mantenha as conexões separadas: `.env` na raiz configura o Compose (`DATABASE_URL` usa o host interno `db`), enquanto `apps/web/.env.local` configura o Next.js local com a URL publicada em `127.0.0.1`. Crie o banco com `pnpm db:up` e coloque a URL local também em `DEVELOPMENT_DATABASE_URL` no `.env` para seed e limpeza. Use credenciais literais; arquivos `.env` não são copiados para as imagens.
+Para executar a aplicação no host, mantenha as conexões separadas: `.env` na raiz configura o Compose (`DATABASE_URL` usa o host interno `db`), enquanto `DEVELOPMENT_DATABASE_URL` configura o Next.js em desenvolvimento com a URL publicada em `127.0.0.1` quando `DATABASE_URL` aponta para o host interno `db`. Uma `DATABASE_URL` explícita com outro host é preservada; produção usa somente `DATABASE_URL`. `apps/web/.env.local` também pode fornecer uma conexão explícita. Crie o banco com `pnpm db:up` e coloque a URL local também em `DEVELOPMENT_DATABASE_URL` no `.env` para seed e limpeza. Use credenciais literais; arquivos `.env` não são copiados para as imagens.
 
 ```bash
 cp .env.example .env
@@ -100,7 +100,9 @@ A carga cobre o mês atual e os dois anteriores, pela data civil em `America/Sao
 
 Não há transações futuras: datas do mês atual são antecipadas para o dia da execução quando necessário. As compras ocorrem antes do fechamento no dia 20; os cartões usam modo manual para manter a fatura atual aberta mesmo se o seed rodar após esse dia. A carga contém 34 transações e seis faturas. Cada operação financeira e a limpeza são atômicas individualmente; a carga completa não é uma única transação. Em caso de falha, execute o seed novamente para limpar a carga parcial e recriar os dados.
 
-Variáveis para Compose estão exemplificadas em [.env.example](.env.example), incluindo `APP_ORIGIN` e `WEB_PASSWORD_HASH` consumidos pelo login. Nunca comite `.env`, segredos ou dumps.
+Após aplicar as migrations, configure a única conta proprietária com `pnpm db:provision-owner`. O comando carrega `.env` e usa `DEVELOPMENT_DATABASE_URL` fora de produção quando configurada, com fallback para `DATABASE_URL` e pede usuário, senha e confirmação no terminal, sem exibir a senha. No host, forneça uma URL local; no Compose veja [deploy](docs/deployment.md). Para redefinir a senha e revogar todas as sessões, execute `pnpm db:provision-owner --reset-password` com o mesmo usuário. Não há cadastro público nem isolamento financeiro multiusuário; evolução em [issue #9](https://github.com/gdsantana/marvin-project/issues/9).
+
+Variáveis para Compose estão exemplificadas em [.env.example](.env.example), incluindo `APP_ORIGIN`. `WEB_PASSWORD_HASH` e `SESSION_SECRET` não são mais utilizados; cookies antigos deixam de autenticar. Nunca comite `.env`, segredos ou dumps.
 
 ## Invariantes principais
 

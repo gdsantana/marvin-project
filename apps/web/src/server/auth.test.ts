@@ -1,9 +1,9 @@
+import { loginSchema } from "@finance/contracts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkLoginRateLimit, clearLoginFailures, csrfIsValid, hashPassword, originIsAllowed, readSession, recordLoginFailure, signSession, verifyPassword } from "./auth";
+import { csrfIsValid, hashPassword, originIsAllowed, readSession, verifyPassword } from "./auth";
 import { readJsonBody } from "./http";
 
-process.env.SESSION_SECRET = "test-session-secret-with-at-least-32-bytes";
 process.env.APP_ORIGIN = "https://marvin.test";
 
 test("scrypt password hashes verify only the matching password", async () => {
@@ -12,11 +12,9 @@ test("scrypt password hashes verify only the matching password", async () => {
   assert.equal(await verifyPassword("outra senha", hash), false);
 });
 
-test("signed sessions reject tampering and expired sessions", () => {
-  const valid = signSession({ expiresAt: Date.now() + 60_000, csrfToken: "csrf" });
-  assert.equal(readSession(valid)?.csrfToken, "csrf");
-  assert.equal(readSession(`${valid}x`), null);
-  assert.equal(readSession(signSession({ expiresAt: Date.now() - 1, csrfToken: "csrf" })), null);
+test("legacy signed cookies and malformed tokens are rejected without database access", async () => {
+  assert.equal(await readSession("old.payload.signature"), null);
+  assert.equal(await readSession(undefined), null);
 });
 
 test("writes require a same-origin request and the session CSRF token", () => {
@@ -37,16 +35,6 @@ test("origin checks use APP_ORIGIN and fail closed when origin is absent or malf
   process.env.APP_ORIGIN = "https://marvin.test";
 });
 
-test("login failures are globally rate limited without trusting proxy headers", () => {
-  const key = "test-login-limit";
-  clearLoginFailures(key);
-  const now = 10_000;
-  assert.equal(checkLoginRateLimit(key, now), true);
-  for (let attempt = 0; attempt < 5; attempt++) recordLoginFailure(key, now + attempt);
-  assert.equal(checkLoginRateLimit(key, now + 6), false);
-  clearLoginFailures(key);
-});
-
 test("JSON bodies reject malformed and oversized payloads", async () => {
   const valid = await readJsonBody(new Request("https://marvin.test", { method: "POST", body: JSON.stringify({ amountMinor: "5000" }) }), 100);
   const malformed = await readJsonBody(new Request("https://marvin.test", { method: "POST", body: "{" }), 100);
@@ -54,4 +42,9 @@ test("JSON bodies reject malformed and oversized payloads", async () => {
   assert.deepEqual(valid, { ok: true, data: { amountMinor: "5000" } });
   assert.deepEqual(malformed, { ok: false, status: 400 });
   assert.deepEqual(oversized, { ok: false, status: 413 });
+});
+
+test("login requires both credentials and normalizes usernames only", () => {
+  assert.deepEqual(loginSchema.parse({ username: " Owner ", password: " secret " }), { username: "owner", password: " secret " });
+  assert.equal(loginSchema.safeParse({ password: "secret" }).success, false);
 });

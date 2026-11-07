@@ -19,9 +19,9 @@ Requer Docker com Compose plugin. No diretório raiz do repositório:
 cp .env.example .env
 ```
 
-Edite `.env` no host, substitua todos os placeholders e restrinja suas permissões (`chmod 600 .env`). Gere valores aleatórios distintos para `SESSION_SECRET`, `MCP_API_TOKEN`, `MCP_HERMES_BEARER_TOKEN` e `POSTGRES_PASSWORD`; não use o mesmo segredo entre serviços. `WEB_PASSWORD_HASH` deve seguir o formato `scrypt$<salt>$<128 caracteres hex>` usado pelo login web. `DATABASE_URL` deve usar o mesmo usuário/senha/base configurado por `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB`; o exemplo usa a senha URL-safe definida no arquivo.
+Edite `.env` no host, substitua todos os placeholders e restrinja suas permissões (`chmod 600 .env`). Gere valores aleatórios distintos para `MCP_API_TOKEN`, `MCP_HERMES_BEARER_TOKEN` e `POSTGRES_PASSWORD`; não use o mesmo segredo entre serviços. `DATABASE_URL` deve usar o mesmo usuário/senha/base configurado por `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB`; o exemplo usa a senha URL-safe definida no arquivo.
 
-`APP_ORIGIN` deve ser a origem HTTPS usada pelo navegador e definida na configuração do proxy confiável. Preserve os nomes de variáveis consumidos pelo web (`SESSION_SECRET`, `WEB_PASSWORD_HASH`, `MCP_API_TOKEN`, `DATABASE_URL`). `MCP_API_TOKEN` aparece nos ambientes de web e MCP e os valores devem ser idênticos; `MCP_HERMES_BEARER_TOKEN` só é entregue ao MCP. Variáveis do banco são entregues somente ao serviço `db` e o comando temporário `migrate` recebe apenas `DATABASE_URL`.
+`APP_ORIGIN` deve ser a origem HTTPS usada pelo navegador e definida na configuração do proxy confiável. Preserve os nomes de variáveis consumidos pelo web (`APP_ORIGIN`, `MCP_API_TOKEN`, `DATABASE_URL`). `MCP_API_TOKEN` aparece nos ambientes de web e MCP e os valores devem ser idênticos; `MCP_HERMES_BEARER_TOKEN` só é entregue ao MCP. Variáveis do banco são entregues somente ao serviço `db` e o comando temporário `migrate` recebe apenas `DATABASE_URL`.
 
 Depois de preencher o `.env`:
 
@@ -30,6 +30,7 @@ docker compose --env-file .env -f infra/compose.yml config
 docker compose --env-file .env -f infra/compose.yml build web mcp
 docker compose --env-file .env -f infra/compose.yml up -d db
 docker compose --env-file .env -f infra/compose.yml run --rm migrate
+docker compose --env-file .env -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner
 docker compose --env-file .env -f infra/compose.yml run --rm migrate pnpm --filter @finance/db db:bootstrap-categories
 docker compose --env-file .env -f infra/compose.yml up -d web mcp
 docker compose --env-file .env -f infra/compose.yml ps
@@ -98,7 +99,7 @@ O `apps/web` inicia um timer no runtime Node do Next.js. Ele executa catch-up ao
 |---|---|---|
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `db` | Inicialização do PostgreSQL |
 | `DATABASE_URL` | `web`, execução `migrate` | Conexão de aplicação/migration |
-| `SESSION_SECRET`, `WEB_PASSWORD_HASH` | `web` | Sessão e login local |
+| `APP_ORIGIN` | `web` | Origem permitida para login e CSRF |
 | `APP_ORIGIN` | `web` | Origem confiável configurada para o proxy |
 | `MCP_API_TOKEN` | `web`, `mcp` | Autenticação MCP → API web |
 | `MCP_HERMES_BEARER_TOKEN` | `mcp` | Autenticação Hermes → MCP |
@@ -118,3 +119,23 @@ O deploy, proxy, rotação de credenciais, política de retenção e teste peri�
 Para executar scripts pnpm do host usando o banco Docker existente, execute `pnpm db:up`. Esse comando aplica também `infra/compose.dev.yml`, publica a porta apenas em `127.0.0.1` e mantém o volume. A configuração é exclusiva do desenvolvimento; os comandos de deploy acima continuam usando apenas `infra/compose.yml`.
 
 Configure `DEVELOPMENT_DATABASE_URL` com credenciais literais e host `127.0.0.1`, porta `DEV_DB_HOST_PORT` ou 5432. Seed e limpeza preferem essa URL. Mantenha `DATABASE_URL` no `.env` da raiz com host `db` para o Compose; para executar Next.js no host, configure a URL local como `DATABASE_URL` em `apps/web/.env.local`. Para migrations locais, passe a URL local explicitamente como `DATABASE_URL`. Os arquivos `.env` são excluídos do contexto de build e não são copiados às imagens. Instruções e efeitos da limpeza estão no README; decisão em [ADR 0009](adr/0009-local-development-database.md).
+
+## Conta proprietária e atualização do login
+
+Aplique a migration aditiva `0003_local_auth` antes de iniciar a versão nova. Não altera dados financeiros. Não há migração automática da senha de ambiente: `WEB_PASSWORD_HASH`, `SESSION_SECRET` e cookies antigos deixam de autenticar.
+
+Crie a conta pelo terminal com `pnpm db:provision-owner`, usando `DEVELOPMENT_DATABASE_URL` fora de produção quando configurada, com fallback para `DATABASE_URL`. Em produção usa somente `DATABASE_URL`. Antes de pedir a senha, verifica conexão e tabelas de autenticação. Para executar no host, `pnpm db:up` publica a porta local do PostgreSQL. Username admite 3 a 64 caracteres ASCII, começando por letra ou número e continuando com letras, números, ponto, sublinhado ou hífen; é convertido para minúsculas. Senha tem 12 a 1024 caracteres e confirmação, sem eco no terminal. O comando não substitui uma conta existente. Para recuperação, `pnpm db:provision-owner --reset-password` exige o mesmo username e revoga todas as sessões atomicamente. Não passe senhas por argumentos ou arquivos versionados.
+
+No Compose, use o serviço temporário de operações com terminal interativo:
+
+```bash
+docker compose --env-file .env -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner
+# Recuperação:
+docker compose --env-file .env -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner --reset-password
+```
+
+O serviço usa a mesma imagem de ferramentas das migrations. Backups devem incluir `auth_users`, `auth_sessions` e `auth_login_attempts`; proteja-os como credenciais. O seed/clean financeiro preserva essas tabelas. A conta e as sessões persistem também quando o banco é populado com dados fictícios. A revogação no logout depende de PostgreSQL disponível; a UI informa falha e permite tentar novamente. Permanece uma conta proprietária, sem cadastro público nem isolamento financeiro, planejado na issue #9.
+
+### Conexão web no desenvolvimento
+
+Após carregar o ambiente, o Next.js fora de produção substitui `DATABASE_URL` pelo valor de `DEVELOPMENT_DATABASE_URL` somente quando o host original é `db`. Isso evita usar o endereço interno do Compose no processo executado no host. URLs explícitas com outro host, inclusive bancos descartáveis de testes, são preservadas. Produção não aplica essa substituição. O banco local deve estar publicado com `pnpm db:up`.

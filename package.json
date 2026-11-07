@@ -13,7 +13,8 @@
     "db:up": "docker compose --env-file .env -f infra/compose.yml -f infra/compose.dev.yml up -d db",
     "db:clean": "pnpm --filter @finance/db db:clean",
     "db:seed": "pnpm --filter @finance/db db:seed",
-    "db:bootstrap-categories": "pnpm --filter @finance/db db:bootstrap-categories"
+    "db:bootstrap-categories": "pnpm --filter @finance/db db:bootstrap-categories",
+    "db:provision-owner": "pnpm --filter @finance/db db:provision-owner"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

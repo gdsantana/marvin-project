@@ -229,3 +229,7 @@ export type MonthlyReport = z.infer<typeof monthlyReportSchema>;
 export type CategoryReport = z.infer<typeof categoryReportSchema>[number];
 export type MonthlySummary = z.infer<typeof monthlySummarySchema>;
 export type StatementForecast = z.infer<typeof statementForecastSchema>;
+
+export const usernameSchema = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9_.-]{2,63}$/, "Informe um usuário válido.");
+export const loginSchema = z.object({ username: usernameSchema, password: z.string().min(1).max(1024) });
+export const authSessionSchema = z.object({ authenticated: z.boolean(), csrfToken: z.string().nullable(), user: z.object({ id: idSchema, username: usernameSchema }).nullable() });

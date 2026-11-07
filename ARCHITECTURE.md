@@ -43,7 +43,7 @@ Limites atuais da API:
 - Preview transacional está exposto em `POST /api/v1/transactions/preview`, sem gravar movimentações; previsões avulsas têm rotas de criar/listar/realizar/cancelar.
 - Correções não financeiras são revisões append-only; alterações financeiras usam reversão compensatória e substituição atômica. A rota de contas também retorna limite disponível do cartão quando configurado.
 
-Web usa cookie de sessão assinado, token CSRF e proteção básica de tentativas no login. MCP usa bearer token próprio para Hermes e token de serviço distinto para a API. `.env.example` e Compose incluem `APP_ORIGIN` e `WEB_PASSWORD_HASH`, nomes lidos pela rota de login.
+Web valida usuário e hash scrypt no PostgreSQL. Cookie opaco identifica sessão revogável vinculada ao usuário; somente seu hash SHA-256 fica no banco. Sessões expiram em sete dias e exigem usuário ativo. CSRF e validação de origem são preservados. O limite global de cinco tentativas por 15 minutos é persistido atomicamente no PostgreSQL, compartilhado entre processos. MCP continua com bearer próprio e token de serviço distinto para a API. Ver [ADR 0011](docs/adr/0011-local-user-and-database-sessions.md).
 
 ## 4. Domínio financeiro e persistência
 

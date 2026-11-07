@@ -91,3 +91,39 @@ pnpm --filter @finance/web exec tsx ../../scripts/validate-integration.ts --prod
 ```
 
 O teste de workspace usa somente o PostgreSQL descartável preparado por `scripts/test-postgres.sh`; ele falha caso algum teste seja reportado como skipped. O harness HTTP cria e encerra seu próprio cluster, web e MCP. Runtime PostgreSQL user-space usado neste ambiente: `/tmp/marvin-pg-runtime/usr/bin` e `/tmp/marvin-pg-runtime/usr/lib`. Após um gate completo, só repita checks se houver novas alterações.
+
+## Login local com usuário e sessões no banco — 2026-11-07
+
+Validação na branch `feat/login-auth`, em worktree isolada:
+
+- `pnpm typecheck`, `pnpm lint` e `pnpm build`: passaram. Build emite avisos de múltiplos lockfiles por causa da worktree aninhada e de integração do plugin ESLint do Next.
+- `bash scripts/test-postgres.sh`: 75 testes passaram, zero skips, com PostgreSQL 17.11 descartável, incluindo hash, sessão, reset, expiração, proprietário único e limite concorrente. Um teste adicional de rota de login foi criado depois e passou isoladamente com `pnpm --filter @finance/web exec node --import tsx --test src/server/login-route.test.ts`.
+- `pnpm --filter @finance/web exec tsx ../../scripts/validate-integration.ts --production`: passou com banco descartável, migration 0003, provisionamento, web e MCP. Inclui recusa de logout sem CSRF, logout válido e rejeição da cópia do cookie revogado na sessão e API financeira.
+- Playwright/Chromium contra build local: campos de usuário/senha, alternância de visibilidade, payload enviado, erro 429 e ausência de overflow em 360, 390, 900 e 1440 px. Capturas sintéticas inspecionadas em mobile e desktop, gravadas em `/tmp/marvin-login-<largura>.png`.
+- `git diff --check`: passou.
+
+Não foi aplicada migration nem provisionada conta em banco real do usuário. Não houve deploy. Ativação exige migration 0003 e provisionamento interativo; cookies anteriores deixam de autenticar. UI testada em navegador, sem validação em aparelho físico. Finanças pessoais/compartilhadas permanecem na issue #9.
+
+### Correção do provisionamento no host — 2026-11-07
+
+O provisionamento passou a preferir `DEVELOPMENT_DATABASE_URL` fora de produção, mantendo `DATABASE_URL` como fallback e única opção em produção. Verifica conexão e tabelas antes de pedir senha; erros de configuração, validação e driver têm mensagens específicas sem imprimir credenciais. Dois testes focados, typecheck/build de DB, lint e diff check passaram.
+
+Após a falha relatada pelo mantenedor, `pnpm db:up` publicou a porta local preservando o volume. As migrations pendentes 0002 (constraints BRL) e 0003 (autenticação) foram aplicadas com a conexão local configurada, com sucesso. O comando interativo chegou ao prompt de usuário após verificar o banco e foi interrompido sem criar conta ou informar senha. Nenhum lançamento foi reescrito.
+
+### Correção de 503 no login web — 2026-11-07
+
+Diagnóstico confirmou servidor Next.js da worktree em modo development com `DATABASE_URL` apontando para host `db` não resolvível no host (`EAI_AGAIN`). A conexão `DEVELOPMENT_DATABASE_URL` funcionava, com tabelas de autenticação presentes. Next config passou a selecionar essa conexão apenas fora de produção e quando a URL original usa host `db`, preservando conexões explícitas.
+
+Após recarga automática da configuração pelo servidor dev, `GET /api/auth/session` com token sintético bem formado retornou HTTP 200 e `authenticated=false`, exercitando a consulta real ao banco sem senha real, nova sessão ou tentativa de login. Teste focado cobre desenvolvimento, produção, conexão explícita, URL inválida e ausência de fallback.
+
+### Layout do login e senha com controle integrado — 2026-11-07
+
+- `InputGroup`, `InputGroupInput`, `InputGroupAddon` e `InputGroupButton` adicionados pelo CLI shadcn `base-nova`, preservando `Button` e `Input` existentes. `Textarea` é dependência da composição upstream. Sem alteração de dependências ou lockfile.
+- Formulário mobile com espaçamento inicial menor, campos/ação de 48 px e controle de senha integrado de 44 px. Sem autofocus para evitar abertura automática do teclado. Desktop usa duas colunas a partir de 1024 px; tablet mantém formulário em coluna única.
+- Typecheck web, lint e diff check passaram. `pnpm build` passou em cópia temporária isolada com instalação offline, sem substituir o `.next` do servidor de desenvolvimento em uso.
+- Playwright/Chromium: 320, 390, 520, 768, 1024 e 1440 px; sem overflow horizontal. Verificados campos, tamanho do alvo, fonte de input de 16 px, Tab entre usuário/senha/controle, alternância por Space, valor preservado e payload/erro 429 com API interceptada. Nenhuma credencial real enviada. Capturas `/tmp/marvin-login-layout-<largura>.png`, inspecionadas em mobile e desktop.
+- Sem validação em aparelho físico; teclado virtual e safe areas reais permanecem fora desta verificação.
+
+### Gate final para pull request — 2026-11-07
+
+`pnpm typecheck`, `pnpm lint`, `git diff --check` e `bash scripts/test-postgres.sh` passaram no estado final: 79 testes, zero falhas e zero skips. A build completa foi repetida em cópia temporária isolada e passou. Remoção do cadeado e correção do foco foram verificadas em Chromium a 390 e 1440 px: apenas contorno externo arredondado, sem outline no input interno, com navegação por teclado preservada.

@@ -5,12 +5,12 @@ import { bearerIsValid, csrfIsValid, CSRF_COOKIE, readSession, SESSION_COOKIE } 
 export async function authorize(request: Request, write = false) {
   if (bearerIsValid(request)) return { ok: true as const, client: "mcp" as const };
   const jar = await cookies();
-  const session = readSession(jar.get(SESSION_COOKIE)?.value);
+  const session = await readSession(jar.get(SESSION_COOKIE)?.value);
   if (!session) return { ok: false as const, response: Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Entre para continuar." } }, { status: 401 }) };
   if (write && !csrfIsValid(request, session, jar.get(CSRF_COOKIE)?.value)) {
     return { ok: false as const, response: Response.json({ ok: false, error: { code: "CSRF_REJECTED", message: "Origem ou token de segurança inválido." } }, { status: 403 }) };
   }
-  return { ok: true as const, client: "web" as const };
+  return { ok: true as const, client: "web" as const, userId: session.userId };
 }
 
 export function apiError(code: string, message: string, status: number) {

@@ -689,3 +689,7 @@ Na convenção existente de passivos assinados: somar seus saldos negativos em v
 - Precisão de quantidades/preços/taxas por instrumento e política de arredondamento; identidade global de ativos e evolução da taxonomia.
 
 Não implementar agora schema Drizzle, migrations, API, ferramentas MCP, UI, integrações com corretoras, cotações automáticas ou cálculo de CDI/IPCA. A proposta prepara fronteiras e vínculos; o schema definitivo ainda exigirá revisão e migrations versionadas quando houver implementação autorizada.
+
+## 18. Identidade local implementada
+
+`auth_users` guarda ID UUID estável, username normalizado único, hash scrypt e estado ativo. Uma constraint admite apenas a conta proprietária, sem associar dados financeiros ao usuário. `auth_sessions` vincula usuário, hash SHA-256 do token opaco, token CSRF e expiração. `auth_login_attempts` persiste o contador global com janela de 15 minutos. Essas entidades não alteram saldos ou histórico financeiro. Cadastro público, espaços e participação ficam para a [issue #9](https://github.com/gdsantana/marvin-project/issues/9). Ver ADR 0011.

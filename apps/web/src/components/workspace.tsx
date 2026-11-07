@@ -289,7 +289,13 @@ export function Workspace({ section }: { section: Section }) {
 
   return <AppShell createDisabled={dataLoading || Boolean(dataError)} section={section} title={current.title} description={current.intro}
     onCreate={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }}
-    onSignOut={async () => { await fetch("/api/auth/session", { method: "DELETE", headers: { "x-csrf-token": csrf } }); router.replace("/login"); }}>
+    onSignOut={async () => {
+      try {
+        const response = await fetch("/api/auth/session", { method: "DELETE", headers: { "x-csrf-token": csrf } });
+        if (!response.ok) { setMessage("Não foi possível sair agora. Tente novamente."); return; }
+        router.replace("/login");
+      } catch { setMessage("Não foi possível conectar para sair. Tente novamente."); }
+    }}>
         {dataError && <Alert variant="destructive" className="mb-5"><AlertDescription>{dataError}{!dataError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReloadToken(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {message && !form && <Alert role="status" className="mb-5"><AlertDescription>{message}</AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && analyticsError && <Alert variant="destructive" className="mb-5"><AlertDescription>{analyticsError}<Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button></AlertDescription></Alert>}
