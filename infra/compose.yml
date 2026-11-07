@@ -28,8 +28,6 @@ services:
       NODE_ENV: production
       PORT: 3000
       APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN to the trusted browser origin}
-      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
-      WEB_PASSWORD_HASH: ${WEB_PASSWORD_HASH:?Set WEB_PASSWORD_HASH}
       MCP_API_TOKEN: ${MCP_API_TOKEN:?Set MCP_API_TOKEN}
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
     ports:

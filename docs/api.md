@@ -6,11 +6,11 @@ Base local: `http://localhost:3000/api`. Em produção, use a origem HTTPS priva
 
 ## Autenticação
 
-- **Navegador:** `POST /auth/login` recebe `{"password":"..."}`. A senha é verificada contra `WEB_PASSWORD_HASH` (scrypt). O servidor cria o cookie assinado `marvin_session` (`HttpOnly`, `SameSite=Strict`, `Secure` em produção) e o cookie `marvin_csrf` (`SameSite=Strict`). A sessão expira após sete dias.
+- **Navegador:** `POST /auth/login` recebe `{"username":"owner","password":"..."}`. Username é normalizado com trim e lowercase; senha é preservada. A senha é verificada contra hash scrypt no PostgreSQL. Cookie opaco `marvin_session` identifica sessão revogável de sete dias (`HttpOnly`, `SameSite=Strict`, `Secure` em produção); `marvin_csrf` mantém CSRF. Usuários inativos não autenticam.
 - **Escritas do navegador:** envie `X-CSRF-Token` com o valor retornado por `GET /auth/session`; o cookie CSRF também deve estar presente. `Origin` precisa corresponder exatamente à origem de `APP_ORIGIN`.
 - **MCP:** envie `Authorization: Bearer <MCP_API_TOKEN>`. Essa credencial é independente da sessão web e dispensa CSRF. Nunca a envie ao navegador.
 - Endpoints financeiros exigem sessão ou bearer. `GET /health` é público e não revela estado do banco nem dados privados.
-- O limitador de login permite cinco falhas por janela de 15 minutos, compartilhadas pelo processo. Como a aplicação tem uma única pessoa usuária e não confia em cabeçalhos de proxy para identificar clientes, o limite é global; em múltiplas réplicas seria necessário armazenamento compartilhado.
+- O limitador global admite cinco tentativas por janela de 15 minutos, reservadas atomicamente no PostgreSQL antes do hash, inclusive para usuários desconhecidos. Sucesso limpa a janela; bloqueio retorna `429` com `Retry-After: 900`. O limite compartilhado pode bloquear temporariamente o proprietário sob abuso; não há confiança em headers de proxy.
 
 ## Envelope e erros
 
@@ -50,15 +50,15 @@ Público; não consulta o banco.
 
 ### `POST /auth/login`
 
-JSON: `{"password":"senha local"}`. Compara senha local usando scrypt e aplica rate limit. Responde `{"ok":true,"data":{"authenticated":true}}` e define os cookies.
+JSON: `{"username":"owner","password":"senha local"}`. Valida credenciais no banco usando scrypt e aplica rate limit. Responde `{"ok":true,"data":{"authenticated":true}}` e define os cookies.
 
 ### `GET /auth/session`
 
-Retorna `{"ok":true,"data":{"authenticated":true,"csrfToken":"..."}}` quando a sessão é válida; sem sessão, `authenticated` é `false` e `csrfToken` é `null`.
+Retorna `{"ok":true,"data":{"authenticated":true,"csrfToken":"...","user":{"id":"UUID","username":"owner"}}}` quando a sessão é válida; sem sessão, `authenticated` é `false`, `csrfToken` e `user` são `null`. Indisponibilidade do banco retorna `503 AUTH_UNAVAILABLE`. Respostas de sessão não são armazenáveis em cache.
 
 ### `DELETE /auth/session`
 
-Encerra a sessão. Exige `Origin` permitido e `X-CSRF-Token` quando existe sessão.
+Revoga a sessão no banco e apaga cookies. Exige `Origin` permitido e `X-CSRF-Token` quando existe sessão.
 
 ## Consultas
 

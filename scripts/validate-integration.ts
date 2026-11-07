@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomBytes, randomUUID, scrypt as scryptCallback } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { createDatabase, provisionOwner } from "../packages/db/src/index.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   accountsResponseSchema, categoriesResponseSchema, createdIdResponseSchemaEnvelope, creditCardSettingsSchema,
@@ -19,7 +19,6 @@ import {
   transactionReversedResponseSchema, transactionResponseSchema, transactionsResponseSchema,
 } from "../packages/contracts/src/index.ts";
 
-const scrypt = promisify(scryptCallback);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv.includes("--production") ? "production" : "dev";
 const pgBin = process.env.PG_BIN ?? "/tmp/marvin-pg-runtime/usr/bin";
@@ -153,17 +152,13 @@ async function main() {
   const scratch = await mkdtemp(path.join(os.tmpdir(), "marvin-integration-"));
   pgData = path.join(scratch, "pgdata");
   const password = randomBytes(32).toString("base64url");
-  const salt = randomBytes(16).toString("hex");
-  const passwordHash = (await scrypt(password, salt, 64) as Buffer).toString("hex");
   const serviceToken = randomBytes(32).toString("base64url");
   const hermesToken = randomBytes(32).toString("base64url");
-  const sessionSecret = randomBytes(32).toString("base64url");
   const origin = `http://127.0.0.1:${webPort}`;
   const dbUrl = `postgresql://postgres@127.0.0.1:${pgPort}/postgres`;
   const dockerMode = !existsSync(path.join(pgBin, "postgres"));
   const pgContainer = `marvin-integration-${process.pid}`;
-  const commonEnv = { ...process.env, DATABASE_URL: dbUrl, APP_ORIGIN: origin, SESSION_SECRET: sessionSecret,
-    WEB_PASSWORD_HASH: `scrypt$${salt}$${passwordHash}`, MCP_API_TOKEN: serviceToken,
+  const commonEnv = { ...process.env, DATABASE_URL: dbUrl, APP_ORIGIN: origin, MCP_API_TOKEN: serviceToken,
     MCP_HERMES_BEARER_TOKEN: hermesToken, MCP_API_URL: `${origin}/api/`, NEXT_TELEMETRY_DISABLED: "1",
     PATH: `${pgBin}:${process.env.PATH ?? ""}`, LD_LIBRARY_PATH: `${pgLib}${process.env.LD_LIBRARY_PATH ? `:${process.env.LD_LIBRARY_PATH}` : ""}` };
   let cleanupPromise: Promise<void> | undefined;
@@ -194,6 +189,9 @@ async function main() {
     }
     await command("pnpm", ["--filter", "@finance/db", "db:migrate"], commonEnv);
 
+    const ownerDatabase = createDatabase(dbUrl);
+    try { await provisionOwner(ownerDatabase.db, "owner", password); } finally { await ownerDatabase.pool.end(); }
+
     const nextCli = path.join(root, "apps/web/node_modules/next/dist/bin/next");
     const web = mode === "dev"
       ? start(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "--port", String(webPort)], commonEnv, path.join(root, "apps/web"))
@@ -208,9 +206,9 @@ async function main() {
     const unauth = await fetch(`${base}/api/v1/accounts`);
     const unauthBody = await json(unauth, "unauthenticated GET accounts");
     check(unauth.status === 401 && unauthBody?.error?.code === "UNAUTHENTICATED", `GET sem credencial: HTTP ${unauth.status} ${safeMessage(unauthBody?.error?.code)} ${safeMessage(unauthBody?.error?.message)}; esperado 401 UNAUTHENTICATED`);
-    const csrfReject = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json", origin: "http://evil.invalid" }, body: JSON.stringify({ password }) });
+    const csrfReject = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json", origin: "http://evil.invalid" }, body: JSON.stringify({ username: "owner", password }) });
     assert.equal(csrfReject.status, 403, "login must reject foreign Origin");
-    const login = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ password }) });
+    const login = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ username: "owner", password }) });
     assert.equal(login.status, 200);
     const jar = cookiesFrom(login);
     const session = await fetch(`${base}/api/auth/session`, { headers: { cookie: jar.join("; ") } });
@@ -468,6 +466,15 @@ async function main() {
     check(mcpInvalidBearer.status === 401, `MCP deve rejeitar bearer inválido com 401, recebeu ${mcpInvalidBearer.status}`);
     const mcpAuth = await fetch(`http://127.0.0.1:${mcpPort}/mcp`, { method: "POST", headers: { authorization: `Bearer ${hermesToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "integration", version: "1" } } }) });
     assert.equal(mcpAuth.status, 200, "Hermes bearer must authenticate independently");
+    const logoutRejected = await fetch(`${base}/api/auth/session`, { method: "DELETE", headers: { cookie: jar.join("; "), origin } });
+    check(logoutRejected.status === 403, "logout sem CSRF deve ser rejeitado");
+    const logout = await fetch(`${base}/api/auth/session`, { method: "DELETE", headers: webHeaders });
+    check(logout.status === 200, "logout deve revogar sessão no banco");
+    const copiedSession = await fetch(`${base}/api/auth/session`, { headers: { cookie: jar.join("; ") } });
+    const copiedSessionBody = await json(copiedSession, "revoked session");
+    check(copiedSessionBody.data.authenticated === false, "cópia do cookie não deve autenticar após logout");
+    const revokedAccess = await fetch(`${base}/api/v1/accounts`, { headers: { cookie: jar.join("; ") } });
+    check(revokedAccess.status === 401, "API deve rejeitar sessão revogada");
     if (failures.length) throw new Error(failures.join("; "));
     console.log(`Integração ${mode}: PASS (PostgreSQL real + migration + web + MCP; nenhuma credencial exibida)`);
   } finally { await cleanup(); }

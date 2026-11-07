@@ -396,6 +396,7 @@ async function main() {
           state.authenticated = false;
           await page.goto(`${base.origin}/accounts`);
           await page.waitForURL(`${base.origin}/login`);
+          await page.getByLabel("Usuário", { exact: true }).fill("owner");
           await page.getByLabel("Senha", { exact: true }).fill("senha-sintetica");
           await page.getByRole("button", { name: "Entrar", exact: true }).click();
           await page.waitForURL(`${base.origin}/`);
