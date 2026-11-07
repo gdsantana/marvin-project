@@ -100,6 +100,8 @@ O pacote DB também fornece `pnpm db:seed` e `pnpm db:clean`, exclusivos para Po
 
 ## 8. Segurança e dados
 
+A [auditoria das comunicações de 07/11/2026](docs/security-audit.md) registra o modelo de ameaças Discord/Hermes → MCP → Web → PostgreSQL, evidências, recomendações priorizadas e limites da revisão. É uma análise parcial: deploy real não inspecionado, um candidato de restauração de sessões pendente e uma lacuna de cobertura das políticas específicas de build. Não representa certificação do homelab nem alteração da arquitetura.
+
 - Não expor PostgreSQL à rede externa; MCP deve conversar apenas com API HTTP autenticada.
 - Dinheiro sempre em unidades mínimas inteiras; moedas permanecem separadas sem FX.
 - Transferência interna e pagamento de fatura não criam receita/despesa nova.

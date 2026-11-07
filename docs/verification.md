@@ -1,5 +1,17 @@
 # Auditoria dos requisitos do MVP
 
+## Segurança das comunicações — issue #7, 07/11/2026
+
+A [auditoria de segurança](security-audit.md) registra a revisão de `a8bf373`, modelo de ameaças, caminhos Discord/Hermes → MCP → Web → DB e recomendações. Entrega somente documental; sem acesso ao homelab ou banco persistente.
+
+- Testes focados em sandbox offline: MCP 4 e Web 15 passaram, sem falhas/skips.
+- `pnpm test`: 70 passaram, zero falhas e nove integrações com PostgreSQL puladas; não equivale ao gate com zero skips.
+- `pnpm typecheck` e `pnpm lint`: passaram com dependências locais somente leitura. O sandbox precisou de correção do caminho `/bin/sh`; pnpm avisou sobre sincronização de dependências bloqueada pelo mount.
+- `pnpm build`: contratos, domínio, DB e MCP passaram; Web não concluiu no sandbox limitado, com falha de worker e, no ensaio final, `JavaScript heap out of memory`. Build completo não aprovado nesta rodada.
+- Validadores estruturais: um registro `needs_validation`, zero vulnerabilidades confirmadas; ledger com sete unidades revisadas, uma com candidato, uma adiada e uma fora do escopo.
+
+Não foram repetidos integrações DB, E2E completo, build Docker ou restauração. O candidato sobre recuperação de sessões revogadas precisa de fixture PostgreSQL e observação do runbook efetivo. A crítica independente adiou a revisão das políticas de ignore específicas dos Dockerfiles; revisão raiz não comprova exclusão efetiva desses builds. Evidências históricas abaixo não substituem essas pendências.
+
 ## Verificação atual — correções de 31/10/2026
 
 Entrega vinculada aos achados em [platform-fixes-2026-10-31.md](platform-fixes-2026-10-31.md) e às decisões do [ADR 0010](adr/0010-platform-consistency-and-brl.md). Dados e credenciais de teste foram fictícios; nenhum banco persistente do usuário foi acessado.
