@@ -1,8 +1,31 @@
 # Auditoria dos requisitos do MVP
 
+## Separação PostgreSQL de runtime e migrations — 07/11/2026
+
+Implementação do [ADR 0012](adr/0012-database-runtime-and-migration-roles.md), com provisionamento técnico separado do login da plataforma. Nenhuma role, grant, senha ou migration foi aplicada em banco real do homelab.
+
+| Verificação atual | Resultado |
+|---|---|
+| Testes focados de roles | Criação em base vazia, duas execuções de migrations, login/SCRAM, finanças com runtime, recusa de DDL/TRUNCATE/escalada/update de senha e adoção explícita de ownership passaram |
+| `pnpm -r --if-present test` — corpo do script raiz `pnpm test` | 85 passaram, zero falhas/skips: domínio 21, MCP 4, DB 22, Web 38; PostgreSQL 17.11 descartável |
+| `pnpm -r typecheck` e `eslint apps packages --max-warnings=0` | Passaram em todos os workspaces |
+| `pnpm -r build` | Passou, incluindo Next.js e artefato MCP |
+| Compose renderizado com `.env.example`, `.env.ops.example` e profile `ops` | Credencial runtime somente na Web; migration/admin somente nos respectivos jobs; MCP sem URL/rede DB; PostgreSQL sem porta publicada |
+| `scripts/validate-recovery.sh` | Dois clusters descartáveis: migration, dump/restore sem ACL antiga, reaplicação de ownership/grants, integridade/saldos e replay como runtime passaram |
+| `scripts/validate-integration.ts` em modo development | PostgreSQL próprio, provisionamento das roles, migrations, login, API Web e ferramentas MCP passaram; Web conectada como `marvin_app`, sem credencial administrativa; MCP sem URL DB |
+| Documentação e scripts shell | Links/âncoras, `bash -n` e `git diff --check` passaram |
+
+Execução offline em cópias descartáveis dentro de `bwrap --unshare-all`, com rede isolada/loopback próprio, ambiente iniciado vazio, raiz/toolchain/dependências somente leitura e escrita somente em tmpfs limitado. Binários PostgreSQL vieram da imagem 17.11 já existente localmente, extraída sem iniciar container ou usar banco/daemon compartilhado para executar testes. Senhas e dados foram fictícios; nenhum download de dependência ocorreu.
+
+Limites usuais: 180 s de parede, 120 s CPU por processo, 8 GiB de espaço de endereçamento, heap Node 512 MiB, até 256 processos e tmpfs 1 GiB. Build/E2E usaram afinidade de duas CPUs, espaço de endereçamento 16 GiB, heap 1 GiB, até 512 processos e tmpfs 2 GiB. As primeiras tentativas revelaram ajustes do ambiente ICU e do ownership da sequência serial. O restore inicialmente falhou por ACL referindo role ausente; o roteiro foi corrigido para `--no-acl` e aplicação explícita da política na base restaurada, e o ensaio final passou.
+
+Avisos: pnpm tentou sincronizar o diretório de módulos movido e encontrou mount somente leitura; prosseguiu com as dependências locais existentes. Permanecem avisos anteriores de pg 8 e plugin ESLint do Next; não houve desativação de checks. Não foram feitos build Docker, E2E em modo production ou validação LAN/VPN/NPM/Discord nesta rodada. O E2E dev e o build passaram separadamente. A confirmação humana de escritas do Hermes e o candidato NV-01 continuam fora desta implementação.
+
 ## Segurança das comunicações — issue #7, 07/11/2026
 
 A [auditoria de segurança](security-audit.md) registra a revisão de `a8bf373`, modelo de ameaças, caminhos Discord/Hermes → MCP → Web → DB e recomendações. Entrega somente documental; sem acesso ao homelab ou banco persistente.
+
+Esclarecimento posterior do proprietário incorporado ao modelo: Web somente na LAN/VPN, Hermes no homelab acessando MCP pela LAN e Discord como única entrada externa indireta para o agente; nenhum desses serviços é publicado diretamente na internet. É uma premissa declarada, sem nova inspeção de rede ou reexecução dos testes abaixo. As evidências externas retidas descrevem a rodada original, anterior a esse esclarecimento.
 
 - Testes focados em sandbox offline: MCP 4 e Web 15 passaram, sem falhas/skips.
 - `pnpm test`: 70 passaram, zero falhas e nove integrações com PostgreSQL puladas; não equivale ao gate com zero skips.

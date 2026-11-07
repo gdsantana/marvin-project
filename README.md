@@ -35,6 +35,8 @@ docs                Modelo, decisões e operação
 
 Ver [ARCHITECTURE.md](ARCHITECTURE.md) para dependências e [docs/deployment.md](docs/deployment.md) para topologia e comandos de operação.
 
+A separação técnica de banco está no [ADR 0012](docs/adr/0012-database-runtime-and-migration-roles.md). Web usa `marvin_app`; migrations/administração de dados usam `marvin_migrator`; provisionamento de roles usa a conexão administrativa existente. Isso não cria perfis de usuário na interface. Para uma base existente, siga o procedimento explícito `--adopt-existing` no [deploy](docs/deployment.md#separação-de-privilégios-postgresql); não aplique mudanças de ownership ao banco real sem backup/revisão.
+
 ## Desenvolvimento
 
 Requer Node.js, pnpm 12 e, para os fluxos da aplicação, PostgreSQL. Scripts e nomes de comandos abaixo correspondem aos `package.json` atuais:
@@ -49,26 +51,31 @@ pnpm test
 pnpm build
 ```
 
-Para executar a aplicação no host, mantenha as conexões separadas: `.env` na raiz configura o Compose (`DATABASE_URL` usa o host interno `db`), enquanto `DEVELOPMENT_DATABASE_URL` configura o Next.js em desenvolvimento com a URL publicada em `127.0.0.1` quando `DATABASE_URL` aponta para o host interno `db`. Uma `DATABASE_URL` explícita com outro host é preservada; produção usa somente `DATABASE_URL`. `apps/web/.env.local` também pode fornecer uma conexão explícita. Crie o banco com `pnpm db:up` e coloque a URL local também em `DEVELOPMENT_DATABASE_URL` no `.env` para seed e limpeza. Use credenciais literais; arquivos `.env` não são copiados para as imagens.
+Para executar a aplicação no host, mantenha as conexões separadas: `.env` na raiz configura o Compose (`DATABASE_URL` usa o host interno `db`), enquanto `DEVELOPMENT_DATABASE_URL` configura o Next.js em desenvolvimento com a URL publicada em `127.0.0.1` quando `DATABASE_URL` aponta para o host interno `db`. Uma `DATABASE_URL` explícita com outro host é preservada; produção usa somente `DATABASE_URL`. `apps/web/.env.local` também pode fornecer uma conexão explícita. Crie o banco com `pnpm db:up` e configure a URL de runtime local em `DEVELOPMENT_DATABASE_URL`. Os comandos de manutenção usam a URL operacional local de `.env.ops`. Use credenciais literais; arquivos `.env` não são copiados para as imagens.
 
 ```bash
 cp .env.example .env
+cp .env.ops.example .env.ops
+chmod 600 .env .env.ops
+# Preencha os arquivos antes de iniciar o banco.
 pnpm db:up
-printf '%s\n' 'DATABASE_URL=postgresql://marvin:SUA_SENHA@127.0.0.1:5432/marvin' > apps/web/.env.local
+pnpm db:provision-roles
+pnpm db:migrate
+pnpm db:provision-owner
 ```
 
-Substitua `SUA_SENHA` pela senha local configurada no `.env`; não compartilhe nem versione esses arquivos. Se a porta publicada for diferente de 5432, use `DEV_DB_HOST_PORT` no endereço.
+Em `.env`, configure `DATABASE_URL` com `marvin_app`/host `db` e `DEVELOPMENT_DATABASE_URL` com a mesma identidade em `127.0.0.1`. Em `.env.ops`, use as URLs locais administrativa e `marvin_migrator` para os comandos do host, com senhas distintas. As senhas solicitadas pelo provisionamento devem coincidir com as URLs. Não compartilhe nem versione esses arquivos; `.env.ops` nunca é carregado pela Web. Se a porta publicada for diferente de 5432, use `DEV_DB_HOST_PORT` no endereço.
 
 `pnpm test` percorre os workspaces configurados; integrações PostgreSQL exigem uma base descartável. `bash scripts/test-postgres.sh` prepara um cluster local ou container temporário e exige zero skips. Consulte [docs/verification.md](docs/verification.md) para resultados de testes, build e E2E. Execute E2E dev antes do build e E2E de produção depois dele, pois Next dev substitui `.next`.
 
 Para popular um banco **exclusivo de desenvolvimento**, aplique primeiro as migrations e execute a carga fictícia com a URL desse banco:
 
 ```bash
-DATABASE_URL='postgresql://usuario:senha@localhost:5432/marvin_dev' pnpm db:migrate
-DEVELOPMENT_DATABASE_URL='postgresql://usuario:senha@localhost:5432/marvin_dev' pnpm db:seed
+pnpm db:migrate # usa MIGRATION_DATABASE_URL de .env.ops, sem fallback para runtime
+pnpm db:seed # manutenção local com a conexão operacional de .env.ops
 ```
 
-O seed carrega automaticamente o `.env` da raiz, se existir. Com `DEVELOPMENT_DATABASE_URL` ou `DATABASE_URL` local já configurada nesse arquivo, execute `pnpm db:seed`. Variáveis exportadas no terminal têm prioridade sobre o arquivo. O comando `db:seed` já define `SEED_DEVELOPMENT=true` automaticamente e continua bloqueado quando `NODE_ENV=production`; não altere essa proteção para carregar dados fictícios em produção.
+O seed carrega `.env` e `.env.ops` da raiz, se existirem, e prefere a conexão operacional local `MIGRATION_DATABASE_URL` para a limpeza. Com essa conexão configurada, execute `pnpm db:seed`. Variáveis exportadas no terminal têm prioridade sobre o arquivo. O comando `db:seed` já define `SEED_DEVELOPMENT=true` automaticamente e continua bloqueado quando `NODE_ENV=production`; não altere essa proteção para carregar dados fictícios em produção.
 
 **O seed limpa todos os dados da aplicação antes de inserir a carga**, inclusive registros manuais e chaves de idempotência. O schema e o histórico de migrations são preservados. Para executar somente a limpeza:
 
@@ -76,7 +83,7 @@ O seed carrega automaticamente o `.env` da raiz, se existir. Com `DEVELOPMENT_DA
 SEED_DEVELOPMENT=true pnpm db:clean
 ```
 
-Os dois comandos carregam o `.env` da raiz e exigem `NODE_ENV` diferente de `production` e uma URL PostgreSQL local com host `localhost`, `127.0.0.1` ou `[::1]`. A limpeza avulsa com `db:clean` continua exigindo `SEED_DEVELOPMENT=true` explícito. Não aceitam sobrescrita de host por parâmetros da URL. Para um PostgreSQL em Docker, execute o comando no host usando a porta local publicada. Essas proteções não distinguem dados reais de fictícios: use exclusivamente um banco de desenvolvimento e pare a aplicação durante a limpeza/carga.
+Os dois comandos carregam `.env` e `.env.ops` da raiz e exigem `NODE_ENV` diferente de `production` e uma URL PostgreSQL local com host `localhost`, `127.0.0.1` ou `[::1]`. A limpeza avulsa com `db:clean` continua exigindo `SEED_DEVELOPMENT=true` explícito. Não aceitam sobrescrita de host por parâmetros da URL. Para um PostgreSQL em Docker, execute o comando no host usando a porta local publicada. Essas proteções não distinguem dados reais de fictícios: use exclusivamente um banco de desenvolvimento e pare a aplicação durante a limpeza/carga.
 
 Para usar o PostgreSQL Docker do projeto no desenvolvimento:
 
@@ -88,13 +95,13 @@ pnpm db:seed
 
 `pnpm db:up` aplica `infra/compose.dev.yml`, publica o banco apenas em `127.0.0.1:${DEV_DB_HOST_PORT:-5432}` e preserva o volume existente. O override adiciona uma rede bridge somente ao banco para permitir a publicação da porta, mantendo a rede interna. A primeira aplicação pode interromper conexões brevemente ao recriar o container. O Compose de deploy continua sem publicar PostgreSQL.
 
-Configure `DEVELOPMENT_DATABASE_URL` no `.env` com usuário, senha e nome do banco Docker, mas host `127.0.0.1` e a porta local publicada. Use credenciais literais: o carregamento de `.env` pelo Node não expande `${POSTGRES_PASSWORD}`. Os comandos de seed e limpeza preferem essa variável; `DATABASE_URL` continua sendo a conexão interna usada pelos containers e o fallback dos scripts quando a variável de desenvolvimento não está definida.
+Configure `DEVELOPMENT_DATABASE_URL` no `.env` com usuário, senha e nome do banco Docker, mas host `127.0.0.1` e a porta local publicada. Use credenciais literais: o carregamento de `.env` pelo Node não expande `${POSTGRES_PASSWORD}`. Os comandos de seed e limpeza carregam também `.env.ops` e preferem `MIGRATION_DATABASE_URL` local, com fallback para essa variável; `DATABASE_URL` continua sendo a conexão interna usada pelos containers e o fallback dos scripts quando a variável de desenvolvimento não está definida.
 
 ```bash
 DEVELOPMENT_DATABASE_URL='postgresql://usuario:senha@127.0.0.1:5432/marvin_dev' SEED_DEVELOPMENT=true pnpm db:clean
 ```
 
-As falhas de configuração, conexão, autenticação, permissões e tabelas ausentes têm mensagens específicas, sem imprimir a URL nem credenciais. Para migrations no terminal do host, passe a conexão local como `DATABASE_URL`; o comando `db:migrate` não usa `DEVELOPMENT_DATABASE_URL`.
+As falhas de configuração, conexão, autenticação, permissões e tabelas ausentes têm mensagens específicas, sem imprimir a URL nem credenciais. Para migrations no terminal do host, configure `MIGRATION_DATABASE_URL` local em `.env.ops`; o comando exige `marvin_migrator` e não usa `DATABASE_URL`/`DEVELOPMENT_DATABASE_URL`.
 
 A carga cobre o mês atual e os dois anteriores, pela data civil em `America/Sao_Paulo`. Por exemplo, em outubro cria agosto, setembro e outubro. Preserva as 13 categorias, Nubank e Itaú, duas contas correntes com saldo positivo e dois cartões; cria salários, rendimentos, despesas via Pix e compras no crédito nos três meses, com valores variados para análise. Compras em três parcelas começam no mês mais antigo e terminam no atual, com soma exata dos centavos. As quatro faturas anteriores são fechadas e pagas pelas contas correspondentes; as duas atuais ficam abertas e sem pagamento. Pagamento de fatura é transferência, sem duplicar despesas nos relatórios.
 

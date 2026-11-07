@@ -7,7 +7,7 @@ export function developmentDatabaseUrl(env: NodeJS.ProcessEnv = process.env): st
   if (env.NODE_ENV === "production" || env.SEED_DEVELOPMENT !== "true") {
     throw new DevelopmentDatabaseConfigError("Limpeza e carga fictícia exclusivas para desenvolvimento: defina SEED_DEVELOPMENT=true e não use NODE_ENV=production.");
   }
-  const databaseUrl = env.DEVELOPMENT_DATABASE_URL ?? env.DATABASE_URL;
+  const databaseUrl = env.MIGRATION_DATABASE_URL ?? env.DEVELOPMENT_DATABASE_URL ?? env.DATABASE_URL;
   if (!databaseUrl) throw new DevelopmentDatabaseConfigError("Defina DATABASE_URL para o banco local de desenvolvimento.");
   let url: URL;
   try { url = new URL(databaseUrl); }

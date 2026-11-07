@@ -1,7 +1,7 @@
 import { defineConfig } from "drizzle-kit";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error("DATABASE_URL must be set for Drizzle commands");
+const databaseUrl = process.env.MIGRATION_DATABASE_URL;
+if (!databaseUrl) throw new Error("MIGRATION_DATABASE_URL must be set for Drizzle commands");
 
 export default defineConfig({
   dialect: "postgresql",

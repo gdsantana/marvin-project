@@ -65,3 +65,9 @@ test("explicit development URL takes priority over the Compose URL", () => {
   assert.equal(developmentDatabaseUrl(env), env.DEVELOPMENT_DATABASE_URL);
   assert.throws(() => developmentDatabaseUrl({ ...env, NODE_ENV: "production" }));
 });
+
+test("development maintenance prefers the explicit operational identity and still rejects production", () => {
+  const env = { DATABASE_URL: "postgresql://marvin_app@localhost/dev", MIGRATION_DATABASE_URL: "postgresql://marvin_migrator@localhost/dev", SEED_DEVELOPMENT: "true" };
+  assert.equal(developmentDatabaseUrl(env), env.MIGRATION_DATABASE_URL);
+  assert.throws(() => developmentDatabaseUrl({ ...env, NODE_ENV: "production" }));
+});

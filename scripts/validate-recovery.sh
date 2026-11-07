@@ -60,7 +60,17 @@ restore_started=1
 source_url="postgresql://$(id -un)@127.0.0.1:$source_port/marvin"
 restore_url="postgresql://$(id -un)@127.0.0.1:$restore_port/marvin"
 run_quiet 'criação da base origem' createdb --host=127.0.0.1 --port="$source_port" --username="$(id -un)" marvin
-export DATABASE_URL="$source_url"
+# Dummy credentials apply only to these two disposable clusters.
+app_password="$(printf 'a%.0s' {1..64})"
+migration_password="$(printf 'b%.0s' {1..64})"
+provision_roles() {
+  DATABASE_URL="$1" ROLE_APP_PASSWORD="$app_password" ROLE_MIGRATION_PASSWORD="$migration_password" ROLE_ADOPT="$2" \
+    pnpm --filter @finance/db exec tsx -e 'import { createDatabase } from "./src/client.ts"; import { provisionDatabaseRoles } from "./src/database-roles.ts"; const { pool } = createDatabase(process.env.DATABASE_URL!); provisionDatabaseRoles(pool, { appPassword: process.env.ROLE_APP_PASSWORD!, migrationPassword: process.env.ROLE_MIGRATION_PASSWORD!, adoptExisting: process.env.ROLE_ADOPT === "1" }).finally(() => pool.end());'
+}
+cd "$repo_root"
+run_quiet 'roles técnicas na origem' provision_roles "$source_url" 0
+export MIGRATION_DATABASE_URL="postgresql://marvin_migrator:$migration_password@127.0.0.1:$source_port/marvin"
+export DATABASE_URL="postgresql://marvin_app:$app_password@127.0.0.1:$source_port/marvin"
 run_quiet 'aplicação das migrations' bash -lc "cd '$repo_root' && pnpm --filter @finance/db db:migrate"
 
 cat >"$fixture_file" <<'TS'
@@ -135,9 +145,10 @@ fi
 printf 'Criando dump e restaurando na segunda base...\n'
 run_quiet 'pg_dump custom format' pg_dump --format=custom --no-owner --file="$temp_root/recovery.dump" "$source_url"
 run_quiet 'criação da base destino' createdb --host=127.0.0.1 --port="$restore_port" --username="$(id -un)" marvin
-run_quiet 'pg_restore' pg_restore --exit-on-error --no-owner --dbname="$restore_url" "$temp_root/recovery.dump"
+run_quiet 'pg_restore' pg_restore --exit-on-error --no-owner --no-acl --dbname="$restore_url" "$temp_root/recovery.dump"
 
-export DATABASE_URL="$restore_url" RECOVERY_REPLAY=1
+run_quiet 'roles e ownership após restore' provision_roles "$restore_url" 1
+export DATABASE_URL="postgresql://marvin_app:$app_password@127.0.0.1:$restore_port/marvin" RECOVERY_REPLAY=1
 run_quiet 'replay idempotente após restore' bash -lc "cd '$repo_root/apps/web' && pnpm exec tsx '$fixture_file'"
 restore_snapshot="$(snapshot "$restore_url")" || { printf 'Falha ao inspecionar base restaurada.\n' >&2; exit 1; }
 [[ "$source_snapshot" == "$restore_snapshot" ]] || { printf 'Estrutura, constraints, gatilhos, contagens ou saldos diferem após restore/replay.\n' >&2; exit 1; }

@@ -2,6 +2,8 @@
 
 Data: 07/11/2026. Revisão de código: `a8bf3736da9c69f997ec7f7a3b62696a55669571`, igual a `origin/main` após fetch. Worktree inicialmente limpa; entrega documental na branch `docs/7-security-audit`.
 
+Atualização posterior à rodada original: a separação técnica de roles PostgreSQL foi implementada conforme [ADR 0012](adr/0012-database-runtime-and-migration-roles.md), com validação adicional registrada em [verification.md](verification.md). As referências de linhas e evidências da auditoria original continuam vinculadas à revisão acima; não descrevem uma nova auditoria integral do código atualizado.
+
 ## Resultado e alcance
 
 Esta é uma auditoria **parcial, com escopo nas comunicações e perfil quick**: reconhecimento, uma rodada de investigação, revisão independente de cobertura e verificação independente do candidato. Não houve acesso a serviços do homelab, credenciais reais, Docker compartilhado ou banco persistente. Nenhuma mudança de implementação, dependência, migration ou deploy foi aplicada.
@@ -12,16 +14,24 @@ A arquitetura exigida está preservada no código e no Compose: MCP encaminha op
 
 Foram revisados transporte MCP, cliente HTTP, rotas HTTP de autenticação/finanças, contratos, composição da Web, repositórios, autenticação PostgreSQL, Compose de deploy/desenvolvimento, Dockerfiles, logs e procedimentos de secrets/backup. Regras financeiras foram seguidas somente onde sustentam validação, autoria, atomicidade e idempotência. Não houve auditoria geral da UI, levantamento de CVEs, pentest do Proxmox ou inspeção da implementação externa do Hermes/Discord.
 
+### Premissa de implantação esclarecida pelo proprietário
+
+Web, MCP e PostgreSQL rodam no homelab, sem publicação direta na internet. O proprietário acessa a Web pela rede local e, quando está fora, entra na rede privada pela VPN. Hermes também roda no homelab e acessa MCP somente pela LAN. Discord é a única entrada externa indireta para comandos ao agente; isso não exige publicar Web ou MCP na internet.
+
+Essa topologia é uma premissa informada pelo proprietário, incorporada nesta revisão documental. Não é resultado de inspeção do firewall, VPN ou serviços em execução. As evidências e limitações dos testes da rodada original permanecem as mesmas.
+
 ## Modelo de ameaças
 
 Os ativos protegidos são dados financeiros, histórico e autoria de operações, credenciais, sessões, disponibilidade e backups. Estar no mesmo Proxmox não torna Hermes, VM Docker, clientes da LAN e mensagens do Discord igualmente confiáveis.
 
+Sob essa premissa, um cliente arbitrário da internet não tem rota direta até Web/MCP. O caminho externo relevante para operações financeiras é Discord → Hermes → MCP, além do acesso remoto do proprietário após autenticar na VPN. Os cenários de abuso HTTP pressupõem acesso à LAN/VPN, comprometimento de um dispositivo interno ou uso indevido da autoridade do Hermes. Publicação acidental de porta é desvio de configuração a prevenir, não exposição observada ou premissa da auditoria.
+
 | Principal ou entrada | Autoridade esperada | Ameaça considerada |
 |---|---|---|
-| Cliente sem autenticação com rota até Web/MCP | Somente saúde e tentativa de login | Leitura/escrita sem credencial, abuso de recursos e adivinhação de senha |
-| Proprietário no navegador | Todas as finanças pessoais | Roubo de sessão, CSRF, sessão revogada/expirada ou dados privados em respostas/logs |
+| Cliente da LAN/VPN sem autenticação na aplicação, ou dispositivo interno comprometido | Somente saúde e tentativa de login onde houver rota permitida | Leitura/escrita sem credencial, abuso de recursos e adivinhação de senha; sem pressupor acesso direto da internet |
+| Proprietário no navegador pela LAN/VPN | Todas as finanças pessoais | Roubo de sessão, CSRF, sessão revogada/expirada ou dados privados em respostas/logs |
 | Usuário/canal/mensagem do Discord | Somente o que a configuração do Hermes permitir | Outra pessoa acionar ferramentas ou receber respostas; conteúdo induzir operação não desejada |
-| Hermes e quem possuir seu bearer | Consultas e escritas MCP disponíveis | Uso indevido da autoridade delegada; credencial reutilizada fora do Hermes |
+| Hermes no homelab e quem possuir seu bearer e rota local até MCP | Consultas e escritas MCP disponíveis | Uso indevido da autoridade delegada; credencial reutilizada por outro cliente com acesso à LAN/VPN |
 | MCP | API financeira com token próprio, sem SQL | Destino HTTP controlado por argumentos, perda do token e crescimento de privilégio até DB |
 | Web | API/domínio e acesso ao PostgreSQL | Entradas chegando a SQL, vazamento de erros/segredos e amplitude da identidade de runtime |
 | Operador, dumps e recuperação | Administração explícita e acesso restrito | Cópias de credenciais, restauração de autoridade antiga e exposição por configuração |
@@ -32,24 +42,28 @@ Comprometimento de root/Docker/hipervisor não é contido por redes Compose. O a
 
 ```mermaid
 flowchart LR
-  User[Proprietário] --> Discord[Discord]
-  Discord --> Hermes[Hermes externo ao repositório]
-  Hermes -->|HTTPS privado e bearer Hermes| MCP[MCP HTTP Streamable]
-  Browser[Navegador] -->|HTTPS e sessão com CSRF nas escritas| Web[Web: UI e API]
-  MCP -->|HTTP na bridge application e bearer API| Web
-  Web --> Domain[Domínio e repositório]
-  Domain -->|pg na rede database| DB[(PostgreSQL)]
-  Ops[Migrate temporário: profile ops] --> DB
-  DB --> Backup[Dump protegido]
+  User[Proprietário fora da LAN] --> Discord[Discord: entrada indireta]
+  User --> VPN[VPN: acesso remoto privado]
+  Discord --> Hermes
+  VPN --> Browser
+  subgraph Homelab[Homelab: serviços sem publicação na internet]
+    Browser[Navegador na LAN ou via VPN] -->|HTTPS e sessão com CSRF nas escritas| Web[Web: UI e API]
+    Hermes[Hermes no homelab] -->|LAN e bearer Hermes| MCP[MCP HTTP Streamable]
+    MCP -->|HTTP na bridge application e bearer API| Web
+    Web --> Domain[Domínio e repositório]
+    Domain -->|pg na rede database| DB[(PostgreSQL)]
+    Ops[Migrate temporário: profile ops] --> DB
+    DB --> Backup[Dump protegido]
+  end
 ```
 
-HTTPS privado é requisito documentado, não observação da implantação. O domínio é uma camada no processo Web; não é outro serviço de rede.
+O navegador representa o caminho de acesso privado; o dispositivo pode estar fisicamente na LAN ou conectado por VPN. A seta Discord → Hermes representa a integração lógica, sem pressupor uma porta de entrada pública no homelab. HTTPS privado é requisito do guia, não observação da implantação; em produção, o cookie web `Secure` depende de HTTPS também na LAN/VPN. O domínio é uma camada no processo Web; não é outro serviço de rede.
 
 | Caminho | Controle visível | Limite ou condição externa |
 |---|---|---|
-| Discord → Hermes | Fora do repositório | Identidade do usuário, allowlist de canais, permissões do bot, destinatário das respostas e retenção de conversas não verificados |
-| Hermes → MCP `/mcp` | Bearer próprio antes de criar servidor/transporte; comparação segura; transporte stateless; corpo máximo de 64 KiB | HTTPS, certificado, roteamento entre LXC/VM e firewall dependem do operador |
-| Navegador → Web | Sessão aleatória opaca, consulta ao DB, expiração de sete dias, usuário ativo; cookie `HttpOnly`, `SameSite=Strict`, `Secure` em produção | HTTPS e `APP_ORIGIN` precisam corresponder ao proxy real |
+| Discord → Hermes no homelab | Integração fora do repositório; única entrada externa indireta de comandos ao agente | Identidade do usuário, allowlist de canais, permissões do bot, destinatário das respostas e retenção de conversas não verificados; não há premissa de endpoint MCP público |
+| Hermes → MCP `/mcp` pela LAN | Bearer próprio antes de criar servidor/transporte; comparação segura; transporte stateless; corpo máximo de 64 KiB | Roteamento e ACL entre LXC/VM são locais. O guia prevê HTTPS privado; certificado e configuração real não inspecionados |
+| Navegador pela LAN/VPN → Web | Sessão aleatória opaca, consulta ao DB, expiração de sete dias, usuário ativo; cookie `HttpOnly`, `SameSite=Strict`, `Secure` em produção | Acesso remoto somente após entrar na VPN. HTTPS e `APP_ORIGIN` precisam corresponder ao endereço privado real |
 | Escritas web → API | Origin exato e CSRF igual na sessão, cookie e header | Origin não autentica clientes não navegador; bearer de serviço usa outra modalidade de autorização |
 | MCP → Web `/api/v1/*` | Bearer diferente do Hermes, paths de ferramentas fixos, contratos de entrada/saída e timeout de 15 s | HTTP interno depende da bridge/host confiáveis; HTTPS deve ser revisto se esse salto sair dessa fronteira |
 | Web → DB | `DATABASE_URL`, pg/Drizzle, consultas parametrizadas e transações | Helper não impõe TLS nem política de roles/grants; `pg_hba`, identidade e transporte efetivos não observados |
@@ -66,7 +80,7 @@ No [Compose de deploy](../infra/compose.yml), linhas 4–92:
 - O [overlay de desenvolvimento](../infra/compose.dev.yml), linhas 1–12, publica PostgreSQL em `127.0.0.1:5432` por padrão e acrescenta uma bridge de desenvolvimento. O guia proíbe esse overlay em produção.
 - Não há configuração de container privilegiado, rede do host ou socket Docker nos serviços examinados. Essas observações não comprovam os attachments, binds e ACLs da implantação real.
 
-Hermes em outro LXC/host não alcança o loopback da VM pela própria interface. Deve usar o endpoint HTTPS privado roteável do proxy, com ACL restrita; não há motivo para expor DB ou lhe entregar o token interno da API.
+Hermes em outro LXC/host não alcança o loopback da VM pela própria interface. Deve usar o endpoint privado roteável pela LAN, com HTTPS conforme o guia e ACL restrita ao caminho necessário. Isso pode ser atendido pelo proxy privado existente, sem acrescentar exposição pública ou novo serviço. Web é acessada pela LAN/VPN; DB continua restrito à rede interna dos serviços. Não há motivo para expor DB ou entregar ao Hermes o token interno da API.
 
 ## Controles examinados e evidências
 
@@ -89,7 +103,7 @@ As consultas e escritas do dono têm autoridade global por desenho; ausência de
 
 Estado: `needs_validation`, sem severidade atribuída. Fingerprint: `docs/deployment.md:restore-auth-session-resurrection`. A verificação independente confirmou o caminho condicional e manteve os bloqueios de validação.
 
-**Cenário:** uma pessoa reteve um cookie válido; um dump foi criado antes de seu logout/reset. A sessão foi revogada na base ativa. Se esse dump for recuperado antes da expiração original e a aplicação for reaberta sem invalidar sessões restauradas, o digest antigo pode voltar a ser aceito, permitindo leituras financeiras. Expiração e usuário ativo continuam sendo verificados, mas contra o estado restaurado.
+**Cenário:** uma pessoa reteve um cookie válido; um dump foi criado antes de seu logout/reset. A sessão foi revogada na base ativa. Se esse dump for recuperado antes da expiração original e a aplicação for reaberta sem invalidar sessões restauradas, o digest antigo pode voltar a ser aceito, permitindo leituras financeiras. Expiração e usuário ativo continuam sendo verificados, mas contra o estado restaurado. O uso desse cookie também exige rota até a Web pela LAN/VPN; sua posse não cria acesso direto pela internet.
 
 **Caminho de fonte:** `apps/web/src/app/api/auth/session/route.ts:9` lê o cookie; `docs/deployment.md:124,144` descreve dump completo e restore; `:155–157` troca a base e reabre sem exigir invalidação; `:216` inclui as tabelas de autenticação. `packages/db/src/auth.ts:35,46,51,66` mostra validade de sete dias, aceitação do digest e revogação por remoção na base ativa. `apps/web/src/server/http.ts:8–13` aceita essa sessão nas leituras financeiras.
 
@@ -108,8 +122,9 @@ P1 significa verificar antes de liberar ou recuperar acesso; P2, próxima rodada
 | Prioridade | Recomendação e motivo | Evidência / validação esperada |
 |---|---|---|
 | P1 | Conferir identidade e canais autorizados no Discord/Hermes, destinatário das respostas e tratamento de ambiguidades | Configuração externa ausente. Registrar allowlists e quem pode acionar o bot; impedir respostas financeiras em canais compartilhados. Preview e idempotência não comprovam intenção humana |
-| P1 | Confirmar HTTPS privado, certificado confiável, bind e firewall para a rota Hermes → proxy → MCP e navegador → Web | `infra/compose.yml:34,60`; `docs/deployment.md:12–23,81`. Observar configurações e rotas efetivas, sem sondar terceiros. DB permanece sem publicação; ACL deve restringir o acesso ao proxy |
+| P1 | Preservar a premissa de acesso apenas pela LAN/VPN, sem publicar Web/MCP/DB na internet | `infra/compose.yml:34,60`; `docs/deployment.md:12–23,81`. Observar binds e regras efetivas de encaminhamento/firewall; liberar o caminho local Hermes → MCP e o acesso privado à Web. A VPN é a entrada remota do proprietário. Não foi observada exposição pública |
 | P1 | Resolver NV-01 antes de ativar recuperação e tratar dump como material de credenciais | Fonte e teste proposto acima; confirmar permissões, leitores, proteção fora do host e retenção dos backups, que contêm hashes de senha e estado de sessão |
+| P2 | Conferir HTTPS e origem no acesso privado, conforme o guia existente | LAN/VPN reduz exposição externa, mas não muda a exigência funcional do cookie web `Secure` em produção. Conferir certificado confiável e `APP_ORIGIN` para a Web e transporte local do bearer Hermes; não exige domínio público, certificado público ou publicação na internet |
 | P2 | Separar identidade PostgreSQL de runtime e administração/migration, com grants mínimos definidos | `docs/deployment.md:33` orienta usar a identidade de inicialização também na URL da aplicação; Web/migrate compartilham `DATABASE_URL`. Conferir roles/grants/`pg_hba` reais; não há prova de exploração ou de privilégio efetivo do homelab. Mudança exige decisão/ADR e testes das operações necessárias |
 | P2 | Ensaiar rotação separada dos dois bearers e da credencial DB, recriando consumidores coordenadamente | Tokens capturados na inicialização e URL em pools. Revogar sessão web não revoga bearer. Registrar apenas resultado de rejeição do token antigo com fixture, nunca os valores. Rotação não foi exercitada no homelab |
 | P2 | Delimitar consultas, fanout e trabalho HTTP conforme crescimento/uso do agente | `packages/domain/src/index.ts:398–418,504–518`; `packages/db/src/repositories.ts:171–188`; rota API `:67–70`: cargas amplas e `Promise.all`. Definir paginação/faixas, limites no proxy, concorrência e deadlines, com testes locais limitados; não houve demonstração de indisponibilidade |
@@ -117,7 +132,26 @@ P1 significa verificar antes de liberar ou recuperar acesso; P2, próxima rodada
 | P3 | Remover do guia a geração obsoleta de `WEB_PASSWORD_HASH` e ampliar prevenção de staging de dumps/chaves | `docs/deployment.md:37–47` diverge de `:204–206`. `.dockerignore` tem padrões de dumps/chaves que `.gitignore` não replica. Sem bypass ou segredo versionado identificado nesta revisão |
 | P3 | Revisar observabilidade e proveniência na próxima alteração das fronteiras | Confirmar redação/retenção em proxy/Hermes/Discord; criar regressões de bearer errado, sessão revogada/inativa e corpo chunked acima do limite. Considerar derivar `source` de toda criação na API, como já ocorre em correção/reversão |
 
-O limite global de login permite bloqueio temporário do proprietário por consumo da janela. Esse tradeoff já está explícito no [ADR 0011](adr/0011-local-user-and-database-sessions.md); não foi apresentado como descoberta de bypass. Limitação por origem requer configuração confiável do proxy, sem confiar cegamente em `X-Forwarded-For`.
+O limite global de login permite bloqueio temporário do proprietário por consumo da janela por um cliente com rota local/VPN até a Web. Esse tradeoff já está explícito no [ADR 0011](adr/0011-local-user-and-database-sessions.md); não foi apresentado como descoberta de bypass. Limitação por origem requer configuração confiável do proxy, sem confiar cegamente em `X-Forwarded-For`.
+
+Com a topologia esclarecida, não se pressupõe atacante anônimo da internet alcançando diretamente as rotas HTTP. As prioridades se concentram na autorização do Discord/Hermes, em manter a rede privada e em conter comprometimento interno ou perda de credenciais. Autenticação entre serviços, validação de entradas, proteção de sessões e recuperação continuam necessárias: a VPN controla entrada na rede, não autoriza cada operação financeira. Esta recalibração documental não altera o estado de NV-01 nem acrescenta achados ou testes à rodada original.
+
+### Pendências do software independentes da rede
+
+O [roteiro de controles nos hosts do homelab](deployment.md#controles-a-aplicar-nos-hosts-do-homelab) separa configuração externa de alterações no projeto. Sem presumir exposição à internet, os seguintes pontos continuam relevantes no software:
+
+| Ponto | O que ainda precisa ser resolvido ou validado |
+|---|---|
+| Intenção nas escritas do agente | Requisito definido: toda escrita Hermes exige resumo prévio e aprovação do proprietário por reação ou resposta `aprovado`, vinculada ao payload final; mudança de campo exige nova confirmação. Fluxo documentado no deploy, ainda não implementado/validado de ponta a ponta. Schemas e idempotência não comprovam intenção humana; garantia pela API exige mecanismo adicional, não apenas instrução ao LLM |
+| Recuperação de autenticação | Reproduzir NV-01 e definir invalidação das sessões restauradas antes de liberar uma recuperação. É candidato condicional, não exploração confirmada; a sessão continua sujeita a expiração e usuário ativo |
+| Privilégios da conexão DB | Separação implementada no código conforme ADR 0012: `marvin_app`, `marvin_migrator` e provisionamento administrativo distinto, grants por objeto e testes positivos/negativos. Aplicação no homelab continua pendente; não há SQL injection demonstrada |
+| Credenciais e artefatos | Ensaiar rotação dos bearers e credencial DB; revisar exclusões efetivas dos builds e prevenção de staging de dumps/chaves. A revisão das políticas específicas dos Dockerfiles permanece adiada. Dumps carregam também estado de autenticação |
+| Disponibilidade | Limitar períodos, volume de respostas, fanout e concorrência conforme uso real. O agente pode produzir consultas custosas mesmo sendo autorizado; não foi demonstrada indisponibilidade explorável |
+| Evidência de regressão | Executar os nove casos de integração PostgreSQL pulados e concluir build/E2E em ambiente adequado; acrescentar regressões focadas ao corrigir fronteiras de autorização/recuperação. Falha de build no sandbox não é, por si, vulnerabilidade |
+
+O [fluxo de confirmação](deployment.md#confirmação-obrigatória-antes-das-escritas-do-agente) e a [separação PostgreSQL](deployment.md#separação-de-privilégios-postgresql) detalham essas duas pendências. O primeiro registra a decisão do proprietário; a segunda foi implementada no código conforme ADR 0012, sem aplicação ao banco real. A confirmação humana continua pendente de implementação; nenhuma dessas medidas foi validada no deploy real.
+
+Autenticação, CSRF, validação runtime, SQL parametrizado e idempotência já foram examinados na rodada original; não precisam ser substituídos por uma nova stack de segurança por causa dessas pendências. A análise não incluiu revisão geral da UI nem levantamento de vulnerabilidades conhecidas nas dependências, portanto não constitui garantia sobre essas áreas. Não se afirma a existência de falha específica nelas sem investigação. Esta lista organiza o trabalho restante e não representa nova rodada de auditoria ou implementação de correções.
 
 ## Validação executada
 

@@ -22,3 +22,8 @@ test("provisioning errors identify safe causes without exposing driver messages"
   assert.equal(ownerProvisionErrorMessage(new OwnerProvisionError("As senhas não coincidem.")), "As senhas não coincidem.");
   assert.doesNotMatch(ownerProvisionErrorMessage(new Error("private secret")), /private|secret/);
 });
+
+test("owner administration prefers the migration identity without changing Web credentials", () => {
+  const env = { DATABASE_URL: "postgresql://marvin_app@db/marvin", MIGRATION_DATABASE_URL: "postgresql://marvin_migrator@db/marvin", NODE_ENV: "production" };
+  assert.equal(ownerDatabaseUrl(env), env.MIGRATION_DATABASE_URL);
+});
