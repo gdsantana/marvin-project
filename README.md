@@ -117,3 +117,11 @@ O conjunto exigido de cenários está em [docs/data-model.md §11](docs/data-mod
 ### Categorias básicas em produção
 
 Após as migrations, execute `pnpm db:bootstrap-categories` com `DATABASE_URL` configurada. O comando carrega o `.env` da raiz e insere somente categorias básicas ausentes, preservando dados existentes; não usa `DEVELOPMENT_DATABASE_URL`. Não cria contas nem lançamentos fictícios. Para execução no Docker, veja [deploy](docs/deployment.md). A lista contém as mesmas 13 categorias do seed de desenvolvimento, mas este comando não limpa dados e pode rodar em produção.
+
+## Licença
+
+O código original deste projeto está disponível sob a [PolyForm Noncommercial License 1.0.0](LICENSE). É permitido usar, estudar, modificar e redistribuir o software para fins não comerciais, incluindo uso pessoal e self-hosting no homelab, respeitando os termos e preservando os avisos da licença.
+
+A licença não autoriza comercializar o software, oferecer uma versão paga ou explorá-lo comercialmente como serviço. Usos comerciais exigem autorização separada do titular dos direitos. O código é disponibilizado sem garantias, conforme os termos da licença.
+
+Dependências, fontes e componentes de terceiros continuam sujeitos às respectivas licenças.

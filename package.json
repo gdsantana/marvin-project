@@ -1,6 +1,7 @@
 {
   "name": "marvin-project",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "packageManager": "pnpm@12.15.0",
   "scripts": {
     "typecheck": "pnpm -r typecheck",
