@@ -28,9 +28,11 @@ Dockerfiles e `infra/compose.yml` estão no checkout. Compose define `web`, `mcp
 | `packages/domain` | `FinanceService`, regras monetárias e interface `FinanceRepository` | Sem Drizzle, Next.js ou dependências de apps |
 | `packages/db` | Schema Drizzle, cliente PostgreSQL e implementação do repositório | Implementa a porta de persistência do domínio |
 
-O web compõe diretamente domínio e DB no servidor. MCP encaminha operações por HTTP e envia `Idempotency-Key` nas escritas. O Compose não fornece `DATABASE_URL` ao MCP; a rede do banco é interna e somente web/migration participam dela.
+O web compõe diretamente domínio e DB no servidor. MCP encaminha operações por HTTP e envia `Idempotency-Key` nas escritas. O Compose não fornece `DATABASE_URL` ao MCP; a rede do banco é interna e somente Web e os jobs temporários de operações participam dela.
 
 Os limites descrevem a estrutura pretendida e a organização observada. Compilação, testes dos workspaces e fluxos HTTP/MCP de dev e produção passaram no gate local. Não há suíte de teste automatizada específica de fronteiras de importação.
+
+Web usa a role PostgreSQL `marvin_app`, sem DDL/ownership. Os jobs de migrations usam `marvin_migrator`, com `MIGRATION_DATABASE_URL`, e o provisionamento inicial de roles usa `DATABASE_ADMIN_URL` administrativa. Credenciais operacionais ficam em `.env.ops`, não carregado pela Web nem entregue ao MCP. Os grants por objeto são versionados e reaplicados pelo runner de migrations; novas tabelas ficam sem acesso runtime até revisão. Ver [ADR 0012](docs/adr/0012-database-runtime-and-migration-roles.md). A conta de login da interface permanece única e independente dessas identidades técnicas.
 
 ## 3. API, contratos e autenticação
 
@@ -94,11 +96,15 @@ pnpm build
 
 `pnpm test` executa os workspaces configurados. `bash scripts/test-postgres.sh` provisiona somente PostgreSQL descartável e exige zero skips. Resultados atuais de typecheck, lint, testes, builds Docker/local, E2E e limitações estão em [docs/verification.md](docs/verification.md).
 
-Para desenvolvimento local, `pnpm db:up` aplica `infra/compose.dev.yml`: preserva o volume, publica PostgreSQL somente em localhost e adiciona uma rede bridge de desenvolvimento apenas ao DB. Os scripts de carga/limpeza preferem `DEVELOPMENT_DATABASE_URL`; a conexão interna `DATABASE_URL` dos containers é preservada. O Compose de deploy continua sem publicar o banco. Veja [ADR 0009](docs/adr/0009-local-development-database.md).
+Para desenvolvimento local, `pnpm db:up` aplica `infra/compose.dev.yml`: preserva o volume, publica PostgreSQL somente em localhost e adiciona uma rede bridge de desenvolvimento apenas ao DB. Os scripts de carga/limpeza preferem `MIGRATION_DATABASE_URL` local de `.env.ops`, com fallback para `DEVELOPMENT_DATABASE_URL`; a conexão interna `DATABASE_URL` dos containers é preservada. O Compose de deploy continua sem publicar o banco. Veja [ADR 0009](docs/adr/0009-local-development-database.md).
 
 O pacote DB também fornece `pnpm db:seed` e `pnpm db:clean`, exclusivos para PostgreSQL local de desenvolvimento com confirmação `SEED_DEVELOPMENT=true` e bloqueio em produção. O seed primeiro trunca as tabelas da aplicação, preservando schema e migrations, e cria três meses relativos à data de São Paulo usando `FinanceService`: compras, receitas, despesas e parcelas, com faturas anteriores pagas e atuais abertas em modo manual. A limpeza também pode ser executada separadamente. A carga é atômica por operação, não globalmente; detalhes e efeitos destrutivos estão no README. Essa ferramenta de desenvolvimento não altera as regras de histórico da API.
 
 ## 8. Segurança e dados
+
+A [auditoria das comunicações de 07/11/2026](docs/security-audit.md) registra o modelo de ameaças Discord/Hermes → MCP → Web → PostgreSQL, evidências, recomendações priorizadas e limites da revisão. É uma análise parcial: deploy real não inspecionado, um candidato de restauração de sessões pendente e uma lacuna de cobertura das políticas específicas de build. Não representa certificação do homelab nem alteração da arquitetura.
+
+Premissa de implantação informada pelo proprietário: Web acessível somente pela LAN ou VPN; Hermes no mesmo homelab chama MCP somente pela LAN. Discord é a única entrada externa indireta de comandos ao agente. Web, MCP e PostgreSQL não são publicados diretamente na internet; essa premissa não substitui a verificação das regras reais de rede.
 
 - Não expor PostgreSQL à rede externa; MCP deve conversar apenas com API HTTP autenticada.
 - Dinheiro sempre em unidades mínimas inteiras; moedas permanecem separadas sem FX.

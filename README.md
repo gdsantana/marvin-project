@@ -23,6 +23,8 @@ pnpm install
 
 Para configurar o banco, aplicar migrations e criar a conta proprietária, siga o [guia de desenvolvimento local](docs/deployment.md#postgresql-para-desenvolvimento-local). Depois, inicie a interface com `pnpm dev:web`; para iniciar o servidor MCP em outro terminal, use `pnpm dev:mcp`.
 
+A separação técnica do banco está no [ADR 0012](docs/adr/0012-database-runtime-and-migration-roles.md): a Web usa `marvin_app`; migrations e manutenção usam `marvin_migrator`; o provisionamento de roles usa a conexão administrativa. Isso não cria perfis de usuário na interface. Para bases existentes, siga o procedimento explícito `--adopt-existing` no [guia de deploy](docs/deployment.md#separação-de-privilégios-postgresql); não altere ownership de uma base real sem backup e revisão.
+
 ## Documentação
 
 - [Deploy e operação no homelab](docs/deployment.md)

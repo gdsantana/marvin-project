@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { provisionDatabaseRoles } from "../packages/db/src/database-roles.ts";
 import { createDatabase, provisionOwner } from "../packages/db/src/index.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -155,12 +156,21 @@ async function main() {
   const serviceToken = randomBytes(32).toString("base64url");
   const hermesToken = randomBytes(32).toString("base64url");
   const origin = `http://127.0.0.1:${webPort}`;
-  const dbUrl = `postgresql://postgres@127.0.0.1:${pgPort}/postgres`;
+  const dbUrl = `postgresql://postgres@127.0.0.1:${pgPort}/marvin`;
   const dockerMode = !existsSync(path.join(pgBin, "postgres"));
   const pgContainer = `marvin-integration-${process.pid}`;
-  const commonEnv = { ...process.env, DATABASE_URL: dbUrl, APP_ORIGIN: origin, MCP_API_TOKEN: serviceToken,
+  const appPassword = randomBytes(32).toString("hex");
+  const migrationPassword = randomBytes(32).toString("hex");
+  const roleUrl = (role: string, secret: string) => {
+    const value = new URL(dbUrl); value.username = role; value.password = secret; return value.href;
+  };
+  const migrationUrl = roleUrl("marvin_migrator", migrationPassword);
+  const commonEnv: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: roleUrl("marvin_app", appPassword), APP_ORIGIN: origin, MCP_API_TOKEN: serviceToken,
     MCP_HERMES_BEARER_TOKEN: hermesToken, MCP_API_URL: `${origin}/api/`, NEXT_TELEMETRY_DISABLED: "1",
     PATH: `${pgBin}:${process.env.PATH ?? ""}`, LD_LIBRARY_PATH: `${pgLib}${process.env.LD_LIBRARY_PATH ? `:${process.env.LD_LIBRARY_PATH}` : ""}` };
+  delete commonEnv.MIGRATION_DATABASE_URL;
+  delete commonEnv.DATABASE_ADMIN_URL;
+  delete commonEnv.POSTGRES_PASSWORD;
   let cleanupPromise: Promise<void> | undefined;
   const cleanup = () => cleanupPromise ??= (async () => {
     await mcpClient?.close().catch(() => undefined);
@@ -187,18 +197,28 @@ async function main() {
       await command(path.join(pgBin, "initdb"), ["-D", pgData, "-A", "trust", "-U", "postgres", "--no-locale", "-E", "UTF8"], commonEnv);
       await command(path.join(pgBin, "pg_ctl"), ["-D", pgData, "-o", `-h 127.0.0.1 -k ${scratch} -p ${pgPort} -F`, "-w", "start"], commonEnv);
     }
-    await command("pnpm", ["--filter", "@finance/db", "db:migrate"], commonEnv);
+    const bootstrapUrl = new URL(dbUrl); bootstrapUrl.pathname = "/postgres";
+    const bootstrap = createDatabase(bootstrapUrl.href);
+    try { await bootstrap.pool.query("CREATE DATABASE marvin"); }
+    finally { await bootstrap.pool.end(); }
+    const operator = createDatabase(dbUrl);
+    try { await provisionDatabaseRoles(operator.pool, { appPassword, migrationPassword }); }
+    finally { await operator.pool.end(); }
+    await command("pnpm", ["--filter", "@finance/db", "db:migrate"], { ...commonEnv, MIGRATION_DATABASE_URL: migrationUrl });
 
-    const ownerDatabase = createDatabase(dbUrl);
+    const ownerDatabase = createDatabase(migrationUrl);
     try { await provisionOwner(ownerDatabase.db, "owner", password); } finally { await ownerDatabase.pool.end(); }
 
     const nextCli = path.join(root, "apps/web/node_modules/next/dist/bin/next");
     const web = mode === "dev"
       ? start(process.execPath, [nextCli, "dev", "--hostname", "127.0.0.1", "--port", String(webPort)], commonEnv, path.join(root, "apps/web"))
       : start(process.execPath, [nextCli, "start", "--hostname", "127.0.0.1", "--port", String(webPort)], commonEnv, path.join(root, "apps/web"));
+    const mcpEnv = { ...commonEnv };
+    delete mcpEnv.DATABASE_URL;
+    delete mcpEnv.DEVELOPMENT_DATABASE_URL;
     const mcp = mode === "dev"
-      ? start(process.execPath, [path.join(root, "apps/mcp/node_modules/tsx/dist/cli.mjs"), "src/index.ts"], { ...commonEnv, MCP_PORT: String(mcpPort) }, path.join(root, "apps/mcp"))
-      : start(process.execPath, [path.join(root, "apps/mcp/dist/index.js")], { ...commonEnv, MCP_PORT: String(mcpPort) });
+      ? start(process.execPath, [path.join(root, "apps/mcp/node_modules/tsx/dist/cli.mjs"), "src/index.ts"], { ...mcpEnv, MCP_PORT: String(mcpPort) }, path.join(root, "apps/mcp"))
+      : start(process.execPath, [path.join(root, "apps/mcp/dist/index.js")], { ...mcpEnv, MCP_PORT: String(mcpPort) });
     const base = `http://127.0.0.1:${webPort}`;
     await waitHttp(`${base}/api/health`, r => r.ok, web);
     await waitHttp(`http://127.0.0.1:${mcpPort}/healthz`, r => r.ok, mcp);

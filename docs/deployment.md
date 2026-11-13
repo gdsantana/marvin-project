@@ -11,6 +11,8 @@ Deploy via Docker Compose em uma VM. Esta infraestrutura implementa os serviços
 
 O Compose cria uma rede `application` para web/MCP e outra rede interna `database` para web/DB. Web e MCP publicam portas no loopback do host por padrão; um reverse proxy privado instalado no host pode encaminhá-las. Para outro proxy dentro de container, configure os endereços de bind e a rede privada do proxy de modo explícito. Não exponha as portas à internet.
 
+O acesso à Web ocorre somente pela LAN ou, fora de casa, após entrar na VPN. Hermes roda no mesmo homelab e acessa MCP pela LAN; Discord é a única entrada externa indireta de comandos ao agente. Web, MCP e PostgreSQL não são publicados diretamente na internet. A seção [HTTPS privado com Nginx Proxy Manager](#https-privado-com-nginx-proxy-manager) descreve como usar um proxy privado no Proxmox nessa topologia.
+
 ## Pré-requisitos e preparação
 
 - VM Linux no Proxmox com Docker Engine e plugin Docker Compose, Git e acesso ao repositório privado e aos registries usados pelos Dockerfiles.
@@ -28,42 +30,178 @@ Requer Docker com Compose plugin. No diretório raiz do repositório:
 
 ```bash
 cp .env.example .env
+cp .env.ops.example .env.ops
+chmod 600 .env .env.ops
 ```
 
-Edite `.env` no host, substitua todos os placeholders e restrinja suas permissões (`chmod 600 .env`). Gere valores aleatórios distintos para `MCP_API_TOKEN`, `MCP_HERMES_BEARER_TOKEN` e `POSTGRES_PASSWORD`; não use o mesmo segredo entre serviços. `DATABASE_URL` deve usar o mesmo usuário/senha/base configurado por `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB`; o exemplo usa a senha URL-safe definida no arquivo.
+Edite os arquivos no host de operações. `.env` contém a conexão `DATABASE_URL` de `marvin_app`, `APP_ORIGIN` e os dois tokens MCP. `.env.ops` contém `POSTGRES_PASSWORD` da identidade administrativa de inicialização, `DATABASE_ADMIN_URL` para provisionar roles e `MIGRATION_DATABASE_URL` de `marvin_migrator`. Use três senhas PostgreSQL distintas; gere cada uma com `openssl rand -hex 32`. As senhas das roles técnicas devem ter 32 a 128 caracteres URL-safe. Configure senhas literais e correspondentes nas URLs; Node não expande `${...}` nesses arquivos.
 
-`APP_ORIGIN` deve ser a origem HTTPS usada pelo navegador e definida na configuração do proxy confiável. Preserve os nomes de variáveis consumidos pelo web (`APP_ORIGIN`, `MCP_API_TOKEN`, `DATABASE_URL`). `MCP_API_TOKEN` aparece nos ambientes de web e MCP e os valores devem ser idênticos; `MCP_HERMES_BEARER_TOKEN` só é entregue ao MCP. Variáveis do banco são entregues somente ao serviço `db` e o comando temporário `migrate` recebe apenas `DATABASE_URL`.
+Em volume já inicializado, preserve `POSTGRES_USER` e a senha administrativa existentes: mudar essas variáveis não renomeia nem redefine usuários de um volume existente. A separação de roles não exige trocar essa identidade administrativa.
 
-Para gerar o hash, use o helper existente em um checkout com dependências instaladas. Em Bash, a senha é lida sem eco e não entra no histórico nem nos argumentos do processo:
+`APP_ORIGIN` deve ser a origem HTTPS usada pelo navegador no proxy privado. Web recebe somente a conexão de aplicação e seu token de API; MCP recebe os dois tokens e a URL HTTP interna, sem credenciais PostgreSQL. O job `migrate` recebe somente `MIGRATION_DATABASE_URL`; o job `provision-roles` recebe somente `DATABASE_ADMIN_URL`. A senha administrativa de inicialização é entregue ao serviço `db`, nunca a Web/MCP. Não coloque `.env.ops` em `apps/web`, nas imagens ou no ambiente do serviço Web.
+
+Depois de preencher os dois arquivos, valide sem imprimir a configuração resolvida, pois ela contém secrets:
 
 ```bash
-read -r -s -p 'Senha web: ' MARVIN_WEB_PASSWORD
-printf '\n'
-export MARVIN_WEB_PASSWORD
-pnpm --filter @finance/web exec tsx -e 'import { hashPassword } from "./src/server/auth.ts"; hashPassword(process.env.MARVIN_WEB_PASSWORD!).then(console.log)'
-unset MARVIN_WEB_PASSWORD
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml config --quiet
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml build web mcp migrate provision-roles
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml up -d db
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml --profile ops run --rm provision-roles
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml run --rm migrate
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml run --rm migrate pnpm --filter @finance/db db:bootstrap-categories
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml up -d web mcp
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml ps
 ```
 
-Copie o resultado para `WEB_PASSWORD_HASH` usando aspas simples no `.env`, por exemplo `WEB_PASSWORD_HASH='scrypt$...'`, para preservar os caracteres `$` na interpolação do Compose. Não use o exemplo abreviado como hash real. Gere os demais secrets com `openssl rand -hex 32`, separadamente, e armazene-os apenas em local protegido. Para uma senha de banco com caracteres reservados, faça percent-encoding na URL; uma senha hexadecimal evita essa ambiguidade.
+O provisionamento pede e confirma as senhas de `marvin_app` e `marvin_migrator` sem eco. Elas precisam corresponder às URLs configuradas; o comando não imprime nem grava credenciais em arquivos. Roles existentes gerenciadas não têm senhas alteradas sem `--rotate-passwords`. Roles preexistentes não gerenciadas, elevadas ou associadas a outras roles são recusadas. Em banco existente, consulte a transição explícita na seção de privilégios abaixo antes de executar.
 
-Depois de preencher o `.env`, valide sem imprimir a configuração resolvida, pois ela contém secrets:
-
-```bash
-docker compose --env-file .env -f infra/compose.yml config --quiet
-docker compose --env-file .env -f infra/compose.yml build web mcp migrate
-docker compose --env-file .env -f infra/compose.yml up -d db
-docker compose --env-file .env -f infra/compose.yml run --rm migrate
-docker compose --env-file .env -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner
-docker compose --env-file .env -f infra/compose.yml run --rm migrate pnpm --filter @finance/db db:bootstrap-categories
-docker compose --env-file .env -f infra/compose.yml up -d web mcp
-docker compose --env-file .env -f infra/compose.yml ps
-```
-
-O serviço `migrate` é uma execução única sob demanda, não é iniciado em `up`. Execute-o após o backup e antes de atualizar web/MCP. A migration usa o `DATABASE_URL` e os arquivos versionados de `packages/db`. Não prossiga se ela falhar; revise logs sem copiar valores sensíveis.
+O serviço `migrate` é uma execução única sob demanda, não é iniciado em `up`. Execute-o após o backup e antes de atualizar web/MCP. A migration usa `MIGRATION_DATABASE_URL` e os arquivos versionados de `packages/db`. Não prossiga se ela falhar; revise logs sem copiar valores sensíveis.
 
 Após as migrations, `db:bootstrap-categories` cadastra 10 categorias de despesa e 3 de receita, sem contas ou lançamentos fictícios. Pode ser repetido: insere somente categorias raiz ausentes por nome e tipo, comparando nomes sem diferença de maiúsculas/minúsculas e espaços externos. Categorias existentes, inclusive arquivadas, não são alteradas. A carga é atômica e bloqueia escritas na tabela de categorias brevemente para serializar execuções concorrentes. Não execute `db:seed` em produção: ele limpa dados e cria uma carga fictícia.
 
 Health checks consultam `pg_isready`, `/api/health` e `/healthz`, sem retornar dados privados. `unhealthy` não reinicia container por si só; `unless-stopped` reinicia processos que saírem. Web depende de DB saudável e MCP depende de web saudável.
+
+## HTTPS privado com Nginx Proxy Manager
+
+O Nginx Proxy Manager (NPM) pode rodar em uma VM ou LXC dedicado no Proxmox e encaminhar HTTPS para Web/MCP por HTTP na LAN. Essa opção reutiliza o reverse proxy previsto na arquitetura; não adiciona um serviço obrigatório ao Compose do Marvin nem requer instalar software no nó do hipervisor. O procedimento abaixo é orientação de configuração, ainda não validada no homelab.
+
+### Endereços e DNS privado
+
+Exemplo: NPM em `192.168.1.10` e VM Marvin em `192.168.1.20`. Substitua esses IPs e os nomes `example.com` pelos valores reais do homelab e de um domínio sob seu controle.
+
+| Nome no DNS privado | Resolve para | Destino no NPM |
+|---|---|---|
+| `marvin.example.com` | `192.168.1.10` | `http://192.168.1.20:3000` |
+| `mcp.example.com` | `192.168.1.10` | `http://192.168.1.20:3001` |
+
+Configure esses registros no DNS usado pela LAN. Os clientes da VPN também precisam usar esse DNS e ter rota para o IP privado do NPM. Hermes deve resolver `mcp.example.com` pelo DNS privado. Não é necessário criar registros públicos A/AAAA apontando para sua casa nem encaminhar portas WAN 80/443 para essa aplicação. A entrada remota do proprietário continua sendo a VPN.
+
+### Certificado sem publicar a aplicação
+
+Para usar Let's Encrypt, tenha um domínio próprio com DNS público sob seu controle. No NPM, em **SSL Certificates**, solicite um certificado para os dois nomes, habilite **Use a DNS Challenge** e selecione o provedor DNS compatível. Forneça uma credencial de API com o menor escopo necessário para editar os registros de validação da zona, sem copiá-la para o `.env` do Marvin ou para o Git.
+
+A validação DNS-01 usa um registro TXT público em `_acme-challenge`; os endereços da aplicação continuam resolvidos apenas no DNS privado. Emissão e renovação precisam de saída do NPM para DNS, API do provedor e serviço ACME, mas não de entrada da internet até Web/MCP. Consulte o [suporte a plugins DNS do NPM](https://nginxproxymanager.com/certbot/) e a [validação DNS-01 do Let's Encrypt](https://letsencrypt.org/docs/challenge-types/#dns-01-challenge).
+
+Se usar somente um nome interno como `finance.example.lan`, a alternativa é importar no NPM um certificado de uma CA interna e instalar a confiança dessa CA nos navegadores e no runtime do Hermes. Não desabilite a validação do certificado para contornar falta de confiança.
+
+### Bind da VM Marvin e firewall
+
+O NPM em outra VM/LXC não alcança o `127.0.0.1` da VM Marvin. Nesse cenário, ajuste somente os valores correspondentes no `.env` do Marvin:
+
+```dotenv
+APP_ORIGIN=https://marvin.example.com
+WEB_BIND_ADDRESS=192.168.1.20
+WEB_HOST_PORT=3000
+MCP_BIND_ADDRESS=192.168.1.20
+MCP_HOST_PORT=3001
+MCP_API_URL=http://web:3000/api/
+```
+
+Mantenha os dois tokens fortes e distintos já configurados. `APP_ORIGIN` é a origem HTTPS da Web, sem path; não use o nome do MCP nesse campo. `MCP_API_URL` permanece na rede interna do Compose: não aponte o cliente MCP para o endereço do Hermes nem para o proxy público/privado.
+
+Restrinja as portas publicadas 3000/3001 da VM Marvin à origem NPM (`192.168.1.10` no exemplo), com regras efetivas para o tráfego Docker no firewall da VM/Proxmox. Permita HTTPS do NPM apenas aos clientes LAN/VPN previstos; restrinja o host MCP ao Hermes conforme a política local. Mantenha também o painel administrativo do NPM, normalmente na porta 81, restrito à administração pela LAN/VPN. PostgreSQL continua sem porta publicada; não aplique o overlay de desenvolvimento para resolver acesso do proxy.
+
+Se as aplicações já estiverem em execução, valide e recrie somente Web/MCP após ajustar o ambiente, em uma janela sem operações em andamento:
+
+```bash
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml config --quiet
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml up -d --force-recreate web mcp
+```
+
+Um simples `restart` não aplica os valores novos. Se o proxy rodar diretamente no host da VM Marvin, mantenha os binds loopback originais; um proxy dentro de outro container precisa de rede/destino alcançável explícito, mesmo quando compartilha a VM.
+
+### Proxy Hosts e transporte MCP
+
+No NPM, crie dois **Proxy Hosts**, conforme a tabela de endereços: **Domain Names** recebe somente o nome DNS, **Scheme** é `http`, **Forward Hostname / IP** é o IP privado da VM Marvin e **Forward Port** é 3000 ou 3001. Na aba **SSL**, selecione o certificado correspondente e habilite **Force SSL**. Mantenha **Cache Assets** desativado nos dois hosts. A [documentação do NPM](https://nginxproxymanager.com/guide/) descreve proxy hosts e terminação TLS.
+
+Para o host MCP, preserve o path `/mcp`, métodos POST/GET/DELETE e o header `Authorization: Bearer ...`. Não acrescente HTTP Basic Authentication nesse host: ela disputa o mesmo header usado pelo bearer do Hermes. As restrições de rede/IP complementam a autenticação própria do MCP.
+
+MCP usa HTTP Streamable, não WebSocket; mantenha **Websockets Support** desativado nesse host. Para encaminhar streaming sem cache/buffering e permitir intervalos maiores entre leituras, use na aba **Advanced** do host MCP:
+
+```nginx
+proxy_http_version 1.1;
+proxy_buffering off;
+proxy_cache off;
+proxy_read_timeout 300s;
+proxy_send_timeout 300s;
+```
+
+Os 300 segundos são um valor inicial operacional, não garantia de duração total; os timeouts se aplicam aos intervalos entre operações de leitura/escrita. Não crie outro `location /` ou `proxy_pass` nesse campo: o NPM gera o encaminhamento. Confira a configuração efetiva e sua sintaxe na versão instalada antes de liberar uso; custom locations existentes podem alterar a herança dessas diretivas. Referência: [módulo proxy do Nginx](https://nginx.org/en/docs/http/ngx_http_proxy_module.html).
+
+Configure Hermes com `https://mcp.example.com/mcp` e a credencial `MCP_HERMES_BEARER_TOKEN`. O NPM não substitui o login web, o CSRF ou os bearers. Nesse arranjo, TLS termina no NPM; NPM → Web/MCP usa HTTP na LAN e MCP → Web continua HTTP na bridge Docker. Reavalie esses saltos se passarem por um segmento não confiável.
+
+### Verificação dessa configuração
+
+Após configurar, verifique pela LAN e repita pela VPN:
+
+1. Os dois nomes resolvem para o IP privado do NPM; o navegador abre a Web com certificado confiável. Login e consulta funcionam; `APP_ORIGIN` corresponde à URL utilizada e o cookie de sessão é `Secure`.
+2. Pelo endpoint HTTPS do MCP, `/healthz` responde e `/mcp` sem bearer é recusado. Pelo Hermes, uma consulta de leitura autenticada funciona sem quebra de streaming; não use lançamentos fictícios no banco real para testar o proxy.
+3. As regras de rede permitem ao NPM alcançar os backends e impedem o acesso direto indevido às portas 3000/3001. Não há encaminhamento WAN para esses serviços; VPN e clientes internos autorizados mantêm o acesso previsto.
+4. Registre expiração/renovação do certificado e proteja o estado do NPM, incluindo dados de configuração, certificados, chaves e credencial DNS. Não inclua bearer ou payload financeiro completo em logs customizados do proxy.
+
+Registre os resultados no controle privado de implantação. A inclusão deste roteiro não comprova emissão de certificado, configuração do NPM ou funcionamento de LAN/VPN no ambiente real.
+
+## Controles a aplicar nos hosts do homelab
+
+Hermes e os componentes de rede não rodam no computador usado para editar este repositório. Esta seção é um roteiro para execução posterior pelo proprietário nos hosts corretos; não pressupõe a existência de arquivos do Hermes nesta máquina e não registra controles como já aplicados.
+
+| Configuração | Onde aplicar |
+|---|---|
+| Usuários, canais e destinos de mensagens do bot | Ambiente/perfil efetivamente usado pelo gateway no host ou LXC do Hermes |
+| Certificados, Proxy Hosts e restrição por IP do host MCP | Instância do Nginx Proxy Manager no homelab |
+| Binds de Web/MCP e credenciais da aplicação | `.env` do checkout de deploy na VM Marvin |
+| Regras de acesso às portas da VM | Firewall Proxmox/VM que controla a interface da VM Marvin |
+| Encaminhamentos WAN, acesso IPv6, rotas e DNS da VPN | Roteador/firewall e serviço VPN do homelab |
+
+### Autorizar somente o proprietário no Discord/Hermes
+
+Use o ID numérico da sua conta Discord e um canal privado visível apenas para você e o bot. Confira as opções disponíveis na versão instalada do Hermes. No arquivo de ambiente realmente carregado pelo gateway **no host do Hermes**, configure os valores equivalentes a:
+
+```dotenv
+DISCORD_ALLOWED_USERS=SEU_ID_DISCORD
+DISCORD_ALLOWED_CHANNELS=ID_CANAL_PRIVADO
+DISCORD_HOME_CHANNEL=ID_CANAL_PRIVADO
+DISCORD_ALLOW_ALL_USERS=false
+GATEWAY_ALLOW_ALL_USERS=false
+DISCORD_ALLOW_BOTS=none
+```
+
+Os valores acima são placeholders. `~/.hermes/.env` é o caminho padrão indicado pela documentação do Hermes, não um caminho a criar ou editar no computador deste repositório. Uma instalação com perfil, volume ou serviço pode carregar outro local; identifique esse ambiente antes de alterar qualquer arquivo. Preserve o token existente sem imprimi-lo. Reinicie somente o gateway correto, pelo supervisor usado nessa instalação, para carregar os ajustes.
+
+Revise também `DISCORD_ALLOWED_ROLES` e configurações equivalentes que autorizem cargos: elas podem permitir usuários além da lista individual. A lista de canais não bloqueia DMs por si só; a restrição por usuário continua necessária. Confira destinos explícitos de tarefas agendadas/notificações, além do canal padrão, para que dados financeiros não sejam enviados a canais compartilhados. Referência: [configuração oficial do Discord no Hermes](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/messaging/discord.md).
+
+Valide com consultas de leitura: sua conta funciona no canal privado; uma conta não autorizada não consegue acionar ferramentas nem por DM; o bot não responde em canais fora da lista. Não use tokens reais em prints, logs ou exemplos de configuração compartilhados.
+
+### Confirmação obrigatória antes das escritas do agente
+
+Requisito definido pelo proprietário, ainda pendente de implementação e validação no fluxo completo: toda escrita solicitada pelo Hermes exige confirmação humana anterior à gravação, por reação de aprovação ou resposta `aprovado` vinculada ao resumo apresentado.
+
+1. Hermes consulta as ferramentas e schemas MCP, resolve os recursos existentes e prepara o payload. Quando houver suporte a preview, consulta-o para apresentar também os efeitos calculados pelo backend.
+2. Apresenta ao proprietário o que será gravado: operação, contas/cartão envolvidos, valor, datas, categoria e parcelas quando aplicáveis. Nenhuma ferramenta de escrita deve ser chamada nessa preparação.
+3. Aguarda a aprovação do proprietário autenticado no Discord, por reação previamente definida ou resposta ao resumo específico. Mensagem de outra pessoa, reação sem identidade validada ou um `aprovado` sem vínculo inequívoco com a operação não autoriza gravação.
+4. Grava somente o payload apresentado e aprovado. Se qualquer campo mudar, apresenta novo resumo e pede nova confirmação. Rejeição, cancelamento ou expiração não permitem gravar.
+5. Usa uma chave de idempotência para a execução; repetição da mesma aprovação não deve criar outra operação. Registra a vinculação entre solicitação, resumo aprovado, identidade do aprovador e resultado, sem registrar tokens ou dados financeiros completos nos logs gerais.
+
+O tipo de reação e o prazo de validade da aprovação precisam ser definidos antes da implementação. A integração Discord/gateway fica no host do Hermes; a aplicação atual não recebe nem verifica uma prova de reação/resposta humana. Se a exigência for imposta também pela API/MCP, será necessário implementar uma autorização vinculada à operação final, de uso único, com evidência fornecida pelo componente confiável que valida o evento Discord. Um campo `approved: true` produzido pelo LLM não comprova aprovação humana. Até esse trabalho, não considerar a exigência garantida pelo backend. Esta documentação não cria ferramentas, endpoints ou persistência de aprovações.
+
+### Política de acesso à rede
+
+Adapte os IPs da seção NPM ao ambiente real e preserve o acesso administrativo ao aplicar as regras. A política desejada é:
+
+| Destino | Origens permitidas |
+|---|---|
+| NPM, HTTPS na porta 443 | Clientes LAN/VPN autorizados e Hermes |
+| Host MCP no NPM | IP do Hermes, por Access List de IP, além do bearer obrigatório |
+| VM Marvin, portas 3000/3001 | IP de origem do NPM; outros clientes não acessam diretamente |
+| Painel NPM, normalmente porta 81 | Dispositivos administrativos autorizados pela LAN/VPN |
+| PostgreSQL | Serviços autorizados na rede Docker `database`; sem porta publicada no host |
+
+A Access List do host MCP deve usar a origem efetivamente vista pelo NPM. Não acrescente Basic Authentication ao endpoint MCP nem confie em headers de IP arbitrários. Verifique ausência de encaminhamentos WAN, inclusive automáticos, e de permissões IPv6 que contrariem o acesso privado.
+
+Não considere apenas regras UFW dentro da VM como comprovação: portas publicadas pelo Docker podem seguir um caminho diferente do filtrado por essas regras. Use o firewall efetivo da interface no Proxmox e/ou regras compatíveis com o backend de firewall do Docker, sem remover as regras geradas pelo Docker. Referência: [integração de firewall do Docker](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
+
+O proprietário deve confirmar no homelab: Web funciona pela LAN e VPN; Hermes consulta MCP pelo NPM; outro dispositivo não consegue acessar diretamente 3000/3001; o endpoint MCP recusa chamada sem bearer mesmo a partir da origem permitida; e Web/MCP ficam inacessíveis de fora da LAN com VPN desligada. Execute verificações somente contra seus próprios endpoints e registre resultados sem credenciais ou dados financeiros. Nenhuma dessas verificações foi executada a partir deste checkout.
 
 ## Verificação e operação diária
 
@@ -72,8 +210,8 @@ Com os binds e portas padrão, verifique no host:
 ```bash
 curl --fail --silent --show-error http://127.0.0.1:3000/api/health
 curl --fail --silent --show-error http://127.0.0.1:3001/healthz
-docker compose --env-file .env -f infra/compose.yml ps
-docker compose --env-file .env -f infra/compose.yml logs --tail=100 web mcp
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml ps
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml logs --tail=100 web mcp
 ```
 
 Adapte as URLs se alterar os binds/portas. O health check web comprova resposta HTTP, não consulta o banco. Pelo endereço HTTPS do proxy, faça login e consulte contas/categorias para verificar autenticação e persistência. Em produção o cookie é `Secure`; o login pelo endereço HTTP local não substitui esse teste. Não crie lançamentos fictícios para validar um banco real.
@@ -89,23 +227,23 @@ Registre a revisão atual e escolha a revisão aprovada de destino em um checkou
 Construa as imagens da revisão de destino antes da janela de manutenção. Inclua `migrate` explicitamente, pois tem build próprio e não deve usar uma imagem antiga:
 
 ```bash
-docker compose --env-file .env -f infra/compose.yml config --quiet
-docker compose --env-file .env -f infra/compose.yml build web mcp migrate
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml config --quiet
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml build web mcp migrate provision-roles
 ```
 
 Pause o acesso pelo proxy e o Hermes; pare os dois processos para interromper também o timer de fechamento de faturas. Faça o backup da seção seguinte **após** a parada e só prossiga se o dump terminar e passar pela inspeção. Guarde também a revisão e uma cópia protegida do `.env` e da configuração do proxy, fora do repositório.
 
 ```bash
-docker compose --env-file .env -f infra/compose.yml stop mcp web
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml stop mcp web
 ```
 
 Com backup confirmado, mantenha DB disponível, aplique migrations uma única vez e recrie aplicações:
 
 ```bash
-docker compose --env-file .env -f infra/compose.yml up -d db
-docker compose --env-file .env -f infra/compose.yml run --rm migrate
-docker compose --env-file .env -f infra/compose.yml up -d web mcp
-docker compose --env-file .env -f infra/compose.yml ps
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml up -d db
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml run --rm migrate
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml up -d web mcp
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml ps
 ```
 
 Execute cada etapa apenas se a anterior tiver sucesso. Se a migration falhar, mantenha web/MCP parados e revise o erro; não retome a versão antiga sem conferir o estado do schema. Após sucesso, repita as verificações de login, leitura e MCP antes de liberar o proxy/Hermes. A janela de manutenção abrange backup, migration e verificações.
@@ -121,8 +259,8 @@ umask 077
 mkdir -p /srv/backups/marvin
 chmod 700 /srv/backups/marvin
 MARVIN_BACKUP="/srv/backups/marvin/marvin-$(date -u +%Y%m%dT%H%M%SZ).dump"
-if docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$MARVIN_BACKUP.partial"; then
-  if docker compose --env-file .env -f infra/compose.yml exec -T db pg_restore --list < "$MARVIN_BACKUP.partial" > /dev/null; then
+if docker compose --env-file .env --env-file .env.ops -f infra/compose.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$MARVIN_BACKUP.partial"; then
+  if docker compose --env-file .env --env-file .env.ops -f infra/compose.yml exec -T db pg_restore --list < "$MARVIN_BACKUP.partial" > /dev/null; then
     mv "$MARVIN_BACKUP.partial" "$MARVIN_BACKUP"
   fi
 fi
@@ -141,8 +279,8 @@ Copie o dump e seu checksum para outro destino/host e aplique a política de ret
 Faça primeiro um restore em base nova para validar o arquivo, sem sobrescrever a base em uso. Abaixo, substitua o caminho pelo dump desejado; `marvin_restore` deve ainda não existir:
 
 ```bash
-docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'createdb -U "$POSTGRES_USER" marvin_restore && pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d marvin_restore' < /srv/backups/marvin/arquivo.dump
-docker compose --env-file .env -f infra/compose.yml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d marvin_restore -c "select count(*) from accounts"'
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml exec -T db sh -c 'createdb -U "$POSTGRES_USER" marvin_restore && pg_restore --exit-on-error --no-owner --no-acl -U "$POSTGRES_USER" -d marvin_restore' < /srv/backups/marvin/arquivo.dump
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d marvin_restore -c "select count(*) from accounts"'
 ```
 
 A base nova está separada logicamente, mas compartilha o servidor/volume: não execute o ensaio sob carga sem avaliar recursos. Se o restore falhar, não use a base parcial; preserve-a para diagnóstico e repita em outra base nova.
@@ -151,10 +289,11 @@ O segundo comando depende da tabela `accounts` existir após a migration incluí
 
 Para ativar a recuperação:
 
-1. Bloqueie o proxy/Hermes e execute `docker compose --env-file .env -f infra/compose.yml stop mcp web` antes da troca. Registre quais escritas posteriores ao dump serão perdidas e confirme essa perda antes de prosseguir.
-2. Use código/imagens da revisão compatível com o dump. Altere somente o nome da base em `DATABASE_URL` no `.env` para `marvin_restore`, preservando a conexão anterior em registro protegido. Não altere `POSTGRES_DB`: ele inicializa volumes vazios e não renomeia bases existentes.
-3. Execute `docker compose --env-file .env -f infra/compose.yml up -d --force-recreate web mcp`. Um simples `restart` não aplica variáveis alteradas. Não aplique migrations novas ao dump sem revisar a compatibilidade.
-4. Repita as verificações de saúde, login e consultas web/MCP antes de liberar acesso. Preserve a base anterior até concluir a revisão. Se precisar voltar e ainda não houver novas escritas, restaure a URL e a revisão compatível anteriores e recrie os serviços; com novas escritas, planeje reconciliação antes da troca.
+1. Bloqueie o proxy/Hermes e execute `docker compose --env-file .env --env-file .env.ops -f infra/compose.yml stop mcp web` antes da troca. Registre quais escritas posteriores ao dump serão perdidas e confirme essa perda antes de prosseguir.
+2. Use código/imagens da revisão compatível com o dump. Altere o nome da base nas URLs `DATABASE_URL` de `.env` e `MIGRATION_DATABASE_URL`/`DATABASE_ADMIN_URL` de `.env.ops` para `marvin_restore`, preservando as conexões anteriores em registro protegido. Não altere `POSTGRES_DB`: ele inicializa volumes vazios e não renomeia bases existentes.
+3. O restore usa `--no-owner --no-acl`: roles globais não vêm no dump e grants antigos não são reaplicados. Com as URLs apontando explicitamente para a base restaurada, execute o job `provision-roles` com `--adopt-existing`, usando o código compatível, para criar/verificar roles e aplicar ownership/grants da política atual. Não acrescente `--rotate-passwords` se apenas estiver recuperando a base com as mesmas credenciais.
+4. Execute `docker compose --env-file .env --env-file .env.ops -f infra/compose.yml up -d --force-recreate web mcp`. Um simples `restart` não aplica variáveis alteradas. Não aplique migrations novas ao dump sem revisar a compatibilidade.
+5. Repita as verificações de saúde, login e consultas web/MCP antes de liberar acesso. Preserve a base anterior até concluir a revisão. Se precisar voltar e ainda não houver novas escritas, restaure a URL e a revisão compatível anteriores e recrie os serviços; com novas escritas, planeje reconciliação antes da troca.
 
 Em perda da VM, provisione outra com os mesmos pré-requisitos, recupere o checkout da revisão registrada, `.env` e proxy protegidos, construa imagens e suba somente DB. Copie e confira o checksum do dump, restaure na base nova e siga a ativação acima antes de iniciar aplicações. O dump inclui schema e histórico de migrations, mas não secrets, configuração do host/proxy nem roles globais; o usuário definido pelo Compose deve existir no destino. Este procedimento precisa de ensaio no homelab antes de dados reais.
 
@@ -172,12 +311,45 @@ O script usa dois clusters temporários PostgreSQL 18.6 em loopback, uma fixture
 
 O `apps/web` inicia um timer no runtime Node do Next.js. Ele executa catch-up ao iniciar e tenta novamente periodicamente; se o web estiver parado, não há execução até a próxima inicialização. Cada cartão usa seu `billingTimezone`, e ciclos abertos com `closingOn` na data local ou anterior são fechados. Somente cartões configurados como `automatic` participam; o padrão continua `manual`. A rotina não cria lançamentos nem altera faturas encerradas. Detalhes em [ADR 0007](adr/0007-automatic-statement-closing.md).
 
+## Separação de privilégios PostgreSQL
+
+Implementada conforme [ADR 0012](adr/0012-database-runtime-and-migration-roles.md), em continuidade à arquitetura §2/§8 e ao modelo de dados §10.1/§18. PostgreSQL usa roles; uma role com `LOGIN` é um usuário técnico de banco. Elas não alteram sua conta de login na interface e não substituem os bearers HTTP. Referência: [roles PostgreSQL 17](https://www.postgresql.org/docs/17/user-manag.html).
+
+| Identidade | Consumidor | Permissões |
+|---|---|---|
+| Administração existente | Operador e job temporário `provision-roles` | Criar/verificar roles e transferir ownership explicitamente; nunca recebida pela Web/MCP |
+| `marvin_migrator` | Job `migrate` e comandos administrativos de dados | Dono de `public`, `drizzle` quando existir e objetos do Marvin; pode executar DDL nesta base. Sem superusuário, criação de roles/bancos ou associação privilegiada |
+| `marvin_app` | Web | `CONNECT`, uso de `public` e grants por tabela/função necessários ao login e finanças. Sem DDL, `TRUNCATE`, concessão de privilégios ou acesso ao histórico de migrations |
+
+`pnpm db:provision-roles` usa `DATABASE_ADMIN_URL`, exige terminal interativo e uma conexão administrativa com superusuário para esse provisionamento inicial. Cria as duas roles fixas, verifica atributos/associações, revoga permissões públicas de conexão/criação temporária da base dedicada e aplica a política da aplicação em transação. Não usa `REASSIGN OWNED` genérico: só transfere os objetos conhecidos do Marvin. A base deve ser dedicada; objetos inesperados em `public`/`drizzle` são recusados para revisão.
+
+O comando `pnpm db:migrate` usa exclusivamente `MIGRATION_DATABASE_URL`, exige a identidade `marvin_migrator` e aplica as migrations pelo migrator Drizzle, preservando os arquivos e journal existentes. `DATABASE_URL` nunca é fallback para migrations. Ao final, reaplica os grants explícitos de runtime em `packages/db/src/database-roles.ts`. Funções futuras não recebem execução por `PUBLIC`; tabelas/sequências futuras não recebem grants automáticos à aplicação. Uma migration que acrescente objetos deve atualizar a política quando runtime precisar deles: acesso novo fica negado até revisão. A sequência serial do journal acompanha o proprietário da tabela.
+
+Histórico financeiro recebe leitura/inclusão conforme o uso atual; não recebe exclusão. Tabelas mutáveis de fatura/configuração/previsões e idempotência recebem os updates necessários. `auth_sessions` e `auth_login_attempts` permitem limpeza/revogação. `auth_users` permite leitura e `UPDATE(id)` somente para o lock da emissão de sessão, não troca de senha/username pelo runtime; locks dos triggers também exigem `UPDATE(id)` em contas/transações. As constraints e triggers financeiros continuam ativos. Referências: [privilégios](https://www.postgresql.org/docs/17/ddl-priv.html) e [privilégios padrão](https://www.postgresql.org/docs/17/sql-alterdefaultprivileges.html).
+
+### Transição de uma base existente
+
+Não aplique automaticamente ao banco real. Após backup verificado e com Web/MCP parados, revise os objetos, a identidade administrativa atual e o ambiente alvo. O provisionamento sem flags recusa objetos cujo dono ainda não seja `marvin_migrator`. Para adotar **somente os objetos conhecidos do Marvin**, execute no host de operações:
+
+```bash
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml --profile ops run --rm provision-roles pnpm db:provision-roles --adopt-existing
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml run --rm migrate
+```
+
+A adoção altera ownership/grants, não valores financeiros, senhas da conta Web ou histórico de migrations. A credencial administrativa anterior permanece para manutenção. Depois de alinhar as URLs e verificar a política, recrie Web/MCP e teste login e leituras pelo endereço privado. Não retome uma versão antiga/configuração anterior sem revisar os grants e o estado do schema.
+
+Para rotação técnica, use o mesmo comando com `--rotate-passwords` (e `--adopt-existing` somente se a adoção for necessária), em janela controlada, atualizando as URLs dos consumidores e recriando os processos. Sem a flag, senhas existentes são preservadas mesmo que outras sejam informadas no prompt. Não passe senhas por argumentos; o provisionamento envia verificadores SCRAM ao PostgreSQL e sanitiza os erros do CLI.
+
+No host de desenvolvimento, configure URLs operacionais locais em `.env.ops`, usando `127.0.0.1` e a porta publicada, em vez do host Docker `db`. Owner/bootstrap/seed/clean carregam também `.env.ops`; seed/clean continuam bloqueados em produção e exigem opt-in de desenvolvimento, preferindo a conexão operacional para poder executar a limpeza. Não carregue esse arquivo no processo Web. Criação de roles, grants, migrations e adoção foram exercitados em PostgreSQL descartável; confira as evidências em [verification.md](verification.md). Ainda exigem revisão e janela de operação antes de qualquer alteração no homelab.
+
 ## Variáveis
 
 | Variável | Consumidor | Finalidade |
 |---|---|---|
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `db` | Inicialização do PostgreSQL |
-| `DATABASE_URL` | `web`, execução `migrate` | Conexão de aplicação/migration |
+| `DATABASE_URL` | `web` | Conexão restrita de `marvin_app` |
+| `MIGRATION_DATABASE_URL` | `migrate` e CLIs operacionais | Conexão de `marvin_migrator`, somente em `.env.ops` |
+| `DATABASE_ADMIN_URL` | `provision-roles` | Conexão administrativa, somente em `.env.ops` |
 | `APP_ORIGIN` | `web` | Origem permitida para login e CSRF |
 | `APP_ORIGIN` | `web` | Origem confiável configurada para o proxy |
 | `MCP_API_TOKEN` | `web`, `mcp` | Autenticação MCP → API web |
@@ -197,20 +369,20 @@ O deploy, proxy, rotação de credenciais, política de retenção e teste peri�
 
 Para executar scripts pnpm do host usando o banco Docker existente, execute `pnpm db:up`. Esse comando aplica também `infra/compose.dev.yml`, publica a porta apenas em `127.0.0.1` e mantém o volume. A configuração é exclusiva do desenvolvimento; os comandos de deploy acima continuam usando apenas `infra/compose.yml`.
 
-Configure `DEVELOPMENT_DATABASE_URL` com credenciais literais e host `127.0.0.1`, porta `DEV_DB_HOST_PORT` ou 5432. Seed e limpeza preferem essa URL. Mantenha `DATABASE_URL` no `.env` da raiz com host `db` para o Compose; para executar Next.js no host, configure a URL local como `DATABASE_URL` em `apps/web/.env.local`. Para migrations locais, passe a URL local explicitamente como `DATABASE_URL`. Os arquivos `.env` são excluídos do contexto de build e não são copiados às imagens. Instruções e efeitos da limpeza estão no README; decisão em [ADR 0009](adr/0009-local-development-database.md).
+Configure `DEVELOPMENT_DATABASE_URL` com credenciais literais e host `127.0.0.1`, porta `DEV_DB_HOST_PORT` ou 5432. Seed e limpeza preferem `MIGRATION_DATABASE_URL` local de `.env.ops` quando configurada, com fallback para essa URL de desenvolvimento. Mantenha `DATABASE_URL` no `.env` da raiz com host `db` para o Compose; para executar Next.js no host, configure a URL local como `DATABASE_URL` em `apps/web/.env.local`. Para migrations locais, configure `MIGRATION_DATABASE_URL` local em `.env.ops`. Os arquivos `.env` são excluídos do contexto de build e não são copiados às imagens. Instruções e efeitos da limpeza estão no README; decisão em [ADR 0009](adr/0009-local-development-database.md).
 
 ## Conta proprietária e atualização do login
 
 Aplique a migration aditiva `0003_local_auth` antes de iniciar a versão nova. Não altera dados financeiros. Não há migração automática da senha de ambiente: `WEB_PASSWORD_HASH`, `SESSION_SECRET` e cookies antigos deixam de autenticar.
 
-Crie a conta pelo terminal com `pnpm db:provision-owner`, usando `DEVELOPMENT_DATABASE_URL` fora de produção quando configurada, com fallback para `DATABASE_URL`. Em produção usa somente `DATABASE_URL`. Antes de pedir a senha, verifica conexão e tabelas de autenticação. Para executar no host, `pnpm db:up` publica a porta local do PostgreSQL. Username admite 3 a 64 caracteres ASCII, começando por letra ou número e continuando com letras, números, ponto, sublinhado ou hífen; é convertido para minúsculas. Senha tem 12 a 1024 caracteres e confirmação, sem eco no terminal. O comando não substitui uma conta existente. Para recuperação, `pnpm db:provision-owner --reset-password` exige o mesmo username e revoga todas as sessões atomicamente. Não passe senhas por argumentos ou arquivos versionados.
+Crie a conta pelo terminal com `pnpm db:provision-owner`, usando `MIGRATION_DATABASE_URL` de `.env.ops`. O helper preserva fallback legado para `DEVELOPMENT_DATABASE_URL` fora de produção e `DATABASE_URL`, mas a conexão restrita de runtime não pode criar/resetar a conta; no deploy separado, use a identidade operacional. Antes de pedir a senha, verifica conexão e tabelas de autenticação. Para executar no host, `pnpm db:up` publica a porta local do PostgreSQL. Username admite 3 a 64 caracteres ASCII, começando por letra ou número e continuando com letras, números, ponto, sublinhado ou hífen; é convertido para minúsculas. Senha tem 12 a 1024 caracteres e confirmação, sem eco no terminal. O comando não substitui uma conta existente. Para recuperação, `pnpm db:provision-owner --reset-password` exige o mesmo username e revoga todas as sessões atomicamente. Não passe senhas por argumentos ou arquivos versionados.
 
 No Compose, use o serviço temporário de operações com terminal interativo:
 
 ```bash
-docker compose --env-file .env -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner
 # Recuperação:
-docker compose --env-file .env -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner --reset-password
+docker compose --env-file .env --env-file .env.ops -f infra/compose.yml --profile ops run --rm migrate pnpm db:provision-owner --reset-password
 ```
 
 O serviço usa a mesma imagem de ferramentas das migrations. Backups devem incluir `auth_users`, `auth_sessions` e `auth_login_attempts`; proteja-os como credenciais. O seed/clean financeiro preserva essas tabelas. A conta e as sessões persistem também quando o banco é populado com dados fictícios. A revogação no logout depende de PostgreSQL disponível; a UI informa falha e permite tentar novamente. Permanece uma conta proprietária, sem cadastro público nem isolamento financeiro, planejado na issue #9.

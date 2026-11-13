@@ -4,13 +4,14 @@ O workspace `@finance/db` guarda o schema Drizzle, o adapter de `FinanceReposito
 
 ## Configuração e comandos
 
-Use PostgreSQL real e defina `DATABASE_URL` no ambiente do comando. Não há banco em memória nem URL padrão de fallback.
+Use PostgreSQL real e configure `DATABASE_ADMIN_URL` e `MIGRATION_DATABASE_URL` no arquivo operacional `.env.ops`, seguindo o guia de deploy. Não há banco em memória nem URL padrão de fallback.
 
 ```bash
-DATABASE_URL='postgresql://<user>:<password>@<host>:5432/<database>' pnpm --filter @finance/db db:migrate
+pnpm db:provision-roles # ambiente administrativo de .env.ops, terminal interativo
+pnpm db:migrate # MIGRATION_DATABASE_URL de marvin_migrator em .env.ops
 ```
 
-`db:migrate` aplica migrations pendentes via Drizzle Kit; esse fluxo foi validado neste checkpoint. As migrations `0000_mvp_financial_schema.sql` e `0001_forecasts_revisions.sql` são SQL versionado, registradas em `migrations/meta/_journal.json` na ordem correspondente. Migrations já aplicadas não devem ser reescritas.
+`db:migrate` aplica migrations pendentes pelo migrator Drizzle ORM com o mesmo diretório/journal, exige `marvin_migrator` e reaplica os grants explícitos de runtime. Veja o [ADR 0012](adr/0012-database-runtime-and-migration-roles.md); não há fallback para a conexão Web. Drizzle Kit permanece para geração de migrations. As migrations `0000_mvp_financial_schema.sql` e `0001_forecasts_revisions.sql` são SQL versionado, registradas em `migrations/meta/_journal.json` na ordem correspondente. Migrations já aplicadas não devem ser reescritas.
 
 Para uma mudança de schema, crie uma nova migration SQL incremental, atribua a próxima versão e mantenha o journal consistente. Revise e teste o upgrade em PostgreSQL de desenvolvimento e a aplicação em uma base/schema vazio antes de qualquer deploy. Não gere nem aplique uma migration cegamente: o diretório `migrations/meta` contém apenas `_journal.json`, sem snapshots Drizzle. Embora o script `db:generate` exista, seu uso requer preparar e revisar os snapshots/baseline adequados primeiro; sem isso, a geração pode propor recriar o schema inicial. Esse fluxo de geração não foi validado neste gate. A suíte de integração aplica as migrations a um schema descartável; não houve migration em banco persistente nem implantação.
 

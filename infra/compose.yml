@@ -79,7 +79,23 @@ services:
     command: ["pnpm", "--filter", "@finance/db", "db:migrate"]
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL in .env.ops}
+    networks:
+      - database
+    depends_on:
+      db:
+        condition: service_healthy
+
+  provision-roles:
+    build:
+      context: ..
+      dockerfile: infra/docker/web.Dockerfile
+    profiles: ["ops"]
+    restart: "no"
+    command: ["pnpm", "--filter", "@finance/db", "db:provision-roles"]
+    environment:
+      NODE_ENV: production
+      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:?Set DATABASE_ADMIN_URL in .env.ops}
     networks:
       - database
     depends_on:

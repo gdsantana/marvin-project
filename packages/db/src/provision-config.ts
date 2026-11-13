@@ -1,7 +1,7 @@
 export class OwnerProvisionError extends Error {}
 
 export function ownerDatabaseUrl(env: NodeJS.ProcessEnv = process.env) {
-  const value = env.NODE_ENV === "production" ? env.DATABASE_URL : env.DEVELOPMENT_DATABASE_URL ?? env.DATABASE_URL;
+  const value = env.MIGRATION_DATABASE_URL ?? (env.NODE_ENV === "production" ? env.DATABASE_URL : env.DEVELOPMENT_DATABASE_URL ?? env.DATABASE_URL);
   if (!value) throw new OwnerProvisionError("Configure DATABASE_URL ou DEVELOPMENT_DATABASE_URL para o banco de desenvolvimento.");
   try {
     const url = new URL(value);

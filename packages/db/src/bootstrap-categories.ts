@@ -28,7 +28,7 @@ export async function bootstrapCategories(db: Database) {
 }
 
 async function main() {
-  const url = process.env.DATABASE_URL;
+  const url = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!url) throw new Error("missing DATABASE_URL");
   const { db, pool } = createDatabase(url);
   try {

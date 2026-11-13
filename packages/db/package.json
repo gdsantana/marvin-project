@@ -12,12 +12,13 @@
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test --test-isolation=none src/**/*.test.ts",
     "build": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:clean": "node --env-file-if-exists=../../.env --import tsx src/clean.ts",
-    "db:seed": "SEED_DEVELOPMENT=true node --env-file-if-exists=../../.env --import tsx src/seed.ts",
-    "db:bootstrap-categories": "node --env-file-if-exists=../../.env --import tsx src/bootstrap-categories.ts",
-    "db:provision-owner": "node --env-file-if-exists=../../.env --import tsx src/provision-owner.ts"
+    "db:generate": "node --env-file-if-exists=../../.env.ops node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "node --env-file-if-exists=../../.env.ops --import tsx src/migrate.ts",
+    "db:clean": "node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.ops --import tsx src/clean.ts",
+    "db:seed": "SEED_DEVELOPMENT=true node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.ops --import tsx src/seed.ts",
+    "db:bootstrap-categories": "node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.ops --import tsx src/bootstrap-categories.ts",
+    "db:provision-owner": "node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.ops --import tsx src/provision-owner.ts",
+    "db:provision-roles": "node --env-file-if-exists=../../.env.ops --import tsx src/provision-roles.ts"
   },
   "dependencies": {
     "@finance/domain": "workspace:*",
