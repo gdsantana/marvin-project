@@ -8,19 +8,19 @@ cp "$source_dir/scripts/update-homelab.sh" "$tmp/install/"
 cp "$source_dir/infra/compose.release.yml" "$tmp/bundle/compose.yml"
 tar -C "$tmp/bundle" -czf "$tmp/bundle.tar.gz" compose.yml
 touch "$tmp/install/.env" "$tmp/install/.env.ops"
-cat > "$tmp/bin/gh" <<'MOCK'
+cat > "$tmp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
-case "$1 $2" in
-  'release view') printf '%s\n' "${TEST_UNSTABLE:-false}" ;;
-  'release download')
-    [[ ${FAIL_DOWNLOAD:-0} != 1 ]] || exit 1
-    while [[ $# -gt 0 ]]; do
-      if [[ $1 == --dir ]]; then cp "$TEST_BUNDLE" "$2/marvin-deploy.tar.gz"; exit; fi
-      shift
-    done
-    exit 1 ;;
-  *) exit 1 ;;
-esac
+printf '%s\n' "$*" >> "$TEST_CURL_LOG"
+if [[ $* == *api.github.com* ]]; then
+  printf '{"draft":false,"prerelease":%s,"tag_name":"%s"}\n' "${TEST_UNSTABLE:-false}" "${TEST_TAG:-v0.1.0}"
+else
+  [[ ${FAIL_DOWNLOAD:-0} != 1 ]] || exit 1
+  while [[ $# -gt 0 ]]; do
+    if [[ $1 == --output ]]; then cp "$TEST_BUNDLE" "$2"; exit; fi
+    shift
+  done
+  exit 1
+fi
 MOCK
 cat > "$tmp/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
@@ -31,8 +31,8 @@ case "$*" in
   *'run --rm --no-deps migrate'*) [[ ${FAIL_MIGRATION:-0} != 1 ]] ;;
 esac
 MOCK
-chmod +x "$tmp/bin/gh" "$tmp/bin/docker"
-export PATH="$tmp/bin:$PATH" TEST_LOG="$tmp/docker.log" MARVIN_BACKUP_DIR="$tmp/backups" TEST_BUNDLE="$tmp/bundle.tar.gz"
+chmod +x "$tmp/bin/curl" "$tmp/bin/docker"
+export PATH="$tmp/bin:$PATH" TEST_CURL_LOG="$tmp/curl.log" TEST_LOG="$tmp/docker.log" MARVIN_BACKUP_DIR="$tmp/backups" TEST_BUNDLE="$tmp/bundle.tar.gz"
 cd "$tmp/install"
 printf 'invalid\ns\n' | bash update-homelab.sh v0.1.0 > "$tmp/success.log"
 test "$(cat .marvin/deployed-version)" = v0.1.0
@@ -42,6 +42,21 @@ rg -q 'run --rm --no-deps migrate' "$TEST_LOG"
 rg -q 'up -d --no-deps --wait web' "$TEST_LOG"
 rg -q 'up -d --no-deps --wait mcp' "$TEST_LOG"
 if rg -q 'up .* db|pull .* db' "$TEST_LOG"; then echo 'DB must not be updated' >&2; exit 1; fi
+printf 's\n' | bash update-homelab.sh > "$tmp/latest.log"
+test "$(cat .marvin/deployed-version)" = v0.1.0
+rg -q '/releases/latest' "$TEST_CURL_LOG"
+: > "$TEST_LOG"
+for mode in unstable invalid mismatch; do
+  case "$mode" in
+    unstable) args=(env TEST_UNSTABLE=true) ;;
+    invalid) args=(env TEST_TAG=invalid) ;;
+    mismatch) args=(env TEST_TAG=v0.2.0) ;;
+  esac
+  if "${args[@]}" bash update-homelab.sh v0.1.0 > "$tmp/$mode.log" 2>&1; then
+    echo "Invalid release accepted: $mode" >&2; exit 1
+  fi
+  test ! -s "$TEST_LOG"
+done
 rm .marvin/deployed-version
 : > "$TEST_LOG"
 if printf 's\n' | FAIL_MIGRATION=1 bash update-homelab.sh v0.1.0 > "$tmp/failure.log" 2>&1; then

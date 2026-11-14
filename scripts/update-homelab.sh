@@ -2,11 +2,11 @@
 set -Eeuo pipefail
 trap 'echo "Atualização interrompida. Confira serviços, imagens e banco antes de retomá-los; não reverta imagens sem verificar a migration." >&2' ERR
 
-for command in gh docker flock sha256sum tar; do
+for command in curl jq docker flock sha256sum tar; do
   command -v "$command" >/dev/null || { echo "Comando ausente: $command" >&2; exit 1; }
 done
-[[ $# == 1 && $1 =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Uso: ./update-homelab.sh vX.Y.Z' >&2; exit 1; }
-tag=$1
+[[ $# -le 1 && ${1:-v0.0.0} =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Uso: ./update-homelab.sh [vX.Y.Z]' >&2; exit 1; }
+tag=${1:-}
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$root"
 [[ -f .env && -f .env.ops ]] || { echo 'Configure .env e .env.ops no diretório de instalação.' >&2; exit 1; }
@@ -14,11 +14,15 @@ mkdir -p .marvin
 exec 9>.marvin/update.lock
 flock -n 9 || { echo 'Outra atualização está em andamento.' >&2; exit 1; }
 repo=gdsantana/marvin-project
-stable=$(gh release view "$tag" --repo "$repo" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | any')
-[[ $stable == false ]] || { echo 'Selecione uma release estável publicada.' >&2; exit 1; }
+release_url="https://api.github.com/repos/$repo/releases/latest"
+if [[ -n $tag ]]; then release_url="https://api.github.com/repos/$repo/releases/tags/$tag"; fi
+release=$(curl --fail --silent --show-error --location "$release_url")
+resolved_tag=$(jq -er 'select(.draft == false and .prerelease == false) | .tag_name | select(type == "string")' <<< "$release")
+[[ $resolved_tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && ( -z $tag || $tag == "$resolved_tag" ) ]] || { echo 'Selecione uma release estável publicada com tag vX.Y.Z.' >&2; exit 1; }
+tag=$resolved_tag
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-gh release download "$tag" --repo "$repo" --pattern marvin-deploy.tar.gz --dir "$work"
+curl --fail --silent --show-error --location --output "$work/marvin-deploy.tar.gz" "https://github.com/$repo/releases/download/$tag/marvin-deploy.tar.gz"
 tar -xzf "$work/marvin-deploy.tar.gz" -C "$work" compose.yml
 [[ -f $work/compose.yml && ! -L $work/compose.yml ]] || { echo 'Compose ausente ou inválido.' >&2; exit 1; }
 mkdir -p ".marvin/releases/$tag"

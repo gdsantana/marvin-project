@@ -27,10 +27,11 @@ O mesmo `scripts/install.sh` da revisão é publicado nas releases. Ele repete e
 
 O instalador cria as configurações e credenciais, baixa as imagens do GitHub Container Registry (GHCR), prepara o PostgreSQL e inicia Web e MCP. Ele pede a origem HTTPS e a criação da conta da interface; ao final, exibe o token bearer para conectar o agente ao MCP. Configure também um proxy privado, DNS e HTTPS. Enquanto a release ou as imagens forem privadas, é necessária autenticação conforme o [guia de instalação](docs/deployment.md#primeira-instalação-sem-clone).
 
-Para atualizar uma instalação existente, escolha uma release estável e execute no diretório de instalação:
+Para atualizar uma instalação existente para a última release estável pública, execute no diretório de instalação, sem precisar de `gh` ou login no GitHub. O atualizador requer `curl` e `jq`:
 
 ```bash
-./update-homelab.sh vX.Y.Z
+./update-homelab.sh
+# Ou selecione uma versão: ./update-homelab.sh vX.Y.Z
 ```
 
 O atualizador baixa Web e MCP da mesma versão, faz backup, aplica migrations e reinicia os dois serviços. O PostgreSQL tem ciclo de atualização separado. Revise as notas e bloqueie o acesso pelo proxy e Hermes antes da confirmação; siga o [guia de operação](docs/deployment.md#atualização-de-instalação-existente) para backups, recuperação e verificação.
