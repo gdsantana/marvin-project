@@ -1,0 +1,103 @@
+name: marvin-project
+
+services:
+  db:
+    image: postgres:${POSTGRES_IMAGE_TAG:-17.11-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    image: ghcr.io/gdsantana/marvin-web:${MARVIN_VERSION:?Set MARVIN_VERSION}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN to the trusted browser origin}
+      MCP_API_TOKEN: ${MCP_API_TOKEN:?Set MCP_API_TOKEN}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-3000}:3000"
+    networks:
+      - application
+      - database
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  mcp:
+    image: ghcr.io/gdsantana/marvin-mcp:${MARVIN_VERSION:?Set MARVIN_VERSION}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      MCP_PORT: 3001
+      MCP_API_URL: ${MCP_API_URL:-http://web:3000/api/}
+      MCP_API_TOKEN: ${MCP_API_TOKEN:?Set MCP_API_TOKEN}
+      MCP_HERMES_BEARER_TOKEN: ${MCP_HERMES_BEARER_TOKEN:?Set MCP_HERMES_BEARER_TOKEN}
+    ports:
+      - "${MCP_BIND_ADDRESS:-127.0.0.1}:${MCP_HOST_PORT:-3001}:3001"
+    networks:
+      - application
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  migrate:
+    image: ghcr.io/gdsantana/marvin-web:${MARVIN_VERSION:?Set MARVIN_VERSION}
+    profiles: ["ops"]
+    restart: "no"
+    command: ["pnpm", "--filter", "@finance/db", "db:migrate"]
+    environment:
+      NODE_ENV: production
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set MIGRATION_DATABASE_URL in .env.ops}
+    networks:
+      - database
+    depends_on:
+      db:
+        condition: service_healthy
+
+  provision-roles:
+    image: ghcr.io/gdsantana/marvin-web:${MARVIN_VERSION:?Set MARVIN_VERSION}
+    profiles: ["ops"]
+    restart: "no"
+    command: ["pnpm", "--filter", "@finance/db", "db:provision-roles"]
+    environment:
+      NODE_ENV: production
+      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:?Set DATABASE_ADMIN_URL in .env.ops}
+    networks:
+      - database
+    depends_on:
+      db:
+        condition: service_healthy
+
+networks:
+  application:
+  database:
+    internal: true
+
+volumes:
+  postgres_data:

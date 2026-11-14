@@ -1,0 +1,98 @@
+name: Release and publish images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published stable release tag to retry, for example v1.2.3'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  packages: write
+
+concurrency:
+  group: marvin-release-publication
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update release
+        if: github.event_name == 'push'
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+      - name: Select release
+        id: selected
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RETRY_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$RETRY_TAG"
+          if [ "$RELEASE_CREATED" = true ]; then tag="$RELEASE_TAG"; fi
+          if [ -z "$tag" ]; then exit 0; fi
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          unstable=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | any')
+          if [ "$unstable" != false ]; then echo 'Not a stable published release.' >&2; exit 1; fi
+          assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[] | select(.name == "marvin-deploy.tar.gz")] | length')
+          if [ "$assets" != 0 ]; then echo 'Deployment bundle already exists; refusing to republish this version.' >&2; exit 1; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Checkout release
+        if: steps.selected.outputs.tag != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.selected.outputs.tag }}
+          persist-credentials: false
+      - name: Set up QEMU
+        if: steps.selected.outputs.tag != ''
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - name: Set up Buildx
+        if: steps.selected.outputs.tag != ''
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GHCR
+        if: steps.selected.outputs.tag != ''
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish web
+        if: steps.selected.outputs.tag != ''
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/docker/web.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/gdsantana/marvin-web:${{ steps.selected.outputs.tag }}
+      - name: Publish MCP
+        if: steps.selected.outputs.tag != ''
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/docker/mcp.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/gdsantana/marvin-mcp:${{ steps.selected.outputs.tag }}
+      - name: Attach deployment bundle after both images are published
+        if: steps.selected.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.selected.outputs.tag }}
+        run: |
+          mkdir -p bundle
+          cp infra/compose.release.yml bundle/compose.yml
+          cp scripts/install-homelab.sh scripts/update-homelab.sh .env.example .env.ops.example bundle/
+          printf '%s\n' "$RELEASE_TAG" > bundle/version
+          tar -C bundle -czf marvin-deploy.tar.gz compose.yml install-homelab.sh update-homelab.sh version .env.example .env.ops.example
+          cp scripts/install.sh install.sh
+          gh release upload "$RELEASE_TAG" install.sh --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" marvin-deploy.tar.gz --repo "$GITHUB_REPOSITORY"

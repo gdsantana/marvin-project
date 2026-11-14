@@ -13,7 +13,29 @@ Aplicação pessoal de controle financeiro em reais brasileiros, com interface w
 - API HTTP autenticada e servidor MCP separado.
 - Persistência PostgreSQL com regras financeiras centralizadas.
 
-## Começar
+## Instalação no homelab
+
+Após a primeira release pública, instale a versão estável mais recente em uma VM Linux com Docker Compose:
+
+```bash
+instalador=$(mktemp)
+curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh -o "$instalador" && bash "$instalador"
+rm -f "$instalador"
+```
+
+O instalador cria as configurações e credenciais, baixa as imagens do GitHub Container Registry (GHCR), prepara o PostgreSQL e inicia Web e MCP. Ele pede a origem HTTPS e a criação da conta da interface; ao final, exibe o token bearer para conectar o agente ao MCP. Configure também um proxy privado, DNS e HTTPS. Enquanto a release ou as imagens forem privadas, é necessária autenticação conforme o [guia de instalação](docs/deployment.md#primeira-instalação-sem-clone).
+
+Para atualizar uma instalação existente, escolha uma release estável e execute no diretório de instalação:
+
+```bash
+./update-homelab.sh vX.Y.Z
+```
+
+O atualizador baixa Web e MCP da mesma versão, faz backup, aplica migrations e reinicia os dois serviços. O PostgreSQL tem ciclo de atualização separado. Revise as notas e bloqueie o acesso pelo proxy e Hermes antes da confirmação; siga o [guia de operação](docs/deployment.md#atualização-de-instalação-existente) para backups, recuperação e verificação.
+
+Releases usam Release Please: mudanças convencionais integradas à `main` acumulam-se em um PR de release. Quando esse PR é integrado, o workflow gera a tag, publica imagens Web/MCP no GHCR e anexa os arquivos de instalação. O deploy no homelab é manual. A release estará pronta para instalar quando contiver `marvin-deploy.tar.gz`.
+
+## Desenvolvimento local
 
 Requisitos: Node.js, pnpm 12 e Docker para iniciar o PostgreSQL local.
 
@@ -28,6 +50,7 @@ A separação técnica do banco está no [ADR 0012](docs/adr/0012-database-runti
 ## Documentação
 
 - [Deploy e operação no homelab](docs/deployment.md)
+- [Releases e atualização do homelab](docs/deployment.md#releases-e-deploy-com-imagens-publicadas)
 - [Migrations do banco](docs/migrations.md)
 - [Arquitetura e limites entre os pacotes](ARCHITECTURE.md)
 - [Modelo de dados e invariantes financeiros](docs/data-model.md)
