@@ -1,5 +1,5 @@
 import type {
-  CreateCashbackInput, CreateCreditPurchaseInput, CreateExpenseInput, CreateIncomeInput, CreateRefundInput,
+  CreateStatementAdjustmentInput, CreateCashbackInput, CreateCreditPurchaseInput, CreateExpenseInput, CreateIncomeInput, CreateRefundInput,
   CreateStatementInput, CreateTransferInput, DomainErrorCode, PayStatementInput,
   PreviewTransactionInput, PreviewTransactionOutput, CreateExpenseForecastInput, CategoryReport,
   RealizeExpenseForecastInput, CorrectTransactionInput, ReverseTransactionInput, TransactionAuditContext,
@@ -267,6 +267,19 @@ export class FinanceService {
       const split = splitInstallments(total, input.installmentCount), statements = await Promise.all(split.map((_, n) => this.ensureStatement(tx, card.id, dates.closingOn, dates.cycleStartOn, settings.closingDay, settings.dueDay, n)));
       const items = await tx.statements.addItems(split.map((amountMinor, index) => ({ statementId: statements[index]!.id, sourceTransactionId: transaction.id, installmentPlanId: plan.id, installmentNumber: index + 1, itemType: "purchase", amountMinor, description: `${input.description} (${index + 1}/${input.installmentCount})` })));
       return { transaction, plan, items };
+    });
+  }
+
+  async createStatementAdjustment(input: CreateStatementAdjustmentInput, key: string): Promise<Persisted<Transaction>> {
+    return this.idempotent("createStatementAdjustment", key, input, async tx => {
+      const { statement: existing, card, category, amount, planned } = await this.prepareStatementAdjustment(tx, input);
+      const statement = existing ?? await this.ensureStatement(tx, card.id, planned!.dates.closingOn, planned!.dates.cycleStartOn, planned!.settings.closingDay, planned!.settings.dueDay, 0);
+      const transaction = this.transactionFrom(input, "expense", null, key, "credit");
+      await tx.transactions.save(transaction);
+      await tx.entries.add({ transactionId: transaction.id, accountId: card.id, amountMinor: -amount });
+      await tx.allocations.addMany([{ transactionId: transaction.id, categoryId: category.id, amountMinor: -amount }]);
+      await tx.statements.addItems([{ statementId: statement.id, sourceTransactionId: transaction.id, installmentPlanId: null, installmentNumber: null, itemType: "adjustment", amountMinor: amount, description: input.description }]);
+      return transaction;
     });
   }
 
@@ -591,6 +604,10 @@ export class FinanceService {
           const statementPlan = target?.plan ?? undefined;
           return { operation: input.operation, kind: "refund", entries: [{ accountId: account.id, amountMinor: input.amountMinor }], allocations: allocations.map(item => ({ categoryId: item.categoryId, amountMinor: item.amountMinor.toString() })), ...(statementId ? { statementId } : {}), ...(statementPlan ? { statementPlan } : {}) };
         }
+        case "statement_adjustment": {
+          const { statement, card, category, amount, planned } = await this.prepareStatementAdjustment(tx, input);
+          return { operation: input.operation, kind: "expense", entries: [{ accountId: card.id, amountMinor: (-amount).toString() }], allocations: [{ categoryId: category.id, amountMinor: (-amount).toString() }], ...(statement ? { statementId: statement.id } : { statementPlan: { ...planned!.dates, dueOn: planned!.installments[0]!.dueOn } }) };
+        }
         case "statement_payment": {
           const { statement, card, bank, amount: payment, due: remaining } = await this.prepareStatementPayment(tx, input);
           return { operation: input.operation, kind: "transfer", entries: [{ accountId: bank.id, amountMinor: (-payment).toString() }, { accountId: card.id, amountMinor: payment.toString() }], allocations: [], statementId: statement.id, remainingStatementMinor: (remaining - payment).toString() };
@@ -657,6 +674,23 @@ export class FinanceService {
     if (from.id === to.id || from.currency !== to.currency) fail("CURRENCY_MISMATCH", "Transferência exige contas distintas na mesma moeda");
     this.assertAfterOpening(from, input.occurredOn); this.assertAfterOpening(to, input.occurredOn);
     return { from, to };
+  }
+
+  private async prepareStatementAdjustment(tx: TransactionContext, input: CreateStatementAdjustmentInput) {
+    this.validateInputDates(input);
+    const amount = asMinor(input.amountMinor);
+    if (amount <= 0n || amount > 9223372036854775807n || input.confirmsUnrecordedDebt !== true) return fail("VALIDATION_ERROR", "Confirme uma cobrança positiva ainda não registrada na dívida do cartão");
+    const statement = input.statementId ? await tx.statements.get(input.statementId) : null;
+    if (input.statementId && !statement) return fail("NOT_FOUND", "Fatura não encontrada");
+    if (statement && statement.status !== "open") return fail("CONFLICT", "Ajuste exige uma fatura aberta");
+    const card = await this.requireAccount(tx, input.cardAccountId);
+    if (statement && statement.cardAccountId !== card.id) return fail("VALIDATION_ERROR", "Fatura não pertence ao cartão selecionado");
+    if (card.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "Ajuste exige conta de cartão");
+    this.assertAfterOpening(card, input.occurredOn);
+    const categories = (await tx.categories.list()).filter(category => category.type === "expense" && category.parentId === null && category.name.trim().toLocaleLowerCase("pt-BR") === "ajuste de fatura");
+    if (categories.length !== 1 || categories[0]!.isArchived) return fail("CONFLICT", "A categoria Ajuste de fatura deve estar ativa e ser única. Verifique as migrations e o catálogo");
+    const planned = statement ? null : await this.prepareCreditPurchase(tx, { ...input, totalAmountMinor: input.amountMinor, installmentCount: 1, allocations: [{ categoryId: categories[0]!.id, amountMinor: input.amountMinor }] });
+    return { statement, card, category: categories[0]!, amount, planned };
   }
 
   private async prepareCashback(tx: TransactionContext, input: CreateCashbackInput) {

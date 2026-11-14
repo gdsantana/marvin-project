@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   accountWithBalanceSchema, categorySchema, cardStatementSchema, createCashbackSchema, createCreditPurchaseSchema,
-  creditCardSettingsSchema,
+  createStatementAdjustmentSchema, creditCardSettingsSchema,
   createExpenseSchema, createIncomeSchema, createRefundSchema, createTransferSchema, idSchema,
   createAccountSchema, createCategorySchema, createInstitutionSchema, createdIdResponseSchema, institutionSchema,
   createExpenseForecastSchema, correctTransactionSchema, expenseForecastCreatedResponseSchema, expenseForecastSchema,
@@ -154,6 +154,15 @@ export function createFinanceMcpServer(api: WebApiClient) {
     }));
   }
 
+  server.registerTool("adjust_statement", {
+    description: "Acrescenta uma cobrança anterior ao uso a uma fatura aberta. Conta como despesa do mês em Ajuste de fatura e aumenta a dívida. Confirme que o valor não está no saldo inicial ou em outros lançamentos. Não gera parcelas futuras.",
+    inputSchema: withIdempotencyKey(createStatementAdjustmentSchema).shape,
+  }, input => apiToolResult(async () => {
+    const { idempotencyKey, ...payload } = withIdempotencyKey(createStatementAdjustmentSchema).parse(input);
+    return api.request("v1/statements/adjustment", persistedResultSchema(transactionResponseSchema), {
+      method: "POST", body: createStatementAdjustmentSchema.parse({ ...payload, source: "hermes" }), idempotencyKey: idempotencyKey as string,
+    });
+  }));
   server.registerTool("pay_statement", {
     description: "Paga total ou parcialmente uma fatura pela API financeira.",
     inputSchema: withIdempotencyKey(payStatementSchema).shape,

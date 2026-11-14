@@ -5,7 +5,7 @@ import {
   createInstitutionSchema, createRefundSchema, createTransferSchema, createdIdResponseSchemaEnvelope,
   creditPurchaseCreatedResponseSchema, institutionsResponseSchema, monthlySummaryResponseSchema, monthlySeriesResponseSchema, categoryReportResponseSchema,
   correctTransactionSchema, expenseForecastCreatedResponseSchema, expenseForecastResponseSchema, expenseForecastSchema,
-  payStatementSchema, previewTransactionResponseEnvelopeSchema, previewTransactionSchema, realizeExpenseForecastSchema, responseSchema,
+  createStatementAdjustmentSchema, payStatementSchema, previewTransactionResponseEnvelopeSchema, previewTransactionSchema, realizeExpenseForecastSchema, responseSchema,
   reportQuerySchema, reverseTransactionSchema, persistedResultSchema, statementCloseResponseSchema, statementPaymentCreatedResponseSchema,
   statementsResponseSchema, transactionCorrectionResponseSchema, transactionCreatedResponseSchema, transactionReversedResponseSchema, transactionResponseSchema, transactionsResponseSchema,
 } from "@finance/contracts";
@@ -168,6 +168,11 @@ export async function POST(request: Request, context: { params: Promise<{ path: 
       const parsed = createRefundSchema.safeParse(raw);
       if (!parsed.success) return validationError(parsed.error);
       return await transactionResult(service.createRefund(parsed.data, key), service.transactionHistory.bind(service), parsed.data.occurredOn, 201);
+    }
+    if (route === "statements/adjustment") {
+      const parsed = createStatementAdjustmentSchema.safeParse(raw);
+      if (!parsed.success) return validationError(parsed.error);
+      return await transactionResult(service.createStatementAdjustment(parsed.data, key), service.transactionHistory.bind(service), parsed.data.occurredOn, 201);
     }
     if (route === "statements/payment") {
       const parsed = payStatementSchema.safeParse(raw);

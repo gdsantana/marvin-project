@@ -46,4 +46,12 @@ O preflight e a adição das constraints devem ser executados em uma transação
 
 ## Carga inicial de categorias
 
-Depois de aplicar as migrations, `pnpm db:bootstrap-categories` usa `DATABASE_URL` para cadastrar as 13 categorias básicas em uma transação. O comando pode rodar em produção e ser repetido; preserva registros existentes, incluindo categorias arquivadas, e não cria dados financeiros fictícios. A identificação considera nome sem diferença de caixa/espaços externos, tipo e categoria raiz. Um bloqueio da tabela serializa escritas durante a carga, sem nova constraint ou migration. Execução via Compose em [deployment.md](deployment.md). O teste de integração cobre replay concorrente, preservação de dados e rollback em PostgreSQL descartável.
+Depois de aplicar as migrations, `pnpm db:bootstrap-categories` usa `DATABASE_URL` para cadastrar as 14 categorias básicas em uma transação. O comando pode rodar em produção e ser repetido; preserva registros existentes, incluindo categorias arquivadas, e não cria dados financeiros fictícios. A identificação considera nome sem diferença de caixa/espaços externos, tipo e categoria raiz. Um bloqueio da tabela serializa escritas durante a carga, sem nova constraint ou migration. Execução via Compose em [deployment.md](deployment.md). O teste de integração cobre replay concorrente, preservação de dados e rollback em PostgreSQL descartável.
+
+### Categoria de ajuste de fatura
+
+A migration `0004_statement_adjustment_category` inicializa a categoria raiz de
+despesa `Ajuste de fatura`, preservando uma categoria existente de mesmo nome
+normalizado e tipo. O bootstrap de categorias também a inclui para ambientes de
+desenvolvimento que tenham limpado o catálogo. Esta migration cria somente a
+categoria; o fluxo de lançamento usa a categoria ativa conforme ADR 0014.

@@ -8,7 +8,7 @@ export async function bootstrapCategories(db: Database) {
     await tx.execute(sql`LOCK TABLE categories IN SHARE ROW EXCLUSIVE MODE`);
     let inserted = 0;
     for (const [type, names] of [
-      ["expense", ["Alimentação", "Mercado", "Transporte", "Lazer", "Esporte", "Saúde", "Moradia", "Educação", "Compras", "Serviços"]],
+      ["expense", ["Alimentação", "Mercado", "Transporte", "Lazer", "Esporte", "Saúde", "Moradia", "Educação", "Compras", "Serviços", "Ajuste de fatura"]],
       ["income", ["Salário", "Rendimentos", "Outras receitas"]],
     ] as const) {
       for (const name of names) {

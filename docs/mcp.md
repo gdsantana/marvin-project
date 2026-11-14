@@ -58,3 +58,13 @@ pnpm --filter @finance/mcp dev
 ```
 
 Configure `MCP_PORT`, `MCP_HERMES_BEARER_TOKEN`, `MCP_API_URL` e `MCP_API_TOKEN`. O servidor recusa inicialização sem tokens fortes e distintos.
+
+### `adjust_statement`
+
+Encaminha `POST /api/v1/statements/adjustment` com `source: hermes` e chave de
+idempotência obrigatória. Usa os mesmos campos do contrato HTTP: cartão, valor
+positivo da diferença, data/descrição e fatura opcional. Exige confirmação
+`confirmsUnrecordedDebt: true`: perguntar ao usuário se o valor já consta no
+saldo inicial ou em outros lançamentos antes de escrever. Conta como despesa
+do mês em `Ajuste de fatura`, aumenta a dívida e não repete em meses futuros.
+`preview_transaction` aceita `operation: statement_adjustment`.
