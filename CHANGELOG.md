@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/gdsantana/marvin-project/compare/v0.1.0...v0.2.0) (2026-11-14)
+
+
+### Features
+
+* add manual statement adjustments as monthly expenses ([31e80c3](https://github.com/gdsantana/marvin-project/commit/31e80c37735828eb38e33497e5727ff2027d562f))
+* adiciona landing page e instalação via curl ([3b66a32](https://github.com/gdsantana/marvin-project/commit/3b66a32dbe5bc198c046a96652e126ddb0348b45))
+* adicionar ajuste manual de fatura como despesa do mês ([1b32acc](https://github.com/gdsantana/marvin-project/commit/1b32acc90269d757028d1597a7c6008d2a6808ea))
+* landing page e instalação via curl ([5a8ec42](https://github.com/gdsantana/marvin-project/commit/5a8ec42c3d5e96ecce350f396569a5a0bab0ac6b))
+
+
+### Bug Fixes
+
+* repete prompts inválidos e seleciona portas livres na instalação ([c0b29b7](https://github.com/gdsantana/marvin-project/commit/c0b29b7a1bb7b59906936266ba060eaf992b8d83))
+* unifica instalador com validação interativa e seleção de portas ([1c31b8f](https://github.com/gdsantana/marvin-project/commit/1c31b8f6d02b35cbba0cc445a50104a6d539a2c8))
+
 ## 0.1.0 (2026-11-14)
 
 
