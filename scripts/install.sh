@@ -2,11 +2,16 @@
 set -Eeuo pipefail
 set +x
 
+main() {
 for command in curl tar; do
   command -v "$command" >/dev/null || { echo "Comando ausente: $command" >&2; exit 1; }
 done
 [[ $# -le 2 ]] || { echo 'Uso: bash install.sh [vX.Y.Z] [diretório]' >&2; exit 1; }
-[[ -t 0 ]] || { echo 'Execute o instalador em um terminal interativo.' >&2; exit 1; }
+# Keep script input separate from the terminal used by installation prompts.
+if ! { exec 3</dev/tty; } 2>/dev/null; then
+  echo 'Execute o instalador em um terminal interativo.' >&2; exit 1
+fi
+[[ -t 3 ]] || { echo 'Execute o instalador em um terminal interativo.' >&2; exit 1; }
 repo=gdsantana/marvin-project
 url="https://github.com/$repo"
 tag=${1:-}
@@ -48,4 +53,8 @@ for file in compose.yml install-homelab.sh update-homelab.sh version .env.exampl
   [[ -f $install_dir/$file && ! -L $install_dir/$file ]] && cmp -s "$work/$file" "$install_dir/$file" || { echo 'Conflito no diretório de instalação; arquivos existentes foram preservados.' >&2; exit 1; }
 done
 printf 'Iniciando instalação da release %s em %s.\n' "$tag" "$install_dir"
-bash "$install_dir/install-homelab.sh"
+bash "$install_dir/install-homelab.sh" <&3
+}
+
+# Parse the complete installer before executing it when stdin is a curl pipe.
+main "$@"

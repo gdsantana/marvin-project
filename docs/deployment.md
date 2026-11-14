@@ -235,12 +235,12 @@ Requer Bash, `curl`, `tar`, `openssl`, `flock`, `sha256sum`, Docker Compose com 
 Para releases públicas, baixe e execute o instalador em um terminal. Ele consulta a release estável mais recente, baixa o pacote correspondente e inicia a instalação em `~/marvin`, que deve estar vazio ou ainda não existir:
 
 ```bash
-instalador=$(mktemp)
-curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh -o "$instalador" && bash "$instalador"
-rm -f "$instalador"
+curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh | bash
 ```
 
-Esse link de download pode ser divulgado na landing page. Ele aponta para a release marcada como mais recente no GitHub e só estará disponível após o primeiro workflow de publicação concluir. Se a release tiver acabado de ser criada, o pacote de deploy pode ainda não estar disponível; aguarde o workflow terminar. Para escolher uma versão e um diretório, use `bash "$instalador" vX.Y.Z /caminho/vazio` antes de remover o arquivo. O download também pode ser fixado a uma release, substituindo `latest/download` por `download/vX.Y.Z` na URL e passando a mesma tag ao instalador.
+O instalador lê as respostas pelo terminal, separado do pipe. Não é necessário salvar o script manualmente; o pacote da release é baixado e extraído em uma pasta temporária interna, removida ao terminar. A instalação continua interativa e exige configuração.
+
+Esse link de download pode ser divulgado na landing page. Ele aponta para a release marcada como mais recente no GitHub e só estará disponível após o primeiro workflow de publicação concluir. Se a release tiver acabado de ser criada, o pacote de deploy pode ainda não estar disponível; aguarde o workflow terminar. Para escolher uma versão e um diretório, use `curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh | bash -s -- vX.Y.Z /caminho/vazio`. O download também pode ser fixado a uma release, substituindo `latest/download` por `download/vX.Y.Z` na URL e passando a mesma tag ao instalador.
 
 Enquanto o repositório for privado, a URL pública do `curl` não fornece o script anonimamente. Após autenticar `gh` com acesso à release, use:
 
