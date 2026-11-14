@@ -18,6 +18,8 @@ flowchart LR
 
 Dockerfiles e `infra/compose.yml` estão no checkout. Compose define `web`, `mcp`, `db` e `migrate` sob profile `ops`; o serviço de migration é executado explicitamente. Deploy real, proxy, backup e restauração não foram verificados no homelab. Ver [ADR 0003](docs/adr/0003-homelab-deployment.md) e [docs/deployment.md](docs/deployment.md).
 
+A instalação é coordenada por um único `scripts/install.sh`, publicado sem transformação nas releases; seus prompts de HTTPS, portas e credenciais independem de scripts presentes no bundle. A criação da conta chama o provisionamento existente na imagem Web, com credenciais por stdin e sem acesso SQL no host.
+
 O fluxo de release configurado usa uma versão para o repositório inteiro e publica imagens Web/MCP no GHCR. A atualização do homelab é manual: um script obtém o Compose da release selecionada, baixa as imagens e executa backup e migration antes de iniciar os serviços, sem atualizar o PostgreSQL. O fluxo e a recuperação ainda precisam ser ensaiados no homelab. Ver [ADR 0013](docs/adr/0013-release-images.md).
 
 ## 2. Workspaces e limites

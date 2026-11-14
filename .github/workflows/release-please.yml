@@ -90,9 +90,9 @@ jobs:
         run: |
           mkdir -p bundle
           cp infra/compose.release.yml bundle/compose.yml
-          cp scripts/install-homelab.sh scripts/update-homelab.sh .env.example .env.ops.example bundle/
+          cp scripts/update-homelab.sh .env.example .env.ops.example bundle/
           printf '%s\n' "$RELEASE_TAG" > bundle/version
-          tar -C bundle -czf marvin-deploy.tar.gz compose.yml install-homelab.sh update-homelab.sh version .env.example .env.ops.example
+          tar -C bundle -czf marvin-deploy.tar.gz compose.yml update-homelab.sh version .env.example .env.ops.example
           cp scripts/install.sh install.sh
           gh release upload "$RELEASE_TAG" install.sh --repo "$GITHUB_REPOSITORY" --clobber
           gh release upload "$RELEASE_TAG" marvin-deploy.tar.gz --repo "$GITHUB_REPOSITORY"

@@ -23,6 +23,8 @@ curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/
 
 Execute em um terminal interativo. A instalação usa `~/marvin`, que deve estar vazio ou ainda não existir, sem precisar salvar o script ou preparar um diretório intermediário. Para escolher uma versão e outro diretório, consulte o [guia de instalação](docs/deployment.md#primeira-instalação-sem-clone).
 
+O mesmo `scripts/install.sh` da revisão é publicado nas releases. Ele repete entradas inválidas de HTTPS, usuário e senha. Se a porta 3000 ou 3001 estiver ocupada, pede outra porta para a Web e usa a seguinte para o MCP, por exemplo 4000 e 4001.
+
 O instalador cria as configurações e credenciais, baixa as imagens do GitHub Container Registry (GHCR), prepara o PostgreSQL e inicia Web e MCP. Ele pede a origem HTTPS e a criação da conta da interface; ao final, exibe o token bearer para conectar o agente ao MCP. Configure também um proxy privado, DNS e HTTPS. Enquanto a release ou as imagens forem privadas, é necessária autenticação conforme o [guia de instalação](docs/deployment.md#primeira-instalação-sem-clone).
 
 Para atualizar uma instalação existente, escolha uma release estável e execute no diretório de instalação:

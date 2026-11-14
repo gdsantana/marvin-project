@@ -15,6 +15,17 @@ read -r answer
 [[ $answer == https://marvin.example.lan ]]
 printf 'terminal input received\n'
 MOCK
+# Mock the operational function to isolate download and version checks.
+python3 - "$source_dir/scripts/install.sh" "$tmp/package/install-homelab.sh" "$tmp/work/install.sh" <<'PYTEST'
+from pathlib import Path
+import sys
+source, operational, target = map(Path, sys.argv[1:])
+text = source.read_text()
+prefix, rest = text.split('install_homelab() (\n', 1)
+_, suffix = rest.split('\nmain() {', 1)
+target.write_text(prefix + 'install_homelab() (\ncd "$1"\n' + operational.read_text() + ')\n\nmain() {' + suffix)
+PYTEST
+printf '#!/usr/bin/env bash\nexit 99\n' > "$tmp/package/install-homelab.sh"
 tar -czf "$tmp/bundle.tar.gz" -C "$tmp/package" compose.yml install-homelab.sh update-homelab.sh version .env.example .env.ops.example
 cat > "$tmp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash

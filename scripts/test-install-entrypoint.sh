@@ -10,6 +10,17 @@ cat > "$tmp/bundle/install-homelab.sh" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' started > "$TEST_MARKER"
 MOCK
+# Mock the operational function to isolate download and version checks.
+python3 - "$source_dir/scripts/install.sh" "$tmp/bundle/install-homelab.sh" "$tmp/entrypoint.sh" <<'PYTEST'
+from pathlib import Path
+import sys
+source, operational, target = map(Path, sys.argv[1:])
+text = source.read_text()
+prefix, rest = text.split('install_homelab() (\n', 1)
+_, suffix = rest.split('\nmain() {', 1)
+target.write_text(prefix + 'install_homelab() (\ncd "$1"\n' + operational.read_text() + ')\n\nmain() {' + suffix)
+PYTEST
+printf '#!/usr/bin/env bash\nexit 99\n' > "$tmp/bundle/install-homelab.sh"
 tar -C "$tmp/bundle" -czf "$tmp/archive.tar.gz" compose.yml install-homelab.sh update-homelab.sh version .env.example .env.ops.example
 cat > "$tmp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
@@ -35,16 +46,18 @@ MOCK
 chmod +x "$tmp/bin/"*
 export PATH="$tmp/bin:$PATH" TEST_ARCHIVE="$tmp/archive.tar.gz" TEST_MARKER="$tmp/started" HOME="$tmp/home"
 mkdir -p "$HOME"
-script -q -e -c "bash '$source_dir/scripts/install.sh'" /dev/null > "$tmp/public.log"
+script -q -e -c "bash '$tmp/entrypoint.sh'" /dev/null > "$tmp/public.log"
 test -f "$TEST_MARKER" && test -f "$HOME/marvin/version"
 rm "$TEST_MARKER"
 mkdir -p "$tmp/existing"
 printf 'keep\n' > "$tmp/existing/user-file"
-if script -q -e -c "bash '$source_dir/scripts/install.sh' v0.1.0 '$tmp/existing'" /dev/null > "$tmp/existing.log"; then echo 'Existing directory was accepted' >&2; exit 1; fi
+if script -q -e -c "bash '$tmp/entrypoint.sh' v0.1.0 '$tmp/existing'" /dev/null > "$tmp/existing.log"; then echo 'Existing directory was accepted' >&2; exit 1; fi
 test "$(cat "$tmp/existing/user-file")" = keep && test ! -e "$TEST_MARKER"
-TEST_PRIVATE=1 script -q -e -c "bash '$source_dir/scripts/install.sh' v0.1.0 '$tmp/private'" /dev/null > "$tmp/private.log"
+# New bundles no longer contain an operational installer.
+tar -C "$tmp/bundle" -czf "$TEST_ARCHIVE" compose.yml update-homelab.sh version .env.example .env.ops.example
+TEST_PRIVATE=1 script -q -e -c "bash '$tmp/entrypoint.sh' v0.1.0 '$tmp/private'" /dev/null > "$tmp/private.log"
 test -f "$TEST_MARKER"
 rm "$TEST_MARKER"
-if script -q -e -c "bash '$source_dir/scripts/install.sh' v0.2.0 '$tmp/wrong'" /dev/null > "$tmp/wrong.log"; then echo 'Mismatched bundle was accepted' >&2; exit 1; fi
+if script -q -e -c "bash '$tmp/entrypoint.sh' v0.2.0 '$tmp/wrong'" /dev/null > "$tmp/wrong.log"; then echo 'Mismatched bundle was accepted' >&2; exit 1; fi
 test ! -e "$TEST_MARKER" && test ! -e "$tmp/wrong"
 printf 'install.sh: public, private, existing-data and version checks passed\n'
