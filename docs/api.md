@@ -287,3 +287,17 @@ Consultas de transações retornam a transação efetiva, lista de revisões (mo
 Contas e previsões aceitam somente `BRL`. Relatórios mensais agrupam receita, despesa e saldo por moeda, sem conversão. `GET /v1/reports/monthly-series?from=YYYY-MM-DD&to=YYYY-MM-DD` retorna `{ "value": [...] }`, com um `monthlySummaryResponseSchema` por mês e intervalo inclusivo.
 
 Leituras de faturas e previsões aceitam `includePending=true|false` opcional para incluir itens pendentes do período na resposta. O status da fatura é derivado dos itens e pagamentos; uma fatura fechada com saldo restante zero é `paid`. Detalhes de conta incluem `creditBalanceMinor`, exposição assinada do cartão, e `canReverse`, indicando se a operação pode ser revertida pelas regras atuais.
+
+### POST `/api/v1/statements/adjustment`
+
+Exige autenticação e `Idempotency-Key`. Corpo: `cardAccountId`, `amountMinor`
+positivo em centavos, `confirmsUnrecordedDebt: true`, `occurredOn`, `description`
+e demais metadados de transação. `statementId` opcional escolhe uma fatura aberta
+do cartão; ausente, resolve o ciclo por `postedOn ?? occurredOn`, criando-o se
+necessário. Retorna o envelope de transação criada com `replayed`, HTTP 201.
+
+Acrescenta apenas a diferença ainda não registrada na dívida, classificada como
+despesa em `Ajuste de fatura`. Não gera parcelas futuras. Categoria inexistente,
+arquivada ou ambígua e fatura fechada causam conflito. Preview usa
+`POST /api/v1/transactions/preview` com `operation: "statement_adjustment"` e os
+mesmos campos. O saldo inicial não é reescrito.

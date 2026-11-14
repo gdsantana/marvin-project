@@ -11,5 +11,5 @@ test("infrequent registrations remain accessible only through the settings actio
 });
 
 test("the daily creation menu retains financial operations", () => {
-  assert.deepEqual(primaryActions, ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "close", "forecast"]);
+  assert.deepEqual(primaryActions, ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "statementAdjustment", "close", "forecast"]);
 });

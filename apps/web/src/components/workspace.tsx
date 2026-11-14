@@ -231,9 +231,10 @@ export function Workspace({ section }: { section: Section }) {
         setPendingReverseReview({ signature, reason: String(entries.reason ?? ""), replacement }); setBusy(false); return;
       }
     }
-    if (["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "realizeForecast"].includes(form)) body.source = "manual";
+    if (["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "statementAdjustment", "realizeForecast"].includes(form)) body.source = "manual";
     for (const key of ["institutionId", "parentId", "categoryId"]) if (body[key] === "") body[key] = null;
     for (const key of ["postedOn", "counterpartyName", "notes"]) if (body[key] === "") body[key] = null;
+    if (form === "statementAdjustment" && body.statementId === "") delete body.statementId;
     if (body.cardStatementId === "") delete body.cardStatementId;
     delete body.allocationCategoryId; delete body.allocationAmount; delete body.allocationMode;
     if (form === "expense" || form === "purchase") delete body.categoryId;
@@ -252,16 +253,17 @@ export function Workspace({ section }: { section: Section }) {
       delete body.creditLimitMinor; delete body.closingDay; delete body.dueDay;
     }
     if (form === "configureCard") delete body.description;
+    if (form === "statementAdjustment") body.confirmsUnrecordedDebt = entries.confirmsUnrecordedDebt === "on";
     const endpoint: Record<Action, string> = {
       institution: "/api/v1/institutions", account: "/api/v1/accounts", configureCard: "/api/v1/cards/configuration", category: "/api/v1/categories",
       income: "/api/v1/transactions/income", expense: "/api/v1/transactions/expense", transfer: "/api/v1/transactions/transfer",
       purchase: "/api/v1/transactions/credit-purchase", cashback: "/api/v1/transactions/cashback", refund: "/api/v1/transactions/refund",
-      payment: "/api/v1/statements/payment", close: "/api/v1/statements/close",
+      statementAdjustment: "/api/v1/statements/adjustment", payment: "/api/v1/statements/payment", close: "/api/v1/statements/close",
       forecast: "/api/v1/expense-forecasts", realizeForecast: `/api/v1/expense-forecasts/${selectedForecast?.id}/realize`,
       cancelForecast: `/api/v1/expense-forecasts/${selectedForecast?.id}/cancel`, correct: "/api/v1/transactions/correct", reverse: "/api/v1/transactions/reverse",
     };
     const path = endpoint[form];
-    const operation: Record<string, string> = { income: "income", expense: "expense", transfer: "transfer", purchase: "credit_purchase", cashback: "cashback", refund: "refund", payment: "statement_payment" };
+    const operation: Record<string, string> = { income: "income", expense: "expense", transfer: "transfer", purchase: "credit_purchase", cashback: "cashback", refund: "refund", statementAdjustment: "statement_adjustment", payment: "statement_payment" };
     const previewBody = operation[form] ? { ...body, operation: operation[form] } : null;
     const signature = JSON.stringify({ path, body });
     if (previewBody && pendingPreview?.signature !== signature) {
@@ -325,7 +327,7 @@ export function Workspace({ section }: { section: Section }) {
 function EmptyInline({ text }: { text: string }) { return <Empty><EmptyDescription>{text}</EmptyDescription></Empty>; }
 
 function ResourceSection({ title, detail, action, setForm, rows, transactionActions }: { title: string; detail: string; action?: Action; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
-  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{action && <Button onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button>}</div></div></CardHeader><CardContent><Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} /></CardContent></Card>;
+  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{action === "close" && <Button variant="outline" onClick={() => setForm("statementAdjustment")}>Ajustar fatura</Button>}{action && <Button onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button>}</div></div></CardHeader><CardContent><Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} /></CardContent></Card>;
 }
 
 function Rows({ rows, empty, transactionActions }: { rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; empty: string; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {

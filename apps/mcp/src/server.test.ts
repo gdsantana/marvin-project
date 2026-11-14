@@ -34,6 +34,7 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
       relatedTransactionId: null, source: "hermes", entries: [], allocations: [], revisions: [],
       reversalOfTransactionId: null, reversedByTransactionIds: [],
     };
+    if (url.pathname === "/api/v1/statements/adjustment") return Response.json({ ok: true, data: { value: historyTransaction, replayed: false } }, { status: 201 });
     const expenseForecast = {
       id: "4e8a0380-a64a-431c-a0b2-8d8f24faab4a", accountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54",
       expectedOn: "2026-10-10", amountMinor: "2500", categoryId: null, description: "Lanche", currency: "BRL",
@@ -96,6 +97,7 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
     assert.ok(tools.some(tool => tool.name === "create_income"));
     assert.ok(tools.some(tool => tool.name === "preview_transaction"));
     assert.ok(tools.some(tool => tool.name === "pay_statement"));
+    assert.ok(tools.some(tool => tool.name === "adjust_statement"));
     for (const name of ["get_expense_forecasts", "create_expense_forecast", "realize_expense_forecast", "cancel_expense_forecast", "correct_transaction", "reverse_transaction"]) {
       assert.ok(tools.some(tool => tool.name === name), `missing ${name}`);
     }
@@ -135,6 +137,15 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
     assert.equal(payment.isError, undefined);
     assert.equal(requests.at(-1)?.url, "http://web.test/api/v1/statements/payment");
     assert.equal(requests.at(-1)?.headers.get("idempotency-key"), "statement-payment-1");
+    assert.equal((requests.at(-1)?.body as { source: string }).source, "hermes");
+
+    const adjustment = await client.callTool({ name: "adjust_statement", arguments: {
+      idempotencyKey: "statement-adjustment-1", cardAccountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54",
+      amountMinor: "30000", confirmsUnrecordedDebt: true, occurredOn: "2026-10-01", description: "Diferença da fatura",
+    } });
+    assert.equal(adjustment.isError, undefined);
+    assert.equal(requests.at(-1)?.url, "http://web.test/api/v1/statements/adjustment");
+    assert.equal(requests.at(-1)?.headers.get("idempotency-key"), "statement-adjustment-1");
     assert.equal((requests.at(-1)?.body as { source: string }).source, "hermes");
 
     const preview = await client.callTool({ name: "preview_transaction", arguments: { transaction: {

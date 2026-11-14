@@ -162,3 +162,23 @@ Após recarga automática da configuração pelo servidor dev, `GET /api/auth/se
 ### Gate final para pull request — 2026-11-07
 
 `pnpm typecheck`, `pnpm lint`, `git diff --check` e `bash scripts/test-postgres.sh` passaram no estado final: 79 testes, zero falhas e zero skips. A build completa foi repetida em cópia temporária isolada e passou. Remoção do cadeado e correção do foco foram verificadas em Chromium a 390 e 1440 px: apenas contorno externo arredondado, sem outline no input interno, com navegação por teclado preservada.
+
+## Ajuste manual de fatura — 2026-11-13
+
+Validação local na branch `feat/ajuste-de-fatura`:
+
+- `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false pnpm typecheck`: passou.
+- `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false pnpm lint`: passou.
+- `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false pnpm build`: passou.
+- `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false bash scripts/test-postgres.sh`: 87 testes passaram, zero skips, em PostgreSQL descartável.
+- `git diff --check`: passou.
+
+Cobertura nova: categoria por migration e replay; preview sem escrita; despesa
+por categoria no mês informado; valor positivo e data de abertura; categoria
+arquivada; fatura fechada; API com repetição concorrente e chave divergente;
+criação de ciclo quando não há fatura; encaminhamento HTTP autenticado pelo MCP.
+
+Não houve migration em banco real nem validação visual em viewport mobile ou
+desktop. O build mantém o aviso existente sobre o plugin Next.js no ESLint.
+Dívida já incluída no saldo inicial não é redistribuída por este fluxo; exige
+confirmação explícita de que a diferença ainda não foi registrada.

@@ -479,3 +479,37 @@ test("monthly series preserves ISO years below 100 and the final supported year"
   assert.equal(final.length, 1);
   assert.equal(final[0]?.to, "9999-12-31");
 });
+
+test("ajuste de fatura reconhece somente a diferença como despesa e dívida, sem parcelas futuras", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const categoryId = await service.createCategory({ name: "Ajuste de fatura", type: "expense", parentId: null }, "adjust-category");
+  const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: -80000n, openingDate: "2026-10-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "adjust-card");
+  const statement = await service.createStatement({ cardAccountId: card, cycleStartOn: "2026-10-20", closingOn: "2026-11-20", dueOn: "2026-11-28" });
+  const input = { ...metadata, cardAccountId: card, statementId: statement.id, amountMinor: "30000", confirmsUnrecordedDebt: true as const };
+  const preview = await service.previewTransaction({ ...input, operation: "statement_adjustment" });
+  assert.deepEqual(preview.allocations, [{ categoryId, amountMinor: "-30000" }]);
+  assert.equal(repository.entries.length, 0);
+  const created = await service.createStatementAdjustment(input, "adjust-once");
+  assert.equal((await service.createStatementAdjustment(input, "adjust-once")).replayed, true);
+  assert.equal(repository.entries.length, 1);
+  assert.equal(repository.entries[0]!.amountMinor, -30000n);
+  assert.equal(repository.items.length, 1);
+  assert.equal(repository.items[0]!.itemType, "adjustment");
+  assert.equal(repository.items[0]!.installmentPlanId, null);
+  assert.equal(repository.plans.size, 0);
+  assert.equal(repository.allocations[0]!.categoryId, categoryId);
+  assert.equal((await service.statementDetail(statement.id)).billedMinor, 30000n);
+  const report = await service.categoryReport("2026-10-01", "2026-10-31");
+  assert.equal(report.find(row => row.categoryId === categoryId)?.expenseMinor, "30000");
+  assert.equal(created.value.kind, "expense");
+  await assert.rejects(service.createStatementAdjustment({ ...input, amountMinor: "31000" }, "adjust-once"), { code: "IDEMPOTENCY_CONFLICT" });
+  for (const amountMinor of ["0", "-1", "9223372036854775808"]) await assert.rejects(service.createStatementAdjustment({ ...input, amountMinor }, `invalid-${amountMinor}`), { code: "VALIDATION_ERROR" });
+  await assert.rejects(service.createStatementAdjustment({ ...input, occurredOn: "2026-09-30" }, "adjust-before-opening"), { code: "VALIDATION_ERROR" });
+  repository.categories.get(categoryId)!.isArchived = true;
+  await assert.rejects(service.createStatementAdjustment(input, "adjust-archived"), { code: "CONFLICT" });
+  repository.categories.get(categoryId)!.isArchived = false;
+  await service.closeStatement(statement.id, "adjust-close");
+  await assert.rejects(service.previewTransaction({ ...input, operation: "statement_adjustment" }), { code: "CONFLICT" });
+  await assert.rejects(service.createStatementAdjustment(input, "adjust-closed"), { code: "CONFLICT" });
+  assert.equal(repository.entries.length, 1);
+});

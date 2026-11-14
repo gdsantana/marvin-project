@@ -693,3 +693,18 @@ Não implementar agora schema Drizzle, migrations, API, ferramentas MCP, UI, int
 ## 18. Identidade local implementada
 
 `auth_users` guarda ID UUID estável, username normalizado único, hash scrypt e estado ativo. Uma constraint admite apenas a conta proprietária, sem associar dados financeiros ao usuário. `auth_sessions` vincula usuário, hash SHA-256 do token opaco, token CSRF e expiração. `auth_login_attempts` persiste o contador global com janela de 15 minutos. Essas entidades não alteram saldos ou histórico financeiro. Cadastro público, espaços e participação ficam para a [issue #9](https://github.com/gdsantana/marvin-project/issues/9). Ver ADR 0011.
+
+## 19. Ajuste manual de fatura implementado
+
+Complementa §§4.9–4.11 e 6: diferença positiva de cobranças anteriores ao uso pode
+ser registrada sem conhecer parcelas pagas/restantes. É uma transação `expense`,
+com uma entrada negativa no cartão, uma alocação integral em `Ajuste de fatura`
+e um item `adjustment` sem plano. Conta nas despesas pela data da operação
+informada, sem reconstruir a compra antiga nem gerar faturas futuras.
+
+O valor informado é a diferença a acrescentar, não o total da fatura. O caller
+confirma que a dívida não consta no saldo inicial ou em outros lançamentos. Este
+fluxo não redistribui dívida já reconhecida no saldo inicial. Só aceita fatura
+aberta do cartão selecionado; sem fatura explícita, usa o ciclo da data de
+postagem/operação e cria a fatura se necessário. Preview não grava; commit é
+atômico e idempotente. Ver ADR 0014.

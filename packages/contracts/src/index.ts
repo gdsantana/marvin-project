@@ -94,6 +94,11 @@ export const transactionAuditContextSchema = z.object({ actor: z.string().trim()
 export const createStatementSchema = z.object({
   cardAccountId: idSchema, cycleStartOn: dateSchema, closingOn: dateSchema, dueOn: dateSchema,
 });
+export const createStatementAdjustmentSchema = transactionMetadataSchema.extend({
+  cardAccountId: idSchema, statementId: idSchema.optional(), amountMinor: positiveMinorAmountSchema,
+  confirmsUnrecordedDebt: z.literal(true),
+});
+export type CreateStatementAdjustmentInput = z.infer<typeof createStatementAdjustmentSchema>;
 export const payStatementSchema = transactionMetadataSchema.extend({ statementId: idSchema, fromAccountId: idSchema, amountMinor: positiveMinorAmountSchema });
 export const reportQuerySchema = z.object({ from: dateSchema, to: dateSchema, currency: currencySchema.optional() }).refine(value => value.from <= value.to, { path: ["to"], message: "A data final deve ser igual ou posterior à inicial" });
 export const idempotentRequestSchema = z.object({ idempotencyKey: idempotencyKeySchema });
@@ -176,7 +181,8 @@ export const previewCreditPurchaseSchema = createCreditPurchaseSchema.extend({ o
 export const previewCashbackSchema = createCashbackSchema.extend({ operation: z.literal("cashback") });
 export const previewRefundSchema = createRefundSchema.extend({ operation: z.literal("refund") });
 export const previewStatementPaymentSchema = payStatementSchema.extend({ operation: z.literal("statement_payment") });
-export const previewTransactionSchema = z.discriminatedUnion("operation", [previewIncomeSchema, previewExpenseSchema, previewTransferSchema, previewCreditPurchaseSchema, previewCashbackSchema, previewRefundSchema, previewStatementPaymentSchema]);
+export const previewStatementAdjustmentSchema = createStatementAdjustmentSchema.extend({ operation: z.literal("statement_adjustment") });
+export const previewTransactionSchema = z.discriminatedUnion("operation", [previewStatementAdjustmentSchema, previewIncomeSchema, previewExpenseSchema, previewTransferSchema, previewCreditPurchaseSchema, previewCashbackSchema, previewRefundSchema, previewStatementPaymentSchema]);
 export const previewTransactionResponseSchema = z.object({
   operation: z.string(), kind: transactionKindSchema,
   entries: z.array(z.object({ accountId: idSchema, amountMinor: minorAmountSchema })),

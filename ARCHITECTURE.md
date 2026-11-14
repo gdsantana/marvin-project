@@ -135,3 +135,11 @@ A modelagem detalhada e os casos de aceite permanecem em [docs/data-model.md](do
 ## 10. Investimentos — futuro, fora do MVP
 
 Investimentos continuam fora do escopo explicitamente autorizado. A proposta está em [docs/data-model.md §17](docs/data-model.md#17-investimentos--proposta-futura) e [ADR 0001](docs/adr/0001-investment-accounting.md). Não há código, schema ou migrations de investimentos nesta entrega.
+
+## Ajuste manual de fatura
+
+`FinanceService.createStatementAdjustment` registra diferença positiva ainda não
+reconhecida na dívida em uma fatura aberta, como despesa do mês na categoria raiz
+`Ajuste de fatura`, inicializada pela migration 0004. UI e MCP usam a API HTTP e o
+mesmo preview/commit. Não há plano de parcelas nem repetição automática. Ver
+[ADR 0014](docs/adr/0014-statement-adjustment.md).
