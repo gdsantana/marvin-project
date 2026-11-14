@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/gdsantana/marvin-project/compare/v0.2.0...v0.2.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deploy:** update public releases without GitHub CLI ([a61a9d7](https://github.com/gdsantana/marvin-project/commit/a61a9d7bc965e59389fe0eec60491e20c1f795ca))
+
 ## [0.2.0](https://github.com/gdsantana/marvin-project/compare/v0.1.0...v0.2.0) (2026-11-14)
 
 
