@@ -85,6 +85,9 @@ test("database roles isolate runtime from migrations and keep login and finance 
     await service.closeStatement(purchase.value.items[0]!.statementId, "role-close");
     await service.payStatement({ ...meta, statementId: purchase.value.items[0]!.statementId, fromAccountId: checking, amountMinor: "100" }, "role-payment");
     assert.equal(await service.accountBalance(card), -1000n);
+    await service.correctOpeningBalance({ accountId: card, expectedOpeningBalanceMinor: "0", openingBalanceMinor: "-4500", reason: "Corrigir abertura" }, "role-opening-correction");
+    assert.equal(await service.accountBalance(card), -5500n);
+    await assert.rejects(app.pool.query("UPDATE accounts SET name = 'forbidden' WHERE id = $1", [card]), { code: "42501" });
     const permissions = await app.pool.query("SELECT has_table_privilege(current_user, 'account_entries', 'UPDATE') AS mutable, has_schema_privilege(current_user, 'public', 'CREATE') AS ddl");
     assert.deepEqual(permissions.rows[0], { mutable: false, ddl: false });
   } finally {

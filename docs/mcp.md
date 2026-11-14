@@ -68,3 +68,12 @@ positivo da diferença, data/descrição e fatura opcional. Exige confirmação
 saldo inicial ou em outros lançamentos antes de escrever. Conta como despesa
 do mês em `Ajuste de fatura`, aumenta a dívida e não repete em meses futuros.
 `preview_transaction` aceita `operation: statement_adjustment`.
+
+### `correct_opening_balance`
+
+Corrige uma conta existente via `POST /api/v1/accounts/opening-balance`.
+Entrada: `accountId`, `expectedOpeningBalanceMinor`, `openingBalanceMinor`,
+`reason`, `idempotencyKey`. Valores são strings inteiras assinadas em centavos.
+Confirmar novo valor e motivo com o usuário; dívida de cartão é negativa.
+Altera saldos históricos desde a abertura, sem despesa nem itens de fatura.
+Consultar contas novamente após conflito. Não excluir/recriar a conta.

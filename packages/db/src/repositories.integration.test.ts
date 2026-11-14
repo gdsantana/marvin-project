@@ -111,6 +111,15 @@ test("PostgreSQL constraints and domain ports persist financial operations, fore
     const createdAccount = await service.createAccount({ id: fixedAccountId, name: "Insert only account", type: "checking", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId: fixedInstitutionId }, "insert-only-account");
     assert.equal(await service.createAccount({ id: fixedAccountId, name: "Insert only account", type: "checking", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId: fixedInstitutionId }, "insert-only-account"), createdAccount);
     await assert.rejects(service.createAccount({ id: fixedAccountId, name: "Changed account", type: "checking", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId: null }, "new-account-key"), { code: "CONFLICT" });
+    const corrections = await Promise.allSettled(["-100", "-200"].map((openingBalanceMinor, index) => service.correctOpeningBalance({ accountId: createdAccount, expectedOpeningBalanceMinor: "0", openingBalanceMinor, reason: "Correção concorrente" }, `opening-race-${index}`)));
+    assert.equal(corrections.filter(result => result.status === "fulfilled").length, 1);
+    const rejectedCorrection = corrections.find(result => result.status === "rejected") as PromiseRejectedResult;
+    assert.equal(rejectedCorrection.reason.code, "CONFLICT");
+    const winner = corrections[0].status === "fulfilled" ? 0 : 1;
+    const correctionInput = { accountId: createdAccount, expectedOpeningBalanceMinor: "0", openingBalanceMinor: winner === 0 ? "-100" : "-200", reason: "Correção concorrente" };
+    assert.equal(await service.correctOpeningBalance(correctionInput, `opening-race-${winner}`), createdAccount);
+    const audit = await pool.query("SELECT result FROM idempotency_claims WHERE key = $1", [`opening-race-${winner}`]);
+    assert.match(JSON.stringify(audit.rows[0].result), /Correção concorrente/);
     const createdCategory = await service.createCategory({ id: fixedCategoryId, name: "Insert only category", type: "income", parentId: null }, "insert-only-category");
     assert.equal(await service.createCategory({ id: fixedCategoryId, name: "Insert only category", type: "income", parentId: null }, "insert-only-category"), createdCategory);
     await assert.rejects(service.createCategory({ id: fixedCategoryId, name: "Changed category", type: "expense", parentId: null }, "new-category-key"), { code: "CONFLICT" });

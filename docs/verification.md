@@ -182,3 +182,14 @@ Não houve migration em banco real nem validação visual em viewport mobile ou
 desktop. O build mantém o aviso existente sobre o plugin Next.js no ESLint.
 Dívida já incluída no saldo inicial não é redistribuída por este fluxo; exige
 confirmação explícita de que a diferença ainda não foi registrada.
+
+## 2026-11-14 — Correção de saldo inicial
+
+Implementação do ADR 0015 validada com `pnpm typecheck`, `pnpm lint`,
+`pnpm build` e `bash scripts/test-postgres.sh`: 92 testes passaram, zero falhas e
+zero skips no cluster PostgreSQL descartável. Cobertura inclui sinal da dívida,
+limite disponível, replay, payload divergente, valor anterior desatualizado,
+concorrência real, grants de coluna, validação HTTP e encaminhamento MCP.
+Build reportou o aviso já existente de configuração do plugin ESLint do Next.js.
+Não houve alteração de dados reais nem deploy. A UI reutiliza o formulário
+responsivo existente; verificação visual em navegador mobile/desktop não realizada.

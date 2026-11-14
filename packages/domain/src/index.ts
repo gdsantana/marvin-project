@@ -1,3 +1,4 @@
+import { correctOpeningBalanceSchema } from "@finance/contracts";
 import type {
   CreateStatementAdjustmentInput, CreateCashbackInput, CreateCreditPurchaseInput, CreateExpenseInput, CreateIncomeInput, CreateRefundInput,
   CreateStatementInput, CreateTransferInput, DomainErrorCode, PayStatementInput,
@@ -30,7 +31,7 @@ export type ReportingData = { transactions: Transaction[]; entries: Entry[]; all
 export interface TransactionContext {
   readonly reporting: { load(): Promise<ReportingData> };
   readonly institutions: { get(id: UUID): Promise<Institution | null>; save(value: Institution): Promise<void>; list(): Promise<Institution[]> };
-  readonly accounts: { get(id: UUID): Promise<Account | null>; save(value: Account): Promise<void>; balance(id: UUID, through?: string): Promise<Minor>; list(): Promise<Account[]> };
+  readonly accounts: { correctOpeningBalance(id: UUID, amount: Minor): Promise<void>; get(id: UUID): Promise<Account | null>; save(value: Account): Promise<void>; balance(id: UUID, through?: string): Promise<Minor>; list(): Promise<Account[]> };
   readonly categories: { get(id: UUID): Promise<Category | null>; save(value: Category & { name: string; parentId: UUID | null }): Promise<void>; list(): Promise<Category[]> };
   readonly transactions: { save(value: Transaction): Promise<void>; findByIdempotency(key: string): Promise<{ transaction: Transaction; payload: unknown } | null>; get(id: UUID): Promise<Transaction | null>; list(from: string, to: string): Promise<Transaction[]> };
   readonly entries: { add(value: Omit<Entry, "id">): Promise<Entry>; listByAccount(id: UUID, through?: string): Promise<Entry[]>; listByTransaction(id: UUID): Promise<Entry[]> };
@@ -123,6 +124,18 @@ export class FinanceService {
       if (cardSettings) await tx.cards.saveSettings({ ...cardSettings, accountId });
       return accountId;
     })).value;
+  }
+
+  async correctOpeningBalance(input: import("@finance/contracts").CorrectOpeningBalanceInput, key: string): Promise<UUID> {
+    const parsed = correctOpeningBalanceSchema.safeParse(input);
+    if (!parsed.success) fail("VALIDATION_ERROR", "Dados de correção do saldo inicial inválidos");
+    input = parsed.data!;
+    return (await this.idempotent("correctOpeningBalance", key, input, async tx => {
+      const account = await this.requireAccount(tx, input.accountId);
+      if (account.openingBalanceMinor !== BigInt(input.expectedOpeningBalanceMinor)) fail("CONFLICT", "O saldo inicial mudou. Atualize os dados e revise a correção.");
+      await tx.accounts.correctOpeningBalance(account.id, BigInt(input.openingBalanceMinor));
+      return { ...input, correctedAt: new Date().toISOString() };
+    })).value.accountId;
   }
 
   async configureCard(input: { accountId: UUID; creditLimitMinor: Minor | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" }, key: string): Promise<void> {

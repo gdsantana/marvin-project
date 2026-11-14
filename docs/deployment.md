@@ -457,3 +457,11 @@ O instalador verifica as portas TCP da Web e do MCP no host, incluindo publicaç
 O único instalador é `scripts/install.sh`: ele contém o download do bundle, a configuração HTTPS, a seleção de portas e os prompts de usuário e senha. O workflow publica esse mesmo arquivo como `install.sh` na release, sem gerar outro instalador. O bundle fornece Compose, atualizador, versão e exemplos de configuração; um `install-homelab.sh` legado presente em releases antigas é ignorado. Assim, o instalador obtido da `main` usa seus próprios prompts mesmo ao instalar imagens estáveis anteriores. A versão publicada na release preserva o código da revisão daquela release.
 
 A criação de usuário valida as entradas no instalador e envia as credenciais por stdin ao job operacional sem TTY. A imagem executa a função `provisionOwner`, preservando validação de backend, hash e persistência transacional; senhas não são passadas por argumentos, variáveis de ambiente ou arquivos. Ctrl+C cancela os prompts. Erros operacionais não reiniciam automaticamente a instalação.
+
+### Permissão para corrigir saldo inicial
+
+A operação descrita no ADR 0015 precisa de `UPDATE (opening_balance_minor)` em
+`accounts` para `marvin_app`. Na atualização, execute o runner operacional
+`pnpm db:migrate` com `MIGRATION_DATABASE_URL` conforme o procedimento acima;
+ele reaplica os grants revisados mesmo sem migration de schema nova. Não é
+necessário conceder UPDATE geral na tabela nem alterar saldos manualmente.

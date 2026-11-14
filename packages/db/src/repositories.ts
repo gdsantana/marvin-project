@@ -80,6 +80,9 @@ function createContext(db: Database): TransactionContext {
       async list() { return db.select({ id: institutions.id, name: institutions.name, isArchived: institutions.isArchived }).from(institutions); },
     },
     accounts: {
+      async correctOpeningBalance(id, openingBalanceMinor) {
+        await db.update(accounts).set({ openingBalanceMinor }).where(eq(accounts.id, id));
+      },
       async get(id) {
         const [row] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
         return row ?? null;

@@ -20,6 +20,7 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
       id: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54", institutionId: null, name: "Corrente", type: "checking",
       currency: "BRL", openingBalanceMinor: "10000", openingDate: "2026-01-01", isArchived: false, balanceMinor: "10000",
     }] });
+    if (url.pathname === "/api/v1/accounts/opening-balance") return Response.json({ ok: true, data: { id: body.accountId } });
     if (url.pathname === "/api/v1/cards/settings") return Response.json({ ok: true, data: {
       accountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54", creditLimitMinor: "500000", closingDay: 20,
       dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual",
@@ -102,6 +103,13 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
       assert.ok(tools.some(tool => tool.name === name), `missing ${name}`);
     }
 
+    const correction = { accountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54", expectedOpeningBalanceMinor: "10000", openingBalanceMinor: "-10000", reason: "Corrigir sinal", idempotencyKey: "opening-correction-1" };
+    const correctedOpening = await client.callTool({ name: "correct_opening_balance", arguments: correction });
+    assert.equal(correctedOpening.isError, undefined);
+    const forwarded = requests.find(item => item.url.endsWith("/accounts/opening-balance"))!;
+    assert.equal(forwarded.headers.get("idempotency-key"), correction.idempotencyKey);
+    const { idempotencyKey: _key, ...correctionBody } = correction;
+    assert.deepEqual(forwarded.body, correctionBody);
     const accountResult = await client.callTool({ name: "get_accounts", arguments: {} });
     assert.equal(accountResult.isError, undefined);
     assert.match((accountResult.content as Array<{ text?: string }>)[0]?.text ?? "", /"balanceMinor":"10000"/);

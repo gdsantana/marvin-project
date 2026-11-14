@@ -145,3 +145,12 @@ reconhecida na dívida em uma fatura aberta, como despesa do mês na categoria r
 `Ajuste de fatura`, inicializada pela migration 0004. UI e MCP usam a API HTTP e o
 mesmo preview/commit. Não há plano de parcelas nem repetição automática. Ver
 [ADR 0014](docs/adr/0014-statement-adjustment.md).
+
+## Correção de saldo inicial
+
+Complementa §§3–6: contrato `correctOpeningBalanceSchema`, serviço
+`FinanceService.correctOpeningBalance`, endpoint POST `accounts/opening-balance`
+e tool MCP `correct_opening_balance` compartilham uma operação idempotente.
+Configurações oferece “Corrigir saldo inicial”. O adapter altera somente a coluna
+de saldo inicial; runner de migrations reaplica o grant específico. A operação
+não cria despesa nem itens de fatura. Ver ADR 0015 e modelo §20.

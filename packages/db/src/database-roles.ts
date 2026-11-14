@@ -72,6 +72,9 @@ export async function applyRuntimeGrants(client: PoolClient) {
     await client.query(`REVOKE SELECT (${columnList}), INSERT (${columnList}), UPDATE (${columnList}), REFERENCES (${columnList}) ON ${table} FROM PUBLIC, marvin_app`);
     await client.query(`GRANT ${privileges} ON TABLE ${table} TO marvin_app`);
   }
+  if ((await client.query("SELECT to_regclass('public.accounts') AS name")).rows[0].name) {
+    await client.query('GRANT UPDATE (opening_balance_minor) ON public.accounts TO marvin_app');
+  }
   // SELECT FOR UPDATE also requires UPDATE on at least one column, even when no row changes.
   for (const name of ["accounts", "transactions", "auth_users"]) {
     if ((await client.query("SELECT to_regclass($1) AS name", [`public.${name}`])).rows[0].name) {

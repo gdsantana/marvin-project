@@ -301,3 +301,13 @@ despesa em `Ajuste de fatura`. Não gera parcelas futuras. Categoria inexistente
 arquivada ou ambígua e fatura fechada causam conflito. Preview usa
 `POST /api/v1/transactions/preview` com `operation: "statement_adjustment"` e os
 mesmos campos. O saldo inicial não é reescrito.
+
+## Correção de saldo inicial
+
+`POST /api/v1/accounts/opening-balance` exige autenticação e `Idempotency-Key`.
+Corpo: `accountId` UUID, `expectedOpeningBalanceMinor` e `openingBalanceMinor`
+como strings inteiras assinadas em centavos, `reason` não vazio até 500 caracteres.
+Retorna `{ ok: true, data: { id } }`, HTTP 200. Saldo anterior divergente: CONFLICT.
+Mesmo key/payload retorna o resultado original; payload divergente é conflito de
+idempotência. Altera saldos desde a abertura sem criar movimentações ou itens
+de fatura. Dívida de cartão usa valor negativo. Ver ADR 0015.

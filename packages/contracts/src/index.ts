@@ -38,6 +38,11 @@ export const createAccountSchema = accountSchema.omit({ id: true, isArchived: tr
   if (account.type === "credit_card" && !account.cardSettings) ctx.addIssue({ code: "custom", path: ["cardSettings"], message: "Configuração obrigatória para cartão" });
   if (account.type !== "credit_card" && account.cardSettings) ctx.addIssue({ code: "custom", path: ["cardSettings"], message: "Configuração de cartão não se aplica a esta conta" });
 });
+export const correctOpeningBalanceSchema = z.object({
+  accountId: idSchema, expectedOpeningBalanceMinor: minorAmountSchema, openingBalanceMinor: minorAmountSchema,
+  reason: z.string().trim().min(1).max(500),
+}).strict();
+export type CorrectOpeningBalanceInput = z.infer<typeof correctOpeningBalanceSchema>;
 export const creditCardSettingsSchema = creditCardSettingsInputSchema.extend({ accountId: idSchema });
 export const categorySchema = z.object({ id: idSchema, name: z.string().trim().min(1), type: categoryTypeSchema, parentId: idSchema.nullable(), isArchived: z.boolean().default(false) });
 export const createCategorySchema = categorySchema.omit({ id: true, isArchived: true });

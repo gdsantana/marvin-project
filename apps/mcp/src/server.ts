@@ -2,7 +2,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
-  accountWithBalanceSchema, categorySchema, cardStatementSchema, createCashbackSchema, createCreditPurchaseSchema,
+  correctOpeningBalanceSchema, accountWithBalanceSchema, categorySchema, cardStatementSchema, createCashbackSchema, createCreditPurchaseSchema,
   createStatementAdjustmentSchema, creditCardSettingsSchema,
   createExpenseSchema, createIncomeSchema, createRefundSchema, createTransferSchema, idSchema,
   createAccountSchema, createCategorySchema, createInstitutionSchema, createdIdResponseSchema, institutionSchema,
@@ -140,6 +140,7 @@ export function createFinanceMcpServer(api: WebApiClient) {
   }
 
   const setupWrites = [
+    ["correct_opening_balance", "Corrige o saldo inicial da conta existente. Informe o saldo anterior exato, o novo saldo assinado e o motivo confirmado pelo usuário. Dívida de cartão é negativa. Altera saldos históricos desde a abertura, sem criar despesa nem itens de fatura.", "accounts/opening-balance", correctOpeningBalanceSchema],
     ["create_institution", "Cria uma instituição financeira.", "institutions", createInstitutionSchema],
     ["create_account", "Cria uma conta financeira, incluindo configuração obrigatória do cartão quando aplicável.", "accounts", createAccountSchema],
     ["create_category", "Cria uma categoria de receita ou despesa.", "categories", createCategorySchema],

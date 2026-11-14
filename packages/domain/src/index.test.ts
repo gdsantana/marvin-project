@@ -25,6 +25,7 @@ class MemoryRepository implements FinanceRepository {
     const tx: TransactionContext = {
       institutions: { get: async id => this.institutions.get(id) ?? null, save: async value => { this.institutions.set(value.id, value); }, list: async () => [...this.institutions.values()] },
       accounts: {
+        correctOpeningBalance: async (id, openingBalanceMinor) => { const account = this.accounts.get(id)!; this.accounts.set(id, { ...account, openingBalanceMinor }); },
         get: async id => this.accounts.get(id) ?? null, save: async account => { this.accounts.set(account.id, account); }, list: async () => [...this.accounts.values()],
         balance: async (id, through) => this.entries.filter(entry => entry.accountId === id && (!through || (this.transactions.get(entry.transactionId)?.occurredOn ?? "9999-12-31") <= through)).reduce((total, entry) => total + entry.amountMinor, 0n),
       },
@@ -512,4 +513,19 @@ test("ajuste de fatura reconhece somente a diferença como despesa e dívida, se
   await assert.rejects(service.previewTransaction({ ...input, operation: "statement_adjustment" }), { code: "CONFLICT" });
   await assert.rejects(service.createStatementAdjustment(input, "adjust-closed"), { code: "CONFLICT" });
   assert.equal(repository.entries.length, 1);
+});
+
+test("opening balance correction changes signed debt without entries and rejects stale corrections", async () => {
+  const repository = new MemoryRepository(), service = new FinanceService(repository);
+  const accountId = await service.createAccount({ name: "Card", type: "credit_card", currency: "BRL", openingBalanceMinor: 4500n, openingDate: "2026-01-01", institutionId: null, cardSettings: { creditLimitMinor: 100000n, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "opening-create");
+  const input = { accountId, expectedOpeningBalanceMinor: "4500", openingBalanceMinor: "-4500", reason: "Dívida cadastrada com sinal incorreto" };
+  assert.equal(await service.correctOpeningBalance(input, "opening-fix"), accountId);
+  assert.equal(await service.correctOpeningBalance(input, "opening-fix"), accountId);
+  assert.equal(await service.accountBalance(accountId), -4500n);
+  assert.equal(await service.accountBalance(accountId, "2025-12-31"), 0n);
+  assert.equal((await service.listAccounts())[0].availableCreditMinor, 95500n);
+  assert.equal(repository.entries.length, 0);
+  await assert.rejects(service.correctOpeningBalance(input, "opening-stale"), { code: "CONFLICT" });
+  await assert.rejects(service.correctOpeningBalance({ ...input, openingBalanceMinor: "0" }, "opening-fix"), { code: "IDEMPOTENCY_CONFLICT" });
+  await assert.rejects(service.correctOpeningBalance({ ...input, reason: " " }, "opening-no-reason"), { code: "VALIDATION_ERROR" });
 });

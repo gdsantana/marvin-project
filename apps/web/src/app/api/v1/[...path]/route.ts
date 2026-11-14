@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  accountsResponseSchema, categoriesResponseSchema, creditCardSettingsSchema, createAccountSchema, createCashbackSchema, domainErrorCodeSchema,
+  correctOpeningBalanceSchema, accountsResponseSchema, categoriesResponseSchema, creditCardSettingsSchema, createAccountSchema, createCashbackSchema, domainErrorCodeSchema,
   createCategorySchema, createCreditPurchaseSchema, createExpenseForecastSchema, createExpenseSchema, createIncomeSchema,
   createInstitutionSchema, createRefundSchema, createTransferSchema, createdIdResponseSchemaEnvelope,
   creditPurchaseCreatedResponseSchema, institutionsResponseSchema, monthlySummaryResponseSchema, monthlySeriesResponseSchema, categoryReportResponseSchema,
@@ -113,6 +113,11 @@ export async function POST(request: Request, context: { params: Promise<{ path: 
       const parsed = createInstitutionSchema.safeParse(raw);
       if (!parsed.success) return validationError(parsed.error);
       return json({ id: await service.createInstitution(parsed.data, key) }, 201, createdIdResponseSchemaEnvelope);
+    }
+    if (route === "accounts/opening-balance") {
+      const parsed = correctOpeningBalanceSchema.safeParse(raw);
+      if (!parsed.success) return validationError(parsed.error);
+      return json({ id: await service.correctOpeningBalance(parsed.data, key) }, 200, createdIdResponseSchemaEnvelope);
     }
     if (route === "accounts") {
       const parsed = createAccountSchema.safeParse(raw);

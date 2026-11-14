@@ -43,6 +43,21 @@ function FormField({ label, name, type = "text", required = true, options, place
   </Field>;
 }
 
+function OpeningBalanceFields({ accounts }: { accounts: AccountOption[] }) {
+  const [accountId, setAccountId] = useState("");
+  const account = accounts.find(item => item.id === accountId);
+  return <>
+    <FormField label="Conta ou cartão" name="accountId" value={accountId} onChange={event => setAccountId(event.target.value)} options={[["", "Selecione uma conta"], ...accounts.filter(item => item.openingBalanceMinor !== undefined).map(item => [item.id, item.name] as [string, string])]} />
+    {account && <>
+      <input type="hidden" name="expectedOpeningBalanceMinor" value={account.openingBalanceMinor} />
+      <p className="text-sm sm:col-span-2">Saldo inicial atual: {formatMinor(account.openingBalanceMinor!, account.currency)}</p>
+      <FormField key={account.id} label="Novo saldo inicial" name="openingBalanceMinor" defaultValue={majorInputFromMinor(account.openingBalanceMinor!)} />
+      <FormField label="Motivo da correção" name="reason" />
+    </>}
+    <Alert role="note" className="sm:col-span-2"><AlertDescription>Use valor negativo para dívida de cartão. A correção altera os saldos desde a abertura, sem registrar receita ou despesa e sem criar itens de fatura. Confira o valor antes de salvar.</AlertDescription></Alert>
+  </>;
+}
+
 function TransactionAmountField({ action }: { action: "income" | "expense" | "purchase" }) {
   return <div className="sm:col-span-2">
     <FormField label={action === "purchase" ? "Valor total" : "Valor"} name={action === "purchase" ? "totalAmountMinor" : "amountMinor"} placeholder="0,00" prefix="R$" inputClassName={`font-mono text-3xl tabular-nums sm:text-4xl ${action !== "income" ? "text-destructive" : "text-primary"}`} />
@@ -240,6 +255,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     const shared = <>{descriptionField}{operationDateField}<FormField label="Data de postagem" name="postedOn" type="date" required={false} /><FormField label="Estabelecimento ou pessoa" name="counterpartyName" required={false} placeholder="Opcional" /><NotesField /><FormField label="Status" name="reviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} /></>;
     switch (action) {
       case "institution": return <FormField label="Nome da instituição" name="name" placeholder="Ex.: Banco do Brasil" />;
+      case "correctOpeningBalance": return <OpeningBalanceFields accounts={references.accounts} />;
       case "account": return <AccountFields references={references} />;
       case "configureCard": return <CardSettingsFields accounts={references.accounts} onReady={setCardSettingsReady} />;
       case "category": return <><FormField label="Nome da categoria" name="name" placeholder="Ex.: Moradia" /><FormField label="Tipo" name="type" options={[["expense", "Despesa"], ["income", "Receita"]]} /><FormField label="Categoria superior" name="parentId" required={false} options={[["", "Sem categoria superior"], ...categoryOptions()]} /></>;

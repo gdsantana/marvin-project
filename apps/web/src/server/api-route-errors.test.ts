@@ -162,3 +162,25 @@ test("pending query validates booleans and account creation rejects non-BRL curr
     if (previousRepository === undefined) delete runtime.marvinRepository; else runtime.marvinRepository = previousRepository;
   }
 });
+
+test("opening balance endpoint validates signed values and passes idempotency to domain", async () => {
+  const originalToken = process.env.MCP_API_TOKEN;
+  const runtime = globalThis as typeof globalThis & { marvinFinance?: unknown; marvinRepository?: unknown };
+  const previousService = runtime.marvinFinance, previousRepository = runtime.marvinRepository;
+  process.env.MCP_API_TOKEN = "test-api-token-with-at-least-32-bytes-long";
+  runtime.marvinRepository = {};
+  const body = { accountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54", expectedOpeningBalanceMinor: "4500", openingBalanceMinor: "-4500", reason: "Corrigir sinal" };
+  let calls = 0;
+  runtime.marvinFinance = { correctOpeningBalance: async (input: unknown, key: string) => { calls++; assert.deepEqual(input, body); assert.equal(key, "correct-opening"); return body.accountId; } };
+  try {
+    const { POST } = await import("../app/api/v1/[...path]/route");
+    for (const [payload, status] of [[body, 200], [{ ...body, openingBalanceMinor: "1.2" }, 400], [{ ...body, reason: "" }, 400]] as const) {
+      const response = await POST(new Request("http://localhost/api/v1/accounts/opening-balance", { method: "POST", headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}`, "content-type": "application/json", "idempotency-key": "correct-opening" }, body: JSON.stringify(payload) }), { params: Promise.resolve({ path: ["accounts", "opening-balance"] }) });
+      assert.equal(response.status, status);
+    }
+    assert.equal(calls, 1);
+  } finally {
+    if (originalToken === undefined) delete process.env.MCP_API_TOKEN; else process.env.MCP_API_TOKEN = originalToken;
+    runtime.marvinFinance = previousService; runtime.marvinRepository = previousRepository;
+  }
+});

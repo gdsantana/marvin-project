@@ -255,7 +255,7 @@ export function Workspace({ section }: { section: Section }) {
     if (form === "configureCard") delete body.description;
     if (form === "statementAdjustment") body.confirmsUnrecordedDebt = entries.confirmsUnrecordedDebt === "on";
     const endpoint: Record<Action, string> = {
-      institution: "/api/v1/institutions", account: "/api/v1/accounts", configureCard: "/api/v1/cards/configuration", category: "/api/v1/categories",
+      correctOpeningBalance: "/api/v1/accounts/opening-balance", institution: "/api/v1/institutions", account: "/api/v1/accounts", configureCard: "/api/v1/cards/configuration", category: "/api/v1/categories",
       income: "/api/v1/transactions/income", expense: "/api/v1/transactions/expense", transfer: "/api/v1/transactions/transfer",
       purchase: "/api/v1/transactions/credit-purchase", cashback: "/api/v1/transactions/cashback", refund: "/api/v1/transactions/refund",
       statementAdjustment: "/api/v1/statements/adjustment", payment: "/api/v1/statements/payment", close: "/api/v1/statements/close",

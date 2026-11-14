@@ -34,3 +34,7 @@ Separar `.env` de runtime e `.env.ops` de operação, ambos não versionados nem
 Não há isolamento de dados contra uma Web comprometida que já tem leitura/escrita financeira autorizada. Roles limitam DDL e escalada, não substituem validação de domínio, credenciais, backup ou rede privada. Owners de objetos continuam podendo alterá-los; por isso a identidade de migrations não é entregue ao processo Web.
 
 Critério de revisão: novas migrations devem atualizar grants quando precisarem de acesso runtime e passar testes positivos/negativos. Se surgir necessidade de vários deployments no mesmo cluster, parametrizar nomes e identidade de ownership em decisão separada, sem ampliar silenciosamente esta política.
+
+Atualização pelo ADR 0015: o runtime recebe também `UPDATE (opening_balance_minor)`
+em `accounts` para a correção explícita e idempotente do saldo inicial. Outros
+campos continuam sem UPDATE; o grant é reaplicado pelo runner existente.

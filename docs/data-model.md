@@ -708,3 +708,12 @@ fluxo não redistribui dívida já reconhecida no saldo inicial. Só aceita fatu
 aberta do cartão selecionado; sem fatura explícita, usa o ciclo da data de
 postagem/operação e cria a fatura se necessário. Preview não grava; commit é
 atômico e idempotente. Ver ADR 0014.
+
+## 20. Correção de saldo inicial implementada
+
+Complementa §4 e o saldo derivado: operação explícita corrige apenas
+`accounts.opening_balance_minor`, com valor anterior esperado, novo valor e
+motivo guardados no claim idempotente. Não gera entradas ou alocações e não
+altera faturas. Saldo desde a abertura e patrimônio histórico refletem a correção;
+receitas/despesas permanecem iguais. Concorrência usa transação serializável e
+comparação do valor anterior. Ver ADR 0015.
