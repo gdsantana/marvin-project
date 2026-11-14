@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ownerDatabaseUrl, OwnerProvisionError, ownerProvisionErrorMessage } from "./provision-config.js";
+import { ownerDatabaseUrl, OwnerProvisionError, ownerProvisionErrorMessage, parseRoleCredentials } from "./provision-config.js";
+
+test("role credential files require both string passwords", () => {
+  assert.deepEqual(parseRoleCredentials('{"appPassword":"app","migrationPassword":"migration"}'), { appPassword: "app", migrationPassword: "migration" });
+  for (const input of ["{}", '{"appPassword":7,"migrationPassword":"x"}', "null", "not-json"]) {
+    assert.throws(() => parseRoleCredentials(input));
+  }
+});
 
 test("owner provisioning selects the development connection only outside production", () => {
   const env = { DATABASE_URL: "postgresql://db/private", DEVELOPMENT_DATABASE_URL: "postgresql://127.0.0.1/local" };

@@ -13,7 +13,7 @@ O Compose cria uma rede `application` para web/MCP e outra rede interna `databas
 
 O acesso à Web ocorre somente pela LAN ou, fora de casa, após entrar na VPN. Hermes roda no mesmo homelab e acessa MCP pela LAN; Discord é a única entrada externa indireta de comandos ao agente. Web, MCP e PostgreSQL não são publicados diretamente na internet. A seção [HTTPS privado com Nginx Proxy Manager](#https-privado-com-nginx-proxy-manager) descreve como usar um proxy privado no Proxmox nessa topologia.
 
-## Pré-requisitos e preparação
+## Pré-requisitos e preparação para build local
 
 - VM Linux no Proxmox com Docker Engine e plugin Docker Compose, Git e acesso ao repositório privado e aos registries usados pelos Dockerfiles.
 - Disco persistente para o volume `postgres_data`, espaço para builds e dumps e destino de backup fora da VM. Dimensione CPU, memória e disco conforme o uso; o projeto não tem capacidade mínima medida.
@@ -25,6 +25,8 @@ Escolha uma revisão aprovada do código e registre `git rev-parse HEAD`, a tag 
 Antes da primeira implantação, defina o destino externo, a frequência e retenção dos backups e a perda de dados/tempo de recuperação aceitáveis. Não há agendamento automático no repositório. Snapshot da VM e volume persistente não substituem dump restaurável.
 
 ## Configuração e primeira subida
+
+As instruções desta seção usam um checkout e build local. Para instalar imagens prontas, siga [Primeira instalação sem clone](#primeira-instalação-sem-clone); o instalador gera essas variáveis automaticamente.
 
 Requer Docker com Compose plugin. No diretório raiz do repositório:
 
@@ -220,7 +222,62 @@ Configure o Hermes para usar `https://<endereco-privado-mcp>/mcp` com bearer `MC
 
 Se houver erro, confira `ps`, logs restritos, DNS/TLS do proxy, correspondência de `APP_ORIGIN`, tokens e conexão com DB. Não compartilhe saída de `docker compose config`, `docker inspect` ou logs com credenciais/dados privados. Não use `down -v`: ele remove o volume de dados. Após reiniciar a VM, confira novamente saúde e acesso; containers parados explicitamente podem exigir `up -d`.
 
-## Atualização
+## Releases e deploy com imagens publicadas
+
+O Release Please mantém um PR com a próxima versão a partir de Conventional Commits (`feat: adiciona relatório`, `fix: corrige saldo`). No squash merge, use a convenção no título que se tornará commit na `main`. Ao integrar o PR, o mesmo workflow cria a tag e a release e publica as imagens `ghcr.io/gdsantana/marvin-web:vX.Y.Z` e `ghcr.io/gdsantana/marvin-mcp:vX.Y.Z`, para `linux/amd64` e `linux/arm64`. Não existe deploy automático. Uma release só está pronta para instalação quando contém o anexo `marvin-deploy.tar.gz`, publicado depois das duas imagens. Se o build falhar, execute novamente o workflow manualmente com a tag estável no campo `tag`; depois que o anexo existir, o workflow recusa republicar essa versão. O primeiro changelog pode incluir o histórico anterior; revise-o antes de integrar o PR.
+
+O workflow precisa de permissão para criar PRs nas configurações de Actions e de `packages: write`. Com o `GITHUB_TOKEN` padrão, eventos gerados pelo Release Please não iniciam outros workflows; se houver checks obrigatórios no PR de release, configure uma identidade GitHub App ou token apropriado conforme a [documentação do Release Please](https://github.com/googleapis/release-please-action#other-actions-on-release-please-prs). A publicação das imagens acontece no próprio workflow, sem depender de outro evento. A visibilidade dos pacotes GHCR deve ser configurada pelo mantenedor: enquanto privados, o host precisa autenticar o Docker com uma credencial autorizada a ler os pacotes; imagens públicas podem ser baixadas anonimamente. O workflow e o acesso ao registry ainda precisam ser validados no GitHub.
+
+### Primeira instalação sem clone
+
+Requer Bash, `curl`, `tar`, `openssl`, `flock`, `sha256sum`, Docker Compose com suporte a `up --wait` e acesso aos pacotes GHCR. O atualizador também requer GitHub CLI autenticado; releases privadas exigem GitHub CLI autenticado já na instalação. Para pacotes privados, autentique o Docker no GHCR com uma credencial de leitura adequada, usando `docker login ghcr.io`; não coloque tokens nos arquivos de exemplo ou em comandos salvos no histórico. O `gh` também precisa de acesso à release. Consulte as [instruções do GHCR](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+
+Para releases públicas, baixe e execute o instalador em um terminal. Ele consulta a release estável mais recente, baixa o pacote correspondente e inicia a instalação em `~/marvin`, que deve estar vazio ou ainda não existir:
+
+```bash
+instalador=$(mktemp)
+curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh -o "$instalador" && bash "$instalador"
+rm -f "$instalador"
+```
+
+Esse link de download pode ser divulgado na landing page. Ele aponta para a release marcada como mais recente no GitHub e só estará disponível após o primeiro workflow de publicação concluir. Se a release tiver acabado de ser criada, o pacote de deploy pode ainda não estar disponível; aguarde o workflow terminar. Para escolher uma versão e um diretório, use `bash "$instalador" vX.Y.Z /caminho/vazio` antes de remover o arquivo. O download também pode ser fixado a uma release, substituindo `latest/download` por `download/vX.Y.Z` na URL e passando a mesma tag ao instalador.
+
+Enquanto o repositório for privado, a URL pública do `curl` não fornece o script anonimamente. Após autenticar `gh` com acesso à release, use:
+
+```bash
+gh release download vX.Y.Z --repo gdsantana/marvin-project --pattern install.sh
+bash install.sh vX.Y.Z
+```
+
+O instalador tenta baixar o pacote por HTTPS e usa o GitHub CLI autenticado como alternativa para releases privadas. O Compose e os dois scripts são copiados para o diretório de instalação; arquivos ou diretórios existentes não são sobrescritos. Para atualizar depois, mantenha o GitHub CLI disponível e autenticado, conforme explicado abaixo.
+
+O instalador é exclusivo para **ambiente novo**: recusa `.env`, `.env.ops` ou `.marvin` existentes e verifica a existência do volume e dos containers do projeto. Não adota nem limpa bases existentes. Para uma base existente, siga a seção de separação de privilégios e não transfira ownership sem revisão e backup. O instalador precisa de `openssl` e usa a tag incluída no pacote; exige Docker disponível e acesso às imagens.
+
+Informe a origem HTTPS da interface, sem caminho ou barra final, como `https://marvin.example.lan`. O instalador cria `.env` e `.env.ops` com permissões restritas, três senhas PostgreSQL distintas e dois tokens MCP independentes. As roles técnicas são provisionadas com um arquivo temporário restrito, montado somente no job operacional e removido ao terminar; as senhas não são passadas por argumentos. Depois das migrations, escolha interativamente o usuário e a senha de acesso à interface. As categorias iniciais são criadas sem lançamentos fictícios. Os serviços são iniciados aguardando seus health checks.
+
+Ao concluir, o instalador mostra **somente o token bearer que o agente usa para acessar o MCP**. Configure-o no cliente do agente junto do endereço HTTPS privado do servidor MCP, terminado em `/mcp`. Ele também permanece em `MCP_HERMES_BEARER_TOKEN` no `.env`: proteja o terminal, esses arquivos e seus backups. O token `MCP_API_TOKEN` é diferente e serve somente à comunicação MCP → Web; não o forneça ao agente. O instalador usa binds locais por padrão e não configura proxy, DNS, TLS ou firewall: conclua essa configuração privada conforme este guia e valide login, leituras e MCP antes de usar.
+
+Se a instalação falhar, arquivos e recursos já criados são preservados; não execute o instalador novamente nem remova volume ou arquivos sem antes diagnosticar o estado e definir uma recuperação segura. O instalador não agenda backups. Defina destino externo e retenção e teste restauração antes de usar dados reais.
+
+Para instalações por release, os exemplos deste guia que usam `-f infra/compose.yml` devem usar `.marvin/releases/<tag>/compose.yml` e `MARVIN_VERSION` com a mesma tag; não execute os comandos `build`. Os arquivos `.env` e `.env.ops` permanecem no diretório de instalação.
+
+### Atualização de instalação existente
+
+No diretório de instalação, execute:
+
+```bash
+./update-homelab.sh vX.Y.Z
+```
+
+O script exige uma tag estável explícita, consulta a release no GitHub e só continua se conseguir baixar seu anexo de deploy. Baixa as imagens Web/MCP da mesma tag, verifica que o banco está disponível e pede confirmação. Revise as notas, migrations e compatibilidade antes de confirmar; bloqueie o acesso pelo proxy e Hermes, pois o script não controla esses acessos. Ele para Web/MCP, cria um dump, confere seu catálogo, aplica migrations com a imagem Web e inicia Web e MCP em sequência, aguardando seus health checks. A aplicação de migrations usa `--no-deps`: o script não baixa, reinicia ou atualiza o container PostgreSQL. Atualizar a versão da imagem do banco é uma operação separada; trocar a major requer migração de dados específica.
+
+O dump fica em `/srv/backups/marvin`, ou em `MARVIN_BACKUP_DIR` se definida; mantenha esse diretório fora do volume do banco, com acesso restrito. O script registra a última versão concluída em `.marvin/deployed-version` e usa um lock local. A tag é uma referência de imagem que pode ser alterada no registry; a política do workflow recusa republicar uma versão após anexar o bundle. Para rastreabilidade adicional, registre os digests das imagens implantadas. Depois da atualização, copie o dump e checksum para outro host e teste restaurações periodicamente. O catálogo e os health checks não substituem restore e testes funcionais.
+
+Se alguma etapa falhar, o script para. Falhas de backup ou migration deixam Web/MCP parados; falhas de inicialização podem deixar novos containers em execução. Confira o banco e os serviços antes de intervir. A versão registrada não representa necessariamente o estado após uma falha. Não instale uma versão anterior nem retome imagens antigas sem verificar se são compatíveis com o schema; consulte a seção de restauração. O script instalado não se substitui automaticamente: revise e atualize-o a partir do anexo da nova release quando as notas solicitarem, preservando `.env`, `.env.ops` e `.marvin`.
+
+O fluxo, o proxy e a restauração ainda precisam de ensaio no homelab com dados descartáveis. Não há agendamento ou retenção automática de backups.
+
+## Atualização manual a partir do código-fonte
 
 Registre a revisão atual e escolha a revisão aprovada de destino em um checkout limpo. Revise migrations, contratos e notas de compatibilidade; imagens web/MCP/migrate são construídas do código local, sem tags de release próprias. Não faça upgrade major do PostgreSQL apenas alterando `POSTGRES_IMAGE_TAG`: isso exige um procedimento separado de migração de dados e restauração ensaiada.
 
@@ -295,7 +352,7 @@ Para ativar a recuperação:
 4. Execute `docker compose --env-file .env --env-file .env.ops -f infra/compose.yml up -d --force-recreate web mcp`. Um simples `restart` não aplica variáveis alteradas. Não aplique migrations novas ao dump sem revisar a compatibilidade.
 5. Repita as verificações de saúde, login e consultas web/MCP antes de liberar acesso. Preserve a base anterior até concluir a revisão. Se precisar voltar e ainda não houver novas escritas, restaure a URL e a revisão compatível anteriores e recrie os serviços; com novas escritas, planeje reconciliação antes da troca.
 
-Em perda da VM, provisione outra com os mesmos pré-requisitos, recupere o checkout da revisão registrada, `.env` e proxy protegidos, construa imagens e suba somente DB. Copie e confira o checksum do dump, restaure na base nova e siga a ativação acima antes de iniciar aplicações. O dump inclui schema e histórico de migrations, mas não secrets, configuração do host/proxy nem roles globais; o usuário definido pelo Compose deve existir no destino. Este procedimento precisa de ensaio no homelab antes de dados reais.
+Em perda da VM, provisione outra com os mesmos pré-requisitos, recupere a release e imagens compatíveis (ou o checkout e imagens construídas localmente), `.env` e proxy protegidos, e suba somente DB. Copie e confira o checksum do dump, restaure na base nova e siga a ativação acima antes de iniciar aplicações. O dump inclui schema e histórico de migrations, mas não secrets, configuração do host/proxy nem roles globais; o usuário definido pelo Compose deve existir no destino. Este procedimento precisa de ensaio no homelab antes de dados reais.
 
 ### Ensaio descartável de recuperação
 

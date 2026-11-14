@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { Pool, escapeIdentifier } from "pg";
 import { provisionDatabaseRoles } from "./database-roles.js";
@@ -28,9 +32,17 @@ test("database roles isolate runtime from migrations and keep login and finance 
     return result.href;
   };
   let app: ReturnType<typeof createDatabase> | undefined;
+  const temporary = await mkdtemp(join(tmpdir(), "marvin-role-test-"));
   const migrator = new Pool({ connectionString: connection("marvin_migrator", migrationPassword) });
   try {
-    await provisionDatabaseRoles(operator, { appPassword, migrationPassword });
+    const credentialsPath = join(temporary, "credentials.json");
+    await writeFile(credentialsPath, JSON.stringify({ appPassword, migrationPassword }), { mode: 0o600 });
+    const output = execFileSync(process.execPath, ["--import", "tsx", "src/provision-roles.ts", "--credentials-file", credentialsPath], {
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
+      env: { ...process.env, DATABASE_ADMIN_URL: url.href },
+      encoding: "utf8",
+    });
+    assert.doesNotMatch(output, new RegExp(`${appPassword}|${migrationPassword}`));
     await migrateDatabase(connection("marvin_migrator", migrationPassword));
     await migrateDatabase(connection("marvin_migrator", migrationPassword));
     await provisionDatabaseRoles(operator, { appPassword, migrationPassword });
@@ -81,6 +93,7 @@ test("database roles isolate runtime from migrations and keep login and finance 
     // Roles are cluster-global. This test uses only the disposable test cluster.
     await admin.query("DROP ROLE IF EXISTS marvin_app, marvin_migrator");
     await admin.end();
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
