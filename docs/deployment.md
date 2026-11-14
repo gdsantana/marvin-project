@@ -232,7 +232,7 @@ O workflow precisa de permissão para criar PRs nas configurações de Actions e
 
 Requer Bash, `curl`, `tar`, `openssl`, `flock`, `sha256sum`, Docker Compose com suporte a `up --wait` e acesso aos pacotes GHCR. O atualizador também requer GitHub CLI autenticado; releases privadas exigem GitHub CLI autenticado já na instalação. Para pacotes privados, autentique o Docker no GHCR com uma credencial de leitura adequada, usando `docker login ghcr.io`; não coloque tokens nos arquivos de exemplo ou em comandos salvos no histórico. O `gh` também precisa de acesso à release. Consulte as [instruções do GHCR](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
 
-Para releases públicas, baixe e execute o instalador em um terminal. Ele consulta a release estável mais recente, baixa o pacote correspondente e inicia a instalação em `~/marvin`, que deve estar vazio ou ainda não existir:
+Para releases públicas, execute o instalador diretamente com `curl | bash` em um terminal interativo. Ele consulta a release estável mais recente, baixa o pacote correspondente e inicia a instalação em `~/marvin`, que deve estar vazio ou ainda não existir:
 
 ```bash
 curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh | bash

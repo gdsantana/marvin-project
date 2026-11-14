@@ -18,10 +18,10 @@ Aplicação pessoal de controle financeiro em reais brasileiros, com interface w
 Após a primeira release pública, instale a versão estável mais recente em uma VM Linux com Docker Compose:
 
 ```bash
-instalador=$(mktemp)
-curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh -o "$instalador" && bash "$instalador"
-rm -f "$instalador"
+curl -fsSL https://github.com/gdsantana/marvin-project/releases/latest/download/install.sh | bash
 ```
+
+Execute em um terminal interativo. A instalação usa `~/marvin`, que deve estar vazio ou ainda não existir, sem precisar salvar o script ou preparar um diretório intermediário. Para escolher uma versão e outro diretório, consulte o [guia de instalação](docs/deployment.md#primeira-instalação-sem-clone).
 
 O instalador cria as configurações e credenciais, baixa as imagens do GitHub Container Registry (GHCR), prepara o PostgreSQL e inicia Web e MCP. Ele pede a origem HTTPS e a criação da conta da interface; ao final, exibe o token bearer para conectar o agente ao MCP. Configure também um proxy privado, DNS e HTTPS. Enquanto a release ou as imagens forem privadas, é necessária autenticação conforme o [guia de instalação](docs/deployment.md#primeira-instalação-sem-clone).
 
