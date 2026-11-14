@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/gdsantana/marvin-project/compare/v0.2.1...v0.2.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* allow opening balance correction through UI and MCP ([6d6efa6](https://github.com/gdsantana/marvin-project/commit/6d6efa6d08dad4446597231b717cf529842d1aad))
+
 ## [0.2.1](https://github.com/gdsantana/marvin-project/compare/v0.2.0...v0.2.1) (2026-11-14)
 
 
