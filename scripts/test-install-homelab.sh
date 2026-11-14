@@ -12,6 +12,7 @@ cat > "$tmp/bin/docker" <<'MOCK'
 printf '%s\n' "$*" >> "$TEST_LOG"
 case "$*" in
   "volume ls --format {{.Name}}") if [[ ${TEST_EXISTING_VOLUME:-0} == 1 ]]; then printf '%s\n' marvin-project_postgres_data; fi ;;
+  'ps -q --filter publish=4001') if [[ ${TEST_BUSY_PORT:-0} == 1 ]]; then echo busy-container; fi ;;
   'ps -aq --filter label=com.docker.compose.project=marvin-project') exit 0 ;;
   *'run --rm --no-deps migrate') [[ ${FAIL_MIGRATION:-0} != 1 ]] ;;
   *'--credentials-file /run/marvin-role-credentials.json'*)
@@ -27,10 +28,17 @@ case "$*" in
     exit 1 ;;
 esac
 MOCK
-chmod +x "$tmp/bin/docker"
+cat > "$tmp/bin/ss" <<'MOCK'
+#!/usr/bin/env bash
+if [[ ${TEST_BUSY_PORT:-0} == 1 && $* == *:3000 ]]; then echo 'LISTEN 0 128 127.0.0.1:3000'; fi
+MOCK
+chmod +x "$tmp/bin/docker" "$tmp/bin/ss"
 export PATH="$tmp/bin:$PATH" TEST_LOG="$tmp/docker.log" XDG_RUNTIME_DIR="$tmp/runtime"
 cd "$tmp/install"
-printf 'https://marvin.example.lan\n' | script -q -e -c 'bash install-homelab.sh' /dev/null > "$tmp/output"
+printf 'marvin.homelab\nhttp://marvin.homelab\nhttps://marvin.example.lan\ninvalid\n65535\n4000\n8080\n' | TEST_BUSY_PORT=1 script -q -e -c 'bash install-homelab.sh' /dev/null > "$tmp/output"
+rg -q '^WEB_HOST_PORT=8080$' .env
+rg -q '^MCP_HOST_PORT=8081$' .env
+rg -q 'Porta 4001 ocupada' "$tmp/output"
 test "$(stat -c %a .env)" = 600
 test "$(stat -c %a .env.ops)" = 600
 test "$(cat .marvin/deployed-version)" = v0.1.0
@@ -53,6 +61,8 @@ cd "$tmp/failed-install"
 : > "$TEST_LOG"
 if printf 'https://marvin.example.lan\n' | FAIL_MIGRATION=1 script -q -e -c 'bash install-homelab.sh' /dev/null > "$tmp/failure-output"; then echo 'Migration failure was ignored' >&2; exit 1; fi
 test -f .env && test -f .env.ops && test ! -e .marvin/deployed-version
+rg -q '^WEB_HOST_PORT=3000$' .env
+rg -q '^MCP_HOST_PORT=3001$' .env
 test "$(find .marvin -name 'credentials.*' | wc -l)" -eq 0
 if rg -q 'up -d --no-deps --wait web' "$TEST_LOG"; then echo 'Web started after failed migration' >&2; exit 1; fi
 printf 'install-homelab: generated configuration, credentials and existing-data checks passed\n'

@@ -1,3 +1,4 @@
+import { requestPassword } from "./password-prompt.js";
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { createDatabase } from "./client.js";
@@ -16,14 +17,18 @@ async function main() {
     const prompt = createInterface({ input: process.stdin, output, terminal: true });
     let username: string, password: string;
     try {
-      username = (await prompt.question("Usuário: ")).trim().toLowerCase();
-      process.stdout.write("Senha com ao menos 12 caracteres: ");
+      while (true) {
+        username = (await prompt.question("Usuário: ")).trim().toLowerCase();
+        if (/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username)) break;
+        process.stdout.write("Use 3 a 64 caracteres: letras, números, ponto, sublinhado ou hífen, começando por letra ou número. Tente novamente.\n");
+      }
       hidden = true;
-      password = await prompt.question("");
-      process.stdout.write("\nConfirme a senha: ");
-      const confirmation = await prompt.question("");
-      process.stdout.write("\n");
-      if (password !== confirmation) throw new OwnerProvisionError("As senhas não coincidem. Execute o comando novamente.");
+      password = await requestPassword(async (message) => {
+        process.stdout.write(message);
+        const answer = await prompt.question("");
+        process.stdout.write("\n");
+        return answer;
+      }, (message) => process.stdout.write(`${message}\n`));
     } finally { prompt.close(); }
     await provisionOwner(db, username, password, process.argv.includes("--reset-password"));
     console.log("Conta proprietária configurada. Entre com usuário e senha.");

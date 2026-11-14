@@ -1,3 +1,4 @@
+import { requestPassword } from "./password-prompt.js";
 import { createInterface } from "node:readline/promises";
 import { readFile } from "node:fs/promises";
 import { Writable } from "node:stream";
@@ -25,12 +26,17 @@ async function main() {
       passwords = [];
       try {
         for (const role of ["marvin_app", "marvin_migrator"]) {
-          process.stdout.write(`Senha URL-safe para ${role}, 32 a 128 caracteres: `);
           hidden = true;
-          const password = await prompt.question("");
-          process.stdout.write("\nConfirme a senha: ");
-          if (password !== await prompt.question("")) throw new DatabaseRoleError("As senhas não coincidem.");
-          process.stdout.write("\n");
+          const password = await requestPassword(async (message) => {
+            process.stdout.write(message);
+            const answer = await prompt.question("");
+            process.stdout.write("\n");
+            return answer;
+          }, message => process.stdout.write(`${message}\n`), password => {
+            if (!/^[A-Za-z0-9_-]{32,128}$/.test(password)) return "Use 32 a 128 caracteres: letras, números, hífen ou sublinhado. Tente novamente.";
+            if (passwords.includes(password)) return "Use uma senha diferente da outra role. Tente novamente.";
+            return undefined;
+          }, `Senha URL-safe para ${role}, 32 a 128 caracteres: `);
           passwords.push(password);
         }
       } finally { prompt.close(); }

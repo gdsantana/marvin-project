@@ -34,7 +34,7 @@ MOCK
 chmod +x "$tmp/bin/gh" "$tmp/bin/docker"
 export PATH="$tmp/bin:$PATH" TEST_LOG="$tmp/docker.log" MARVIN_BACKUP_DIR="$tmp/backups" TEST_BUNDLE="$tmp/bundle.tar.gz"
 cd "$tmp/install"
-printf 's\n' | bash update-homelab.sh v0.1.0 > "$tmp/success.log"
+printf 'invalid\ns\n' | bash update-homelab.sh v0.1.0 > "$tmp/success.log"
 test "$(cat .marvin/deployed-version)" = v0.1.0
 test "$(find "$tmp/backups" -name '*.dump' | wc -l)" -eq 1
 rg -q 'pull web mcp' "$TEST_LOG"

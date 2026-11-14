@@ -2,7 +2,7 @@
 set +x
 set -Eeuo pipefail
 trap 'echo "Instalação interrompida. Os arquivos e recursos já criados foram preservados; consulte o guia antes de tentar novamente." >&2' ERR
-for command in docker openssl flock; do
+for command in docker openssl flock ss; do
   command -v "$command" >/dev/null || { echo "Comando ausente: $command" >&2; exit 1; }
 done
 [[ -t 0 ]] || { echo 'Execute a instalação em um terminal interativo.' >&2; exit 1; }
@@ -27,9 +27,39 @@ while IFS= read -r volume; do
 done <<< "$volumes"
 existing=$(docker ps -aq --filter label=com.docker.compose.project=marvin-project)
 [[ -z $existing ]] || { echo 'Já existem containers do projeto Marvin; instalação cancelada.' >&2; exit 1; }
-printf 'Origem HTTPS da interface, por exemplo https://marvin.example.lan: '
-read -r origin
-[[ $origin =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$ ]] || { echo 'Informe uma origem HTTPS sem caminho, espaços ou barra final.' >&2; exit 1; }
+while true; do
+  printf 'Endereço HTTPS da interface, incluindo https://, por exemplo https://marvin.example.lan: '
+  if ! read -r origin; then
+    echo 'Entrada do terminal encerrada; instalação cancelada.' >&2
+    exit 1
+  fi
+  [[ $origin =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$ ]] && break
+  echo 'Inclua https:// e informe somente o domínio e a porta opcional, sem caminho, espaços ou barra final. Tente novamente.' >&2
+done
+web_port=3000
+while true; do
+  mcp_port=$((web_port + 1))
+  ports_available=true
+  for port in "$web_port" "$mcp_port"; do
+    listeners=$(ss -H -ltn "sport = :$port")
+    published=$(docker ps -q --filter "publish=$port")
+    if [[ -n $listeners || -n $published ]]; then
+      printf 'Porta %s ocupada.\n' "$port"
+      ports_available=false
+    fi
+  done
+  if [[ $ports_available == true ]]; then break; fi
+  while true; do
+    printf 'Informe outra porta para a interface, de 1024 a 65534: '
+    if ! read -r candidate; then echo 'Entrada do terminal encerrada; instalação cancelada.' >&2; exit 1; fi
+    if [[ $candidate =~ ^[1-9][0-9]{3,4}$ ]] && (( candidate >= 1024 && candidate <= 65534 )); then
+      web_port=$candidate
+      break
+    fi
+    echo 'Porta inválida. Use um número de 1024 a 65534.' >&2
+  done
+done
+printf 'Portas no host: Web %s, MCP %s.\n' "$web_port" "$mcp_port"
 umask 077
 admin_password=$(openssl rand -hex 32)
 app_password=$(openssl rand -hex 32)
@@ -47,9 +77,9 @@ MCP_API_TOKEN=${api_token}
 MCP_HERMES_BEARER_TOKEN=${hermes_token}
 MCP_API_URL=http://web:3000/api/
 WEB_BIND_ADDRESS=127.0.0.1
-WEB_HOST_PORT=3000
+WEB_HOST_PORT=${web_port}
 MCP_BIND_ADDRESS=127.0.0.1
-MCP_HOST_PORT=3001
+MCP_HOST_PORT=${mcp_port}
 ENV
 cat > .env.ops <<ENV
 POSTGRES_PASSWORD=${admin_password}

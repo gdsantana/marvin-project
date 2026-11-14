@@ -30,9 +30,15 @@ compose=(docker compose --project-directory "$root" --env-file "$root/.env" --en
 "${compose[@]}" exec -T db sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null
 printf 'Destino: %s\n' "$tag"
 if [[ -f .marvin/deployed-version ]]; then printf 'Última versão concluída: %s\n' "$(cat .marvin/deployed-version)"; fi
-printf 'Revise a release e bloqueie o acesso pelo proxy e Hermes. Continuar? [s/N] '
-read -r answer
-[[ $answer == s || $answer == S ]] || { echo 'Atualização cancelada.'; exit 1; }
+while true; do
+  printf 'Revise a release e bloqueie o acesso pelo proxy e Hermes. Continuar? [s/N] '
+  if ! read -r answer; then echo 'Atualização cancelada.'; exit 1; fi
+  case "$answer" in
+    s|S) break ;;
+    n|N|'') echo 'Atualização cancelada.'; exit 1 ;;
+    *) echo 'Responda s para continuar ou n para cancelar.' >&2 ;;
+  esac
+done
 "${compose[@]}" stop mcp web
 
 backup_dir=${MARVIN_BACKUP_DIR:-/srv/backups/marvin}
