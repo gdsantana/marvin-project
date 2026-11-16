@@ -84,14 +84,6 @@ function SimpleTransactionFields({ action, references, setAction }: { action: "i
   return <>
     <TransactionAmountField action={action} />
     <FormField label="Descrição" name="description" placeholder="Ex.: Mercado do mês" className="sm:col-span-2" />
-    <div className="grid gap-4 min-[375px]:grid-cols-2 sm:col-span-2">
-    <div className="grid min-w-0 content-start gap-1">
-      <FormField label={credit ? "Cartão" : "Conta"} name={credit ? "cardAccountId" : "accountId"} value={accountId} onChange={event => setAccountId(event.target.value)} options={[["", credit ? "Selecione um cartão" : "Selecione uma conta"], ...accounts.map(account => [account.id, account.name] as [string, string])]} />
-      {account && <p className="break-words text-xs text-muted-foreground">Saldo atual: {formatMinor(account.balanceMinor, account.currency)}</p>}
-    </div>
-    <FormField label="Data" name="occurredOn" type="date" defaultValue={todayCivil()} className="min-w-0" />
-    </div>
-    <TransactionCategory key={kind} action={kind} categories={references.categories.filter(category => !category.isArchived && category.type === kind)} />
     {kind === "expense" && <FormField label="Forma de pagamento" name="paymentMethod" value={credit ? "credit" : paymentMethod} onChange={event => {
       const method = event.target.value;
       if ((method === "credit") !== credit) {
@@ -100,6 +92,14 @@ function SimpleTransactionFields({ action, references, setAction }: { action: "i
       }
       if (method !== "credit") setPaymentMethod(method);
     }} options={[["pix", "Pix"], ["debit", "Débito"], ["credit", "Cartão de crédito"], ["cash", "Dinheiro"], ["other", "Outra"]]} />}
+    <div className="grid gap-4 min-[375px]:grid-cols-2 sm:col-span-2">
+    <div className="grid min-w-0 content-start gap-1">
+      <FormField label={credit ? "Cartão" : "Conta"} name={credit ? "cardAccountId" : "accountId"} value={accountId} onChange={event => setAccountId(event.target.value)} options={[["", credit ? "Selecione um cartão" : "Selecione uma conta"], ...accounts.map(account => [account.id, account.name] as [string, string])]} />
+      {account && <p className="break-words text-xs text-muted-foreground">Saldo atual: {formatMinor(account.balanceMinor, account.currency)}</p>}
+    </div>
+    <FormField label="Data" name="occurredOn" type="date" defaultValue={todayCivil()} className="min-w-0" />
+    </div>
+    <TransactionCategory key={kind} action={kind} categories={references.categories.filter(category => !category.isArchived && category.type === kind)} />
     {credit && <FormField label="Parcelas" name="installmentCount" type="number" min="1" defaultValue="1" />}
     <details key="details" className="sm:col-span-2">
       <summary className="flex min-h-11 cursor-pointer items-center text-sm text-muted-foreground">Mais detalhes</summary>

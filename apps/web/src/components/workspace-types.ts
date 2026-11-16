@@ -5,7 +5,7 @@ export type AccountOption = Pick<AccountWithBalance, "id" | "name" | "type" | "c
 export type CategoryOption = Pick<CategoryResponse, "id" | "name" | "type" | "isArchived"> & Partial<Pick<CategoryResponse, "parentId">>;
 export type TransactionOption = Pick<TransactionResponse, "id" | "description" | "kind" | "occurredOn"> & Partial<Omit<TransactionResponse, "id" | "description" | "kind" | "occurredOn">>;
 export type ExpenseForecastOption = import("@finance/contracts").CreateExpenseForecastInput & { id: string; currency: string; status: "projected" | "realized" | "cancelled"; realizedTransactionId: string | null; createdAt: string };
-export type StatementOption = Pick<StatementDetail, "id" | "cardAccountId" | "cardAccountName" | "currency" | "dueOn" | "status"> & Partial<Pick<StatementDetail, "remainingMinor" | "items" | "creditBalanceMinor">>;
+export type StatementOption = Pick<StatementDetail, "id" | "cardAccountId" | "cardAccountName" | "currency" | "dueOn" | "status"> & Partial<Pick<StatementDetail, "remainingMinor" | "billedMinor" | "paidMinor" | "items" | "creditBalanceMinor">>;
 export type References = { accounts: AccountOption[]; categories: CategoryOption[]; transactions: TransactionOption[]; statements: StatementOption[]; institutions: Pick<InstitutionResponse, "id" | "name">[] };
 export type ReportData = MonthlySummary;
 
