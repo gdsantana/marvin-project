@@ -225,6 +225,24 @@ test("PostgreSQL constraints and domain ports persist financial operations, fore
     assert.deepEqual((await spending()).paymentMethods, [{ method: "credit", amountMinor: "1000" }]);
     await service.configureCard({ ...legacySettings, reportingAccountId: null }, "service-report-unlink");
     assert.deepEqual((await spending()).paymentMethods, []);
+
+    const orderIds = [randomUUID(), randomUUID(), randomUUID()];
+    const orderClient = await pool.connect();
+    try {
+      await orderClient.query("BEGIN");
+      await orderClient.query(`INSERT INTO transactions (id, kind, occurred_on, description, source, created_at) VALUES
+        ($1, 'income', '2027-01-01', 'Older', 'manual', '2027-01-01T10:00:00Z'),
+        ($2, 'income', '2027-01-01', 'Newer', 'manual', '2027-01-01T12:00:00Z'),
+        ($3, 'income', '2027-01-02', 'Later date', 'manual', '2027-01-01T09:00:00Z')`, orderIds);
+      for (const id of orderIds) await orderClient.query("INSERT INTO account_entries (transaction_id, account_id, amount_minor) VALUES ($1, $2, 1)", [id, cashAccount]);
+      await orderClient.query("COMMIT");
+    } catch (error) {
+      await orderClient.query("ROLLBACK");
+      throw error;
+    } finally { orderClient.release(); }
+    const orderedHistory = await service.transactionHistory("2027-01-01", "2027-01-02");
+    assert.deepEqual(orderedHistory.map(item => item.id), [orderIds[2], orderIds[1], orderIds[0]]);
+
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA "${schemaName}" CASCADE`);

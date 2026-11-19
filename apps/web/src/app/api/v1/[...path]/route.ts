@@ -11,6 +11,7 @@ import {
 } from "@finance/contracts";
 import { authorize, apiError, domainErrorResponse, readJsonBody } from "@/server/http";
 import { financeApplication } from "@/server/finance";
+import { withFinanceNotifications } from "@/server/finance-events";
 
 const uuidSchema = z.uuid();
 const closeStatementSchema = z.object({ statementId: uuidSchema });
@@ -105,7 +106,7 @@ export async function POST(request: Request, context: { params: Promise<{ path: 
   try {
     const { path } = await context.params;
     const route = path.join("/");
-    const { service } = financeApplication();
+    const service = withFinanceNotifications(financeApplication().service);
     if (route === "transactions/preview") {
       const parsed = previewTransactionSchema.safeParse(raw);
       if (!parsed.success) return validationError(parsed.error);

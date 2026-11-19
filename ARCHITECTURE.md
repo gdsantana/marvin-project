@@ -156,3 +156,9 @@ e tool MCP `correct_opening_balance` compartilham uma operação idempotente.
 Configurações oferece “Corrigir saldo inicial”. O adapter altera somente a coluna
 de saldo inicial; runner de migrations reaplica o grant específico. A operação
 não cria despesa nem itens de fatura. Ver ADR 0015 e modelo §20.
+
+## Atualização de dados em tempo real
+
+A Web oferece `GET /api/events`, um fluxo SSE autenticado pela sessão da interface. Após operações de escrita concluídas na API, inclusive chamadas pelo MCP, e após fechamento automático de faturas, a Web envia um aviso sem dados financeiros. A interface recarrega as consultas existentes ao receber o aviso, ao conectar e ao voltar ao primeiro plano; desconexões são recuperadas pelo EventSource e pela recarga na reconexão. Sessões são verificadas periodicamente. A entrega é eventual: avisos podem ser perdidos entre o commit e a notificação ou durante uma desconexão.
+
+A distribuição é em memória, limitada ao processo Web: múltiplos processos ou réplicas exigem um mecanismo compartilhado e reconciliação. O SSE não é uma fila durável nem substitui o PostgreSQL como fonte dos dados. O proxy precisa encaminhar o fluxo sem buffering e permitir os heartbeats; a conexão não deve ser colocada em cache.

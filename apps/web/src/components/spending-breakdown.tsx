@@ -25,33 +25,36 @@ export function SpendingBreakdown({ accountId, period: { from, to }, reloadToken
 }) {
   const router = useRouter();
   const [retry, setRetry] = useState(0);
-  const [result, setResult] = useState<{ key: string; data: SpendingReport | null }>();
+  const [result, setResult] = useState<{ key: string; query: string; data: SpendingReport | null }>();
+  const [error, setError] = useState(false);
   const query = new URLSearchParams({ from, to, ...(accountId ? { accountId } : {}) }).toString();
   const key = `${query}:${reloadToken}:${retry}`;
 
   useEffect(() => {
     const controller = new AbortController();
+    setError(false);
     fetch(`/api/v1/reports/spending?${query}`, { cache: "no-store", signal: controller.signal })
       .then(async response => {
         if (response.status === 401 && !controller.signal.aborted) router.replace("/login");
         if (!response.ok) throw new Error();
         const envelope = spendingReportResponseSchema.parse(await response.json());
         if (!envelope.ok) throw new Error(envelope.error.message);
-        if (!controller.signal.aborted) setResult({ key, data: envelope.data });
+        if (!controller.signal.aborted) setResult({ key, query, data: envelope.data });
       })
-      .catch(() => { if (!controller.signal.aborted) setResult({ key, data: null }); });
+      .catch(() => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
   }, [key, query, router]);
 
-  if (result?.key !== key) return <p role="status" className="text-sm text-muted-foreground">Carregando gastos…</p>;
-  if (!result.data) return <Alert variant="destructive">
+  if (result?.query !== query && !error) return <p role="status" className="text-sm text-muted-foreground">Carregando gastos…</p>;
+  if (error && result?.query !== query) return <Alert variant="destructive">
     <AlertDescription className="flex flex-wrap items-center gap-3">Não foi possível carregar os gastos.<Button variant="outline" onClick={() => setRetry(value => value + 1)}>Tentar novamente</Button></AlertDescription>
   </Alert>;
 
+  if (!result?.data) return null;
   const categories = result.data.categories.map(row => ({ label: row.categoryName ?? "Sem categoria", amountMinor: row.amountMinor }));
   const methods = result.data.paymentMethods.map(row => ({ ...paymentMethods[row.method], amountMinor: row.amountMinor }));
   const total = methods.reduce((sum, row) => sum + BigInt(row.amountMinor), 0n);
-  return <div className={accountId ? "grid min-w-0 items-start gap-4 lg:grid-cols-2" : "min-w-0"}>
+  return <> {error && <Alert variant="destructive"><AlertDescription>Não foi possível atualizar os gastos. Os dados exibidos podem estar desatualizados. <Button variant="outline" onClick={() => setRetry(value => value + 1)}>Tentar novamente</Button></AlertDescription></Alert>}<div className={accountId ? "grid min-w-0 items-start gap-4 lg:grid-cols-2" : "min-w-0"}>
     {accountId && <Card className="min-w-0">
       <CardHeader><CardTitle><h2>Gastos por categoria</h2></CardTitle><CardDescription>Despesas do período com descontos de estornos.</CardDescription></CardHeader>
       <CardContent><AmountFinanceChart rows={categories} currency="BRL" /></CardContent>
@@ -71,5 +74,5 @@ export function SpendingBreakdown({ accountId, period: { from, to }, reloadToken
         </ul>}
       </CardContent>
     </Card>
-  </div>;
+  </div></>;
 }

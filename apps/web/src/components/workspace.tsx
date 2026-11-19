@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createdIdResponseSchemaEnvelope, type CreateCategoryInput, type CategoryReport } from "@finance/contracts";
 import { CategoryCreationContext } from "./category-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -69,6 +69,9 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const [historyPeriod, setHistoryPeriod] = useState(() => reportPeriod("month"));
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
+  const [hasData, setHasData] = useState(false);
+  const [newTransactionIds, setNewTransactionIds] = useState<string[]>([]);
+  const previousTransactions = useRef<{ rows: Map<string, string>; scope: string; token: number } | null>(null);
   const [report, setReport] = useState<{ range: string; data: ReportData } | null>(null);
   const [reportError, setReportError] = useState("");
   const [reportLoading, setReportLoading] = useState(true);
@@ -98,6 +101,31 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
 
   useEffect(() => {
     if (!authenticated) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setReloadToken(value => value + 1), 150);
+    };
+    const source = new EventSource("/api/events");
+    source.addEventListener("finance-changed", refresh);
+    source.addEventListener("open", refresh);
+    const onVisibility = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      source.close();
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (timer) clearTimeout(timer);
+    };
+  }, [authenticated]);
+
+  useEffect(() => {
+    if (!newTransactionIds.length) return;
+    const timer = setTimeout(() => setNewTransactionIds([]), 300);
+    return () => clearTimeout(timer);
+  }, [newTransactionIds]);
+
+  useEffect(() => {
+    if (!authenticated) return;
     let cancelled = false;
     setDataLoading(true); setDataError("");
     const today = todayCivil();
@@ -120,6 +148,12 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
       if ([accounts, categories, transactions, statements, institutions, expenseForecasts].some(response => response.status === 403)) throw new Error("Você não tem permissão para consultar estes dados.");
       if (!accounts.ok || !categories.ok || !transactions.ok || !statements.ok || !institutions.ok || !expenseForecasts.ok) throw new Error("Não foi possível carregar os dados. Tente novamente.");
       if (cancelled) return;
+      const scope = `${section}:${historyPeriod.from}:${historyPeriod.to}`;
+      const previous = previousTransactions.current;
+      const rows = new Map<string, string>((responses[2].data as TransactionOption[]).map(row => [row.id, JSON.stringify(row)]));
+      setNewTransactionIds(previous && previous.scope === scope && previous.token !== reloadToken ? [...rows].filter(([id, value]) => previous.rows.get(id) !== value).map(([id]) => id) : []);
+      previousTransactions.current = { rows, scope, token: reloadToken };
+      setHasData(true);
       setReferences({ accounts: responses[0].data, categories: responses[1].data, transactions: responses[2].data, statements: responses[3].data, institutions: responses[4].data });
       setForecasts(responses[5].data);
     }).catch(error => { if (!cancelled) setDataError(error instanceof Error && error.message.startsWith("Você não tem permissão") ? error.message : "Não foi possível carregar os dados. Tente novamente."); })
@@ -168,8 +202,8 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
     return () => controller.abort();
   }, [authenticated, section, range, reloadToken, reportReload, router]);
 
-  const currentAnalytics = analytics?.range === range && !analyticsError ? analytics : null;
-  const currentReport = report?.range === range && !reportError ? report.data : null;
+  const currentAnalytics = analytics?.range === range ? analytics : null;
+  const currentReport = report?.range === range ? report.data : null;
 
   const selectedAccount = accountId ? references.accounts.find(account => account.id === accountId && account.type !== "credit_card") : undefined;
   const current = titles[section];
@@ -306,13 +340,13 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
         router.replace("/login");
       } catch { setMessage("Não foi possível conectar para sair. Tente novamente."); }
     }}>
-        {dataError && <Alert variant="destructive" className="mb-5"><AlertDescription>{dataError}{!dataError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReloadToken(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
+        {dataError && <Alert variant="destructive" className="mb-5"><AlertDescription>{dataError}{hasData && !dataError.startsWith("Você não tem permissão") && " Os dados exibidos podem estar desatualizados."}{!dataError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReloadToken(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {message && !form && <Alert role="status" className="mb-5"><AlertDescription>{message}</AlertDescription></Alert>}
-        {(section === "overview" || section === "reports") && analyticsError && <Alert variant="destructive" className="mb-5"><AlertDescription>{analyticsError}<Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button></AlertDescription></Alert>}
-        {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
+        {(section === "overview" || section === "reports") && analyticsError && <Alert variant="destructive" className="mb-5"><AlertDescription>{analyticsError}{currentAnalytics && " Os dados exibidos podem estar desatualizados."}<Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button></AlertDescription></Alert>}
+        {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{currentReport && !reportError.startsWith("Você não tem permissão") && " Os dados exibidos podem estar desatualizados."}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="mb-3 text-sm text-muted-foreground">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
-        {dataLoading ? <div role="status" className="grid gap-4"><span className="sr-only">Carregando seus dados</span><Skeleton className="h-36 w-full" /><Skeleton className="h-52 w-full" /></div> : dataError ? null : <>
-          {section === "overview" && <DashboardOverview series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError)} />}
+        {dataLoading && !hasData ? <div role="status" className="grid gap-4"><span className="sr-only">Carregando seus dados</span><Skeleton className="h-36 w-full" /><Skeleton className="h-52 w-full" /></div> : dataError && !hasData ? null : <>
+          {section === "overview" && <DashboardOverview newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
           {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
           {section === "accounts" && (accountId ? <div className="grid gap-4">
             <Link href="/accounts" className={buttonVariants({ variant: "outline", className: "w-fit" })}>Voltar para contas</Link>
@@ -328,11 +362,11 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
             <label className="grid gap-1 text-sm">Até<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.to} min={historyPeriod.from} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, to: event.target.value })); }} /></label>
           </div>}
           {section === "entries" && <>
-            <TransactionList rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
+            <TransactionList newTransactionIds={newTransactionIds} rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
             <ExpenseForecasts forecasts={forecasts} references={references} setForm={setForm} onRealize={forecast => openForecastAction("realizeForecast", forecast)} onCancel={forecast => openForecastAction("cancelForecast", forecast)} />
           </>}
           {section === "statements" && <ResourceSection title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={setForm} rows={references.statements} />}
-          {section === "reports" && !reportError && <ReportsDashboard spending={<SpendingBreakdown period={reportPeriod(range)} reloadToken={reloadToken} />} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} range={range} onRangeChange={setRange} report={currentReport} />}
+          {section === "reports" && (!reportError || currentReport) && <ReportsDashboard spending={<SpendingBreakdown period={reportPeriod(range)} reloadToken={reloadToken} />} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} range={range} onRangeChange={setRange} report={currentReport} />}
         </>}
     {form && (section !== "new" || (!dataLoading && !dataError)) && <CategoryCreationContext value={createInlineCategory}><ActionDialog presentation={section === "new" ? "inline" : "dialog"} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} /></CategoryCreationContext>}
   </AppShell>;

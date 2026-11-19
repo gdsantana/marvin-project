@@ -17,6 +17,7 @@ export type DashboardCategory = CategoryReport;
 
 export type DashboardOverviewProps = {
   references: References;
+  newTransactionIds?: string[];
   report: ReportData | null;
   reportError: boolean;
   series: DashboardSeriesPoint[];
@@ -27,7 +28,7 @@ export type DashboardOverviewProps = {
   setForm: (action: Action) => void;
 };
 
-export function DashboardOverview({ references, report, reportError, series, categories, analyticsLoading, range, setRange, setForm }: DashboardOverviewProps) {
+export function DashboardOverview({ newTransactionIds = [], references, report, reportError, series, categories, analyticsLoading, range, setRange, setForm }: DashboardOverviewProps) {
   const balances = Object.entries(report?.balancesByCurrency ?? {});
   const incomes = Object.entries(report?.incomeMinorByCurrency ?? {});
   const expenses = Object.entries(report?.expenseMinorByCurrency ?? {});
@@ -76,7 +77,7 @@ export function DashboardOverview({ references, report, reportError, series, cat
           <Link href="/entries" className="inline-flex min-h-11 shrink-0 items-center gap-1 text-xs font-medium text-primary">Ver todas <ArrowRightIcon aria-hidden="true" className="size-3.5" /></Link>
         </CardHeader>
         <CardContent className="px-4 pb-2 sm:px-5">
-          {recent.length ? <ul className="flex flex-col gap-1.5">{recent.map(transaction => <TransactionRow key={transaction.id} transaction={transaction} />)}</ul> : <EmptyPanel text="Seus lançamentos aparecerão aqui depois de registrados." />}
+          {recent.length ? <ul className="flex flex-col gap-1.5">{recent.map(transaction => <TransactionRow key={transaction.id} isNew={newTransactionIds.includes(transaction.id)} transaction={transaction} />)}</ul> : <EmptyPanel text="Seus lançamentos aparecerão aqui depois de registrados." />}
         </CardContent>
       </Card>
       <Card>
@@ -165,11 +166,11 @@ function SummaryValues({ values, unavailable, className }: { values: [string, st
   return <div className="grid min-w-0 gap-1">{values.map(([currency, amount]) => <p key={currency} className={`[overflow-wrap:anywhere] font-mono font-medium tracking-tight tabular-nums ${className}`}>{formatMinor(amount, currency)}</p>)}</div>;
 }
 
-function TransactionRow({ transaction }: { transaction: TransactionOption }) {
+function TransactionRow({ transaction, isNew }: { transaction: TransactionOption; isNew: boolean }) {
   const isIncome = transaction.kind === "income";
   const amounts = transaction.entries?.map(entry => formatMinor(entry.amountMinor, entry.currency)).join(" · ") ?? "";
   const kind = transaction.kind === "income" ? "Receita" : transaction.kind === "expense" ? "Despesa" : transaction.kind === "transfer" ? "Transferência" : transaction.kind === "refund" ? "Estorno" : transaction.kind;
-  return <li className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-surface p-2 lg:bg-transparent lg:py-4">
+  return <li className={`flex min-w-0 items-center justify-between gap-3 rounded-lg bg-surface p-2 lg:bg-transparent lg:py-4 ${isNew ? "new-transaction" : ""}`}>
     <div className="flex min-w-0 items-center gap-3"><span className={`flex size-9 shrink-0 items-center justify-center rounded-full bg-muted ${isIncome ? "text-primary" : "text-muted-foreground"}`}><WalletIcon aria-hidden="true" className="size-4" /></span><div className="min-w-0"><p className="truncate text-sm font-medium">{transaction.description}</p><p className="mt-1 truncate text-[11px] text-muted-foreground">{formatDate(transaction.occurredOn)} · {kind}</p></div></div>
     {amounts && <span className={`max-w-[44%] break-words text-right font-mono text-xs tabular-nums ${isIncome ? "text-primary" : transaction.kind === "expense" ? "text-destructive" : "text-foreground"}`}>{amounts}</span>}
   </li>;
