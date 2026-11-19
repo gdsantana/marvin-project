@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/gdsantana/marvin-project/compare/v0.2.2...v0.3.0) (2026-11-19)
+
+
+### Features
+
+* atualiza dashboard em tempo real ([c6fd6b5](https://github.com/gdsantana/marvin-project/commit/c6fd6b5807b07758fd1a8c52151def59fedc2827))
+* report spending by account and payment method ([7314064](https://github.com/gdsantana/marvin-project/commit/731406484994b1b2a5200071082ab078a855d3d1))
+* visualizar gastos por conta e meio de pagamento ([6a7bfc4](https://github.com/gdsantana/marvin-project/commit/6a7bfc46078eca30c40cf1a8e01df900955d92f3))
+* **web:** refinar interface do painel e relatórios ([4038488](https://github.com/gdsantana/marvin-project/commit/4038488e4772812484f5e5a0ffa5bb0708304d02))
+* **web:** refine dashboard and reports interface ([c33a5e3](https://github.com/gdsantana/marvin-project/commit/c33a5e3c0c46775cea0fd83f30f8e8581f3e51f0))
+
 ## [0.2.2](https://github.com/gdsantana/marvin-project/compare/v0.2.1...v0.2.2) (2026-11-14)
 
 
