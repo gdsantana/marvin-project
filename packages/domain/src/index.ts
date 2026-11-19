@@ -2,7 +2,7 @@ import { correctOpeningBalanceSchema } from "@finance/contracts";
 import type {
   CreateStatementAdjustmentInput, CreateCashbackInput, CreateCreditPurchaseInput, CreateExpenseInput, CreateIncomeInput, CreateRefundInput,
   CreateStatementInput, CreateTransferInput, DomainErrorCode, PayStatementInput,
-  PreviewTransactionInput, PreviewTransactionOutput, CreateExpenseForecastInput, CategoryReport,
+  PreviewTransactionInput, PreviewTransactionOutput, CreateExpenseForecastInput, CategoryReport, SpendingReport,
   RealizeExpenseForecastInput, CorrectTransactionInput, ReverseTransactionInput, TransactionAuditContext,
 } from "@finance/contracts";
 
@@ -11,7 +11,7 @@ export type Minor = bigint;
 export type Account = { id: UUID; name: string; type: "checking" | "savings" | "cash" | "credit_card"; currency: string; openingBalanceMinor: Minor; openingDate: string; institutionId: UUID | null; isArchived: boolean };
 export type Institution = { id: UUID; name: string; isArchived: boolean };
 export type Category = { id: UUID; name: string; type: "income" | "expense"; parentId: UUID | null; isArchived: boolean };
-export type CardSettings = { creditLimitMinor: Minor | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" };
+export type CardSettings = { reportingAccountId?: UUID | null; creditLimitMinor: Minor | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" };
 export type CreateAccountCommand = Omit<Account, "id" | "isArchived"> & { id?: UUID; cardSettings?: CardSettings };
 export type Transaction = { id: UUID; kind: string; occurredOn: string; postedOn: string | null; description: string; counterpartyName: string | null; notes: string | null; reviewStatus: "confirmed" | "needs_review"; paymentMethod: string | null; relatedTransactionId: UUID | null; idempotencyKey: string | null; source: string };
 export type ExpenseForecast = CreateExpenseForecastInput & { id: UUID; currency: string; status: "projected" | "realized" | "cancelled"; realizedTransactionId: UUID | null; createdAt: string };
@@ -39,8 +39,9 @@ export interface TransactionContext {
   readonly forecasts: { save(value: ExpenseForecast): Promise<void>; get(id: UUID, lock?: boolean): Promise<ExpenseForecast | null>; list(from: string, to: string, currency?: string): Promise<ExpenseForecast[]> };
   readonly revisions: { add(value: TransactionRevision): Promise<void>; listByTransaction(id: UUID): Promise<TransactionRevision[]> };
   readonly cards: {
-    getSettings(accountId: UUID): Promise<{ accountId: UUID; creditLimitMinor: Minor | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" } | null>;
-    saveSettings(value: { accountId: UUID; creditLimitMinor: Minor | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" }): Promise<void>;
+    getSettings(accountId: UUID): Promise<(CardSettings & { accountId: UUID }) | null>;
+    listReportingCards(accountId: UUID): Promise<UUID[]>;
+    saveSettings(value: CardSettings & { accountId: UUID }): Promise<void>;
   };
   readonly statements: {
     get(id: UUID): Promise<Statement | null>; findByClosingDate(cardAccountId: UUID, closingOn: string): Promise<Statement | null>;
@@ -117,6 +118,7 @@ export class FinanceService {
       if (input.institutionId && !await tx.institutions.get(input.institutionId)) fail("NOT_FOUND", "Instituição não encontrada");
       if (input.type === "credit_card" && !input.cardSettings) fail("VALIDATION_ERROR", "Configuração obrigatória para cartão");
       if (input.type !== "credit_card" && input.cardSettings) fail("INVALID_ACCOUNT_TYPE", "Configuração de cartão não se aplica a esta conta");
+      await this.validateReportingAccount(tx, input.cardSettings?.reportingAccountId);
       const accountId = input.id ?? id();
       if (await tx.accounts.get(accountId)) fail("CONFLICT", "Conta já existe");
       const { cardSettings, ...accountInput } = input;
@@ -138,15 +140,22 @@ export class FinanceService {
     })).value.accountId;
   }
 
-  async configureCard(input: { accountId: UUID; creditLimitMinor: Minor | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" }, key: string): Promise<void> {
+  async configureCard(input: CardSettings & { accountId: UUID }, key: string): Promise<void> {
     await this.idempotent("configureCard", key, input, async tx => {
       if (!isIanaTimeZone(input.billingTimezone)) fail("VALIDATION_ERROR", "Fuso horário IANA inválido");
       const account = await this.requireAccount(tx, input.accountId);
       if (account.type !== "credit_card") fail("INVALID_ACCOUNT_TYPE", "Configuração exige conta de cartão");
       if (input.closingDay < 1 || input.closingDay > 31 || input.dueDay < 1 || input.dueDay > 31 || input.creditLimitMinor !== null && input.creditLimitMinor < 0n) fail("VALIDATION_ERROR", "Configuração de cartão inválida");
+      await this.validateReportingAccount(tx, input.reportingAccountId);
       await tx.cards.saveSettings(input);
       return true;
     });
+  }
+
+  private async validateReportingAccount(tx: TransactionContext, accountId: UUID | null | undefined) {
+    if (!accountId) return;
+    const account = await this.requireAccount(tx, accountId);
+    if (account.type !== "checking" && account.type !== "savings") fail("INVALID_ACCOUNT_TYPE", "Selecione uma conta corrente ou poupança para vincular ao cartão");
   }
 
   async createCategory(input: { id?: UUID; name: string; type: "income" | "expense"; parentId: UUID | null }, key: string): Promise<UUID> {
@@ -403,7 +412,7 @@ export class FinanceService {
     })));
   }
 
-  async cardSettings(accountId: UUID): Promise<{ accountId: UUID; creditLimitMinor: Minor | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" }> {
+  async cardSettings(accountId: UUID): Promise<CardSettings & { accountId: UUID }> {
     return this.repository.transaction(async tx => {
       const account = await this.requireAccount(tx, accountId); if (account.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "Configuração exige conta de cartão");
       const settings = await tx.cards.getSettings(accountId); if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada");
@@ -516,6 +525,36 @@ export class FinanceService {
     });
   }
 
+  async spendingReport(from: string, to: string, accountId?: UUID): Promise<SpendingReport> {
+    return this.repository.transaction(async tx => {
+      let scope: Set<UUID> | undefined;
+      if (accountId) {
+        const account = await this.requireAccount(tx, accountId);
+        if (account.type === "credit_card") fail("INVALID_ACCOUNT_TYPE", "Selecione uma conta para consultar os gastos");
+        scope = new Set([accountId, ...await tx.cards.listReportingCards(accountId)]);
+      }
+      const data = await tx.reporting.load();
+      const names = new Map(data.categories.map(category => [category.id, category.name]));
+      const categories = new Map<UUID | null, Minor>();
+      const methods = new Map<SpendingReport["paymentMethods"][number]["method"], Minor>();
+      for (const row of this.economicProjection(data)) {
+        if (row.expense === 0n || row.date < from || row.date > to) continue;
+        if (scope && !row.entries.some(entry => scope.has(entry.accountId))) continue;
+        categories.set(row.categoryId, (categories.get(row.categoryId) ?? 0n) + row.expense);
+        if (row.kind !== "expense") continue;
+        const payment = row.paymentMethod;
+        const method = payment === "credit" || payment === "debit" || payment === "pix" ? payment : "other";
+        methods.set(method, (methods.get(method) ?? 0n) + row.expense);
+      }
+      return {
+        categories: [...categories].filter(([, amount]) => amount !== 0n).map(([categoryId, amount]) => ({
+          categoryId, categoryName: categoryId ? names.get(categoryId) ?? null : null, amountMinor: amount.toString(),
+        })),
+        paymentMethods: [...methods].map(([method, amount]) => ({ method, amountMinor: amount.toString() })),
+      };
+    });
+  }
+
   async listReversalsFor(transactionId: UUID): Promise<UUID[]> {
     return this.repository.transaction(async tx => (await tx.transactions.list("0001-01-01", "9999-12-31")).filter(item => item.kind === "adjustment" && item.relatedTransactionId === transactionId).map(item => item.id));
   }
@@ -552,14 +591,15 @@ export class FinanceService {
     for (const entry of data.entries) { const rows = entries.get(entry.transactionId) ?? []; rows.push(entry); entries.set(entry.transactionId, rows); }
     for (const allocation of data.allocations) { const rows = allocations.get(allocation.transactionId) ?? []; rows.push(allocation); allocations.set(allocation.transactionId, rows); }
     for (const revision of [...data.revisions].sort((a, b) => a.revisionNumber - b.revisionNumber)) if (revision.allocations !== null) allocations.set(revision.transactionId, revision.allocations);
-    const result: Array<{ date: string; currency: "BRL"; categoryId: UUID | null; income: bigint; expense: bigint }> = [];
+    const result: Array<{ date: string; currency: "BRL"; categoryId: UUID | null; income: bigint; expense: bigint; entries: Entry[]; kind: string; paymentMethod: string | null }> = [];
     for (const transaction of data.transactions) {
       if (!["income", "expense", "refund"].includes(transaction.kind) || reversed.has(transaction.id)) continue;
-      const currencies = new Set((entries.get(transaction.id) ?? []).map(entry => accounts.get(entry.accountId)?.currency).filter((value): value is string => Boolean(value)));
+      const transactionEntries = entries.get(transaction.id) ?? [];
+      const currencies = new Set(transactionEntries.map(entry => accounts.get(entry.accountId)?.currency).filter((value): value is string => Boolean(value)));
       if (currencies.size > 1) fail("CURRENCY_MISMATCH", "Operação possui moedas incompatíveis");
       const currency = [...currencies][0]; if (!currency) continue;
       if (currency !== "BRL") fail("CURRENCY_MISMATCH", "Somente BRL é suportado");
-      for (const allocation of allocations.get(transaction.id) ?? []) result.push({ date: transaction.occurredOn, currency: "BRL", categoryId: allocation.categoryId, income: transaction.kind === "income" ? allocation.amountMinor : 0n, expense: transaction.kind === "income" ? 0n : -allocation.amountMinor });
+      for (const allocation of allocations.get(transaction.id) ?? []) result.push({ date: transaction.occurredOn, entries: transactionEntries, kind: transaction.kind, paymentMethod: transaction.paymentMethod, currency: "BRL", categoryId: allocation.categoryId, income: transaction.kind === "income" ? allocation.amountMinor : 0n, expense: transaction.kind === "income" ? 0n : -allocation.amountMinor });
     }
     return result;
   }

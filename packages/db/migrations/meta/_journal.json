@@ -36,6 +36,13 @@
       "when": 1794528000000,
       "tag": "0004_statement_adjustment_category",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795000000000,
+      "tag": "0005_card_reporting_account",
+      "breakpoints": true
     }
   ]
 }

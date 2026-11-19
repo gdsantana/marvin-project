@@ -31,6 +31,7 @@ export const accountSchema = z.object({
   currency: currencySchema, openingBalanceMinor: minorAmountSchema, openingDate: dateSchema, isArchived: z.boolean().default(false),
 });
 export const creditCardSettingsInputSchema = z.object({
+  reportingAccountId: idSchema.nullable().optional(),
   creditLimitMinor: minorAmountSchema.nullable(), closingDay: z.number().int().min(1).max(31),
   dueDay: z.number().int().min(1).max(31), billingTimezone: z.string().min(1).refine(isIanaTimeZone, "Use um fuso horário IANA válido"), billingMode: billingModeSchema.default("manual"),
 });
@@ -145,6 +146,13 @@ export const categoryReportSchema = z.array(z.object({
   currency: currencySchema, categoryId: idSchema.nullable(), categoryName: z.string().nullable(),
   incomeMinor: derivedMinorAmountSchema, expenseMinor: derivedMinorAmountSchema, netMinor: derivedMinorAmountSchema,
 }));
+export const spendingReportQuerySchema = reportQuerySchema.safeExtend({ accountId: idSchema.optional() });
+export const spendingMethodSchema = z.enum(["credit", "debit", "pix", "other"]);
+export const spendingReportSchema = z.object({
+  categories: z.array(z.object({ categoryId: idSchema.nullable(), categoryName: z.string().nullable(), amountMinor: derivedMinorAmountSchema })),
+  paymentMethods: z.array(z.object({ method: spendingMethodSchema, amountMinor: derivedMinorAmountSchema })),
+});
+export type SpendingReport = z.infer<typeof spendingReportSchema>;
 export const monthlySummarySchema = z.object({
   from: dateSchema, to: dateSchema, balancesByCurrency: z.record(currencyMapKeySchema, derivedMinorAmountSchema),
   incomeMinorByCurrency: z.record(currencyMapKeySchema, derivedMinorAmountSchema), expenseMinorByCurrency: z.record(currencyMapKeySchema, derivedMinorAmountSchema),
@@ -163,6 +171,7 @@ export const accountsResponseSchema = responseSchema(z.array(accountWithBalanceS
 export const categoriesResponseSchema = responseSchema(z.array(categorySchema));
 export const transactionsResponseSchema = responseSchema(z.array(transactionResponseSchema));
 export const monthlyReportResponseSchema = responseSchema(monthlyReportSchema);
+export const spendingReportResponseSchema = responseSchema(spendingReportSchema);
 export const categoryReportResponseSchema = responseSchema(categoryReportSchema);
 export const monthlySummaryResponseSchema = responseSchema(monthlySummarySchema);
 export const monthlySeriesResponseSchema = responseSchema(monthlySeriesSchema);

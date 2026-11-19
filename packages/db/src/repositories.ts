@@ -192,6 +192,10 @@ function createContext(db: Database): TransactionContext {
       },
     },
     cards: {
+      async listReportingCards(accountId) {
+        const rows = await db.select({ id: creditCardSettings.accountId }).from(creditCardSettings).where(eq(creditCardSettings.reportingAccountId, accountId));
+        return rows.map(row => row.id);
+      },
       async getSettings(accountId) {
         const [row] = await db.select().from(creditCardSettings).where(eq(creditCardSettings.accountId, accountId)).limit(1);
         if (!row) return null;

@@ -184,3 +184,35 @@ test("opening balance endpoint validates signed values and passes idempotency to
     runtime.marvinFinance = previousService; runtime.marvinRepository = previousRepository;
   }
 });
+
+test("spending report validates the account filter and keeps the consolidated scope optional", async () => {
+  const token = process.env.MCP_API_TOKEN;
+  const runtime = globalThis as typeof globalThis & { marvinFinance?: unknown; marvinRepository?: unknown };
+  const previousService = runtime.marvinFinance, previousRepository = runtime.marvinRepository;
+  process.env.MCP_API_TOKEN = "test-api-token-with-at-least-32-bytes-long";
+  const accountId = crypto.randomUUID();
+  const calls: (string | undefined)[] = [];
+  const data = { categories: [], paymentMethods: [{ method: "credit", amountMinor: "900" }] };
+  runtime.marvinRepository = {};
+  runtime.marvinFinance = { spendingReport: async (from: string, to: string, account?: string) => {
+    assert.equal(from, "2026-10-01");
+    assert.equal(to, "2026-10-31");
+    calls.push(account);
+    return data;
+  } };
+  try {
+    const headers = { authorization: `Bearer ${process.env.MCP_API_TOKEN}` };
+    const context = { params: Promise.resolve({ path: ["reports", "spending"] }) };
+    const url = "http://localhost/api/v1/reports/spending?from=2026-10-01&to=2026-10-31";
+    const scoped = await GET(new Request(`${url}&accountId=${accountId}`, { headers }), context);
+    assert.equal(scoped.status, 200);
+    assert.deepEqual(await scoped.json(), { ok: true, data });
+    assert.equal((await GET(new Request(url, { headers }), context)).status, 200);
+    assert.equal((await GET(new Request(`${url}&accountId=invalid`, { headers }), context)).status, 400);
+    assert.deepEqual(calls, [accountId, undefined]);
+  } finally {
+    if (token === undefined) delete process.env.MCP_API_TOKEN; else process.env.MCP_API_TOKEN = token;
+    if (previousService === undefined) delete runtime.marvinFinance; else runtime.marvinFinance = previousService;
+    if (previousRepository === undefined) delete runtime.marvinRepository; else runtime.marvinRepository = previousRepository;
+  }
+});

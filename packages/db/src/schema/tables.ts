@@ -51,6 +51,7 @@ export const accounts = pgTable("accounts", {
 
 export const creditCardSettings = pgTable("credit_card_settings", {
   accountId: uuid("account_id").primaryKey().references(() => accounts.id, { onDelete: "restrict" }),
+  reportingAccountId: uuid("reporting_account_id").references(() => accounts.id, { onDelete: "restrict" }),
   creditLimitMinor: money("credit_limit_minor"),
   closingDay: smallint("closing_day").notNull(),
   dueDay: smallint("due_day").notNull(),
@@ -58,6 +59,8 @@ export const creditCardSettings = pgTable("credit_card_settings", {
   closingMode: text("closing_mode").$type<"manual" | "automatic">().notNull().default("manual"),
   updatedAt: updatedAt(),
 }, (table) => [
+  index("credit_card_settings_reporting_account_idx").on(table.reportingAccountId),
+  check("credit_card_settings_reporting_account_distinct", sql`${table.reportingAccountId} <> ${table.accountId}`),
   check("credit_card_settings_limit_nonnegative", sql`${table.creditLimitMinor} is null or ${table.creditLimitMinor} >= 0`),
   check("credit_card_settings_closing_day_valid", sql`${table.closingDay} between 1 and 31`),
   check("credit_card_settings_due_day_valid", sql`${table.dueDay} between 1 and 31`),

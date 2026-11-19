@@ -35,12 +35,12 @@ export function MonthlyFinanceChart({ series, currency }: { series: FinanceSerie
   </>;
 }
 
-export function ExpenseDonutChart({ rows, currency }: { rows: { label: string; amountMinor: string; fill: string }[]; currency: string }) {
+export function ExpenseDonutChart({ rows, currency, groupLabel = "categoria", totalLabel = "Despesas líquidas" }: { rows: { label: string; amountMinor: string; fill: string }[]; currency: string; groupLabel?: string; totalLabel?: string }) {
   const data = amountChartData(rows).map(row => ({ ...row, value: Math.abs(row.value) }));
   if (!data.some(row => row.value !== 0)) return <ChartEmpty />;
   const total = rows.reduce((sum, row) => sum + BigInt(row.amountMinor), 0n);
   return <div className="relative mx-auto my-4 w-full max-w-64">
-    <ChartContainer config={{ value: { label: "Despesas" } }} className="h-56 min-h-56 w-full aspect-auto" aria-label={`Distribuição das despesas por categoria em ${currency}`}>
+    <ChartContainer config={{ value: { label: "Despesas" } }} className="h-56 min-h-56 w-full aspect-auto" aria-label={`Distribuição das despesas por ${groupLabel} em ${currency}`}>
       <PieChart accessibilityLayer>
         <ChartTooltip content={<ChartTooltipContent hideLabel formatter={(_value, _name, item) => {
           const row = item.payload as (typeof data)[number];
@@ -49,7 +49,7 @@ export function ExpenseDonutChart({ rows, currency }: { rows: { label: string; a
         <Pie data={data} dataKey="value" nameKey="label" innerRadius="68%" outerRadius="90%" strokeWidth={2} stroke="var(--card)" isAnimationActive={false} />
       </PieChart>
     </ChartContainer>
-    <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><div className="max-w-32 text-center"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Despesas líquidas</p><p className="break-words font-mono text-sm font-medium">{formatMinor(total.toString(), currency)}</p><p className="mt-1 text-xs text-muted-foreground">{rows.length} categorias</p></div></div>
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><div className="max-w-32 text-center"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{totalLabel}</p><p className="break-words font-mono text-sm font-medium">{formatMinor(total.toString(), currency)}</p>{groupLabel === "categoria" && <p className="mt-1 text-xs text-muted-foreground">{rows.length} categorias</p>}</div></div>
   </div>;
 }
 
