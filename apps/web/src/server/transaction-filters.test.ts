@@ -36,3 +36,9 @@ test("transactions are displayed newest first without changing the input", () =>
   assert.deepEqual(filterTransactions(unsorted, {}).map(row => row.id), ["split", "transfer", "income"]);
   assert.deepEqual(unsorted.map(row => row.id), ["income", "split", "transfer"]);
 });
+
+
+test("transactions on the same date retain the API creation-time order", () => {
+  const sameDay = ["newest", "middle", "oldest"].map(id => ({ ...rows[0]!, id }));
+  assert.deepEqual(filterTransactions(sameDay, {}).map(row => row.id), ["newest", "middle", "oldest"]);
+});

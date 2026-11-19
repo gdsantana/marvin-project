@@ -78,7 +78,7 @@ Lista nome, tipo, categoria superior e status de arquivamento.
 
 ### `GET /v1/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
-Consulta o intervalo inclusivo por data econômica e retorna `id`, tipo, data econômica e de postagem, descrição, contraparte, notas, forma de pagamento, origem, estado de revisão, lançamentos por conta/moeda e alocações por categoria. Valores das entradas/alocações são strings em unidades mínimas; transferências preservam suas duas pontas.
+Consulta o intervalo inclusivo por data econômica e retorna `id`, tipo, data econômica e de postagem, descrição, contraparte, notas, forma de pagamento, origem, estado de revisão, lançamentos por conta/moeda e alocações por categoria. Valores das entradas/alocações são strings em unidades mínimas; transferências preservam suas duas pontas. A ordenação é decrescente pela data econômica e, no mesmo dia, pelo instante de criação do registro; empates usam o ID como critério estável.
 
 ### `GET /v1/statements?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
@@ -320,3 +320,7 @@ Retorna `{ ok: true, data: { id } }`, HTTP 200. Saldo anterior divergente: CONFL
 Mesmo key/payload retorna o resultado original; payload divergente é conflito de
 idempotência. Altera saldos desde a abertura sem criar movimentações ou itens
 de fatura. Dívida de cartão usa valor negativo. Ver ADR 0015.
+
+### Atualização da interface por SSE
+
+`GET /api/events` abre um fluxo `text/event-stream` para uma sessão Web válida. O evento `finance-changed` contém somente `{}` e indica que a interface deve consultar novamente os dados; ele não contém detalhes financeiros e não garante entrega. Comentários periódicos mantêm a conexão ativa e a sessão é revalidada. Ao conectar novamente, o cliente deve recarregar os dados, pois não há histórico de eventos. A distribuição é local a um processo Web e não atende múltiplas réplicas sem transporte compartilhado.

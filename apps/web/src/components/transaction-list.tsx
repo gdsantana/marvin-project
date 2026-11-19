@@ -12,6 +12,7 @@ import type { TransactionOption } from "@/components/workspace-types";
 type Filter = "all" | "income" | "expense";
 type Props = {
   rows: TransactionOption[];
+  newTransactionIds?: string[];
   empty?: string;
   transactionActions?: {
     correct: (transaction: TransactionOption) => void;
@@ -55,7 +56,7 @@ export function filterTransactions(rows: TransactionOption[], { query = "", filt
   }).sort((a, b) => b.occurredOn.localeCompare(a.occurredOn));
 }
 
-export function TransactionList({ rows, empty = "Seus lançamentos aparecerão aqui depois de registrados.", transactionActions }: Props) {
+export function TransactionList({ rows, newTransactionIds = [], empty = "Seus lançamentos aparecerão aqui depois de registrados.", transactionActions }: Props) {
   const [showCancelled, setShowCancelled] = useState(false);
   const visibleRows = useMemo(() => visibleTransactions(rows, showCancelled), [rows, showCancelled]);
   const [query, setQuery] = useState("");
@@ -109,7 +110,7 @@ export function TransactionList({ rows, empty = "Seus lançamentos aparecerão a
       <div className="flex flex-col gap-4 xl:hidden">
         {grouped.map(([date, items]) => <section key={date} aria-label={formatDate(date)}>
           <div className="mb-1 flex items-center justify-between gap-2 px-1"><h3 className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{formatDate(date)}</h3><span className="font-mono text-[11px] text-muted-foreground">{items.length} {items.length === 1 ? "item" : "itens"}</span></div>
-          <ul className="flex flex-col gap-1.5">{items.map(row => <TransactionCard key={row.id} row={row} rows={rows} transactionActions={transactionActions} />)}</ul>
+          <ul className="flex flex-col gap-1.5">{items.map(row => <TransactionCard key={row.id} isNew={newTransactionIds.includes(row.id)} row={row} rows={rows} transactionActions={transactionActions} />)}</ul>
         </section>)}
       </div>
 
@@ -117,16 +118,16 @@ export function TransactionList({ rows, empty = "Seus lançamentos aparecerão a
         <div className="grid min-w-[960px] grid-cols-[minmax(80px,0.7fr)_minmax(190px,2fr)_minmax(130px,1fr)_minmax(125px,1fr)_minmax(125px,1fr)_minmax(115px,1fr)_auto] items-center gap-3 border-b border-border bg-muted/40 px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
           <span>Data</span><span>Descrição</span><span>Categoria</span><span>Conta</span><span>Status</span><span className="text-right">Valor</span><span className="sr-only">Ações</span>
         </div>
-        <ul>{filteredRows.map(row => <TransactionTableRow key={row.id} row={row} rows={rows} transactionActions={transactionActions} />)}</ul>
+        <ul>{filteredRows.map(row => <TransactionTableRow key={row.id} isNew={newTransactionIds.includes(row.id)} row={row} rows={rows} transactionActions={transactionActions} />)}</ul>
         <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">Mostrando {filteredRows.length} de {rows.length} transações</div>
       </div>
     </>}
   </section>;
 }
 
-function TransactionCard({ row, rows, transactionActions }: { row: TransactionOption; rows: TransactionOption[]; transactionActions?: Props["transactionActions"] }) {
+function TransactionCard({ row, rows, transactionActions, isNew }: { isNew: boolean; row: TransactionOption; rows: TransactionOption[]; transactionActions?: Props["transactionActions"] }) {
   const category = row.allocations?.find(item => item.categoryName)?.categoryName;
-  return <li id={`transaction-${row.id}`} className="min-w-0 rounded-xl bg-card p-3 shadow-sm">
+  return <li id={`transaction-${row.id}`} className={`min-w-0 rounded-xl bg-card p-3 shadow-sm ${isNew ? "new-transaction" : ""}`}>
     <div className="flex items-center justify-between gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">{incomeKinds.has(row.kind) ? <ArrowDownLeftIcon aria-hidden="true" className="text-success" /> : <ArrowUpRightIcon aria-hidden="true" className="text-destructive" />}</div>
@@ -138,10 +139,10 @@ function TransactionCard({ row, rows, transactionActions }: { row: TransactionOp
   </li>;
 }
 
-function TransactionTableRow({ row, rows, transactionActions }: { row: TransactionOption; rows: TransactionOption[]; transactionActions?: Props["transactionActions"] }) {
+function TransactionTableRow({ row, rows, transactionActions, isNew }: { isNew: boolean; row: TransactionOption; rows: TransactionOption[]; transactionActions?: Props["transactionActions"] }) {
   const category = row.allocations?.find(item => item.categoryName)?.categoryName ?? "Sem categoria";
   const account = row.entries?.[0]?.accountName ?? "—";
-  return <li id={`transaction-${row.id}`} className="grid min-w-[960px] grid-cols-[minmax(80px,0.7fr)_minmax(190px,2fr)_minmax(130px,1fr)_minmax(125px,1fr)_minmax(125px,1fr)_minmax(115px,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 text-sm last:border-b-0">
+  return <li id={`transaction-${row.id}`} className={`grid min-w-[960px] grid-cols-[minmax(80px,0.7fr)_minmax(190px,2fr)_minmax(130px,1fr)_minmax(125px,1fr)_minmax(125px,1fr)_minmax(115px,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 text-sm last:border-b-0 ${isNew ? "new-transaction" : ""}`}>
     <span className="font-mono text-xs text-muted-foreground">{formatDate(row.occurredOn)}</span><div className="min-w-0"><p className="truncate font-medium">{row.description}</p><p className="truncate text-xs text-muted-foreground">{row.counterpartyName ?? kindLabel(row.kind)}</p></div><span className="truncate text-xs text-muted-foreground">{category}</span><span className="truncate text-xs text-muted-foreground">{account}</span><span>{row.reviewStatus === "needs_review" ? <Badge variant="outline">Precisa revisar</Badge> : <Badge variant="secondary" className="text-success"><CircleCheckIcon aria-hidden="true" />Confirmado</Badge>}</span><span className={`text-right font-mono text-xs tabular-nums ${amountTone(row)}`}>{formatAmount(row)}</span><details className="relative"><summary className="flex size-8 cursor-pointer list-none items-center justify-center rounded-md text-muted-foreground hover:bg-muted"><span aria-hidden="true">···</span><span className="sr-only">Detalhes e ações de {row.description}</span></summary><div className="absolute right-0 z-10 mt-1 w-72 rounded-lg bg-popover p-3 shadow-lg ring-1 ring-foreground/15"><TransactionMeta row={row} />{row.notes && <p className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{row.notes}</p>}{transactionActions && <ActionButtons row={row} rows={rows} actions={transactionActions} />}</div></details>
   </li>;
 }

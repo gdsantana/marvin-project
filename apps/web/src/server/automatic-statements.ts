@@ -1,3 +1,5 @@
+import { notifyFinanceChanges } from "./finance-events";
+
 type CloseResult = { closedCount: number; checkedAt: string };
 type StatementCloser = { closeDueAutomaticStatements(nowIso: string): Promise<CloseResult> };
 type LogEntry = { status: "succeeded" | "failed"; closedCount?: number };
@@ -20,6 +22,7 @@ export function createAutomaticStatementClosingRunner(
     try {
       const service = await loadService();
       const result = await service.closeDueAutomaticStatements(now().toISOString());
+      if (result.closedCount > 0) notifyFinanceChanges();
       log({ status: "succeeded", closedCount: result.closedCount });
     } catch {
       // Keep raw database errors and financial context out of process logs.

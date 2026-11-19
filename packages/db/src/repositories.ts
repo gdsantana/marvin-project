@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { DomainError, type ExpenseForecast, type FinanceRepository, type TransactionContext, type TransactionRevision } from "@finance/domain";
 import type { Database } from "./client.js";
 import {
@@ -125,7 +125,7 @@ function createContext(db: Database): TransactionContext {
         const [row] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
         return row ?? null;
       },
-      async list(from, to) { return db.select().from(transactions).where(and(gte(transactions.occurredOn, from), lte(transactions.occurredOn, to))); },
+      async list(from, to) { return db.select().from(transactions).where(and(gte(transactions.occurredOn, from), lte(transactions.occurredOn, to))).orderBy(desc(transactions.occurredOn), desc(transactions.createdAt), desc(transactions.id)); },
     },
     entries: {
       async add(value) {

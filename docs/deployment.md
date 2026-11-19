@@ -465,3 +465,7 @@ A operação descrita no ADR 0015 precisa de `UPDATE (opening_balance_minor)` em
 `pnpm db:migrate` com `MIGRATION_DATABASE_URL` conforme o procedimento acima;
 ele reaplica os grants revisados mesmo sem migration de schema nova. Não é
 necessário conceder UPDATE geral na tabela nem alterar saldos manualmente.
+
+### Streaming da interface
+
+A interface usa `GET /api/events` para receber avisos SSE. O proxy privado deve encaminhar `text/event-stream` sem buffering ou cache e manter o timeout de leitura acima do heartbeat de 20 segundos. As diretivas Nginx da seção de proxy acima são um ponto de partida; valide o fluxo pela configuração efetiva. Os avisos são distribuídos somente dentro de um processo Web, portanto a configuração atual pressupõe uma única instância Web; múltiplos processos ou réplicas exigem distribuição compartilhada.

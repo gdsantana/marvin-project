@@ -128,7 +128,7 @@ function CategoryBreakdown({ currency, categories, loading }: { currency: string
   return <Card>
     <CardContent className="p-4 sm:p-5">
       <div><p className="font-mono text-[10px] tracking-[.14em] text-muted-foreground">DISTRIBUIÇÃO DAS DESPESAS</p><h3 className="mt-1 text-lg font-medium">Por categoria <span className="font-mono text-xs text-muted-foreground">{currency}</span></h3></div>
-      {loading ? <p role="status" className="mt-5 text-sm text-muted-foreground">Atualizando categorias…</p> : rows.length === 0 ? <p className="mt-5 text-sm text-muted-foreground">Sem despesas por categoria neste período.</p> : <ul className="mt-5 grid gap-4">{rows.map((item, index) => {
+      {loading && rows.length === 0 ? <p role="status" className="mt-5 text-sm text-muted-foreground">Atualizando categorias…</p> : rows.length === 0 ? <p className="mt-5 text-sm text-muted-foreground">Sem despesas por categoria neste período.</p> : <ul className="mt-5 grid gap-4">{rows.map((item, index) => {
         const amount = BigInt(item.expenseMinor);
         const share = total > 0n ? Number((amount * 10000n) / total) / 100 : null;
         return <li key={`${item.categoryName ?? "sem-categoria"}-${index}`}>
