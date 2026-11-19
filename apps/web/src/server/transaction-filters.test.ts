@@ -30,3 +30,9 @@ test("cancelled original and compensation are hidden by default and recoverable"
   assert.deepEqual(visibleTransactions(history), [rows[1]]);
   assert.deepEqual(visibleTransactions(history, true), history);
 });
+
+test("transactions are displayed newest first without changing the input", () => {
+  const unsorted = [rows[2]!, rows[0]!, rows[1]!];
+  assert.deepEqual(filterTransactions(unsorted, {}).map(row => row.id), ["split", "transfer", "income"]);
+  assert.deepEqual(unsorted.map(row => row.id), ["income", "split", "transfer"]);
+});

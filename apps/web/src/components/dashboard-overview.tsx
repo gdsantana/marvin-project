@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightIcon, LandmarkIcon, PlusIcon, WalletIcon } from "lucide-react";
+import { ArrowRightIcon, PlusIcon, WalletIcon } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +27,6 @@ export type DashboardOverviewProps = {
   setForm: (action: Action) => void;
 };
 
-const periodLabels: Record<string, string> = { month: "Este mês", "last-month": "Mês passado", year: "Este ano" };
 export function DashboardOverview({ references, report, reportError, series, categories, analyticsLoading, range, setRange, setForm }: DashboardOverviewProps) {
   const balances = Object.entries(report?.balancesByCurrency ?? {});
   const incomes = Object.entries(report?.incomeMinorByCurrency ?? {});
@@ -36,31 +35,16 @@ export function DashboardOverview({ references, report, reportError, series, cat
 
   return <div className="flex flex-col gap-4 pb-6 sm:gap-6">
     <div className="grid gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(240px,1fr)] lg:gap-6">
-    <Card>
-      <CardHeader className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5">
-        <CardTitle><h2 className="text-sm text-muted-foreground">Patrimônio líquido</h2></CardTitle>
-        <PeriodSelect range={range} setRange={setRange} />
-      </CardHeader>
-      <CardContent className="grid gap-2 px-4 sm:px-5">
-        <SummaryValues values={balances} unavailable={reportError} className="text-3xl text-foreground sm:text-4xl" />
-        <p className="text-xs text-muted-foreground">Saldo até o fim do período</p>
-      </CardContent>
-    </Card>
-    <Card className="hidden lg:flex">
-      <CardContent className="flex h-full flex-col justify-between gap-3 px-5">
-        <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground"><span>Contas registradas</span><LandmarkIcon aria-hidden="true" className="size-4" /></div>
-        <p className="font-mono text-3xl tabular-nums">{references.accounts.filter(account => account.type !== "credit_card").length}</p>
-        <Link href="/accounts" className="inline-flex min-h-11 items-center text-xs text-primary">Ver contas</Link>
-      </CardContent>
-    </Card>
-    </div>
-
-    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(240px,1fr)] lg:gap-6">
       <Card>
-        <CardHeader className="px-4 pb-0 sm:px-5">
+        <CardHeader className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5">
           <CardTitle><h2 className="text-lg tracking-tight">Balanço mensal</h2></CardTitle>
-          <CardDescription>{periodLabels[range] ?? "Período selecionado"}</CardDescription>
+          <PeriodSelect range={range} setRange={setRange} />
         </CardHeader>
+        <CardContent className="grid gap-2 px-4 sm:px-5">
+          <p className="text-sm text-muted-foreground">Patrimônio líquido</p>
+          <SummaryValues values={balances} unavailable={reportError} className="text-3xl text-foreground sm:text-4xl" />
+          <p className="text-xs text-muted-foreground">Saldo até o fim do período</p>
+        </CardContent>
         <CardContent className="grid gap-4 px-4 sm:px-5">
           <div className="grid grid-cols-2 gap-4 border-b border-border pb-4">
             <div className="grid min-w-0 content-start gap-2">
@@ -85,7 +69,7 @@ export function DashboardOverview({ references, report, reportError, series, cat
       </Card>
     </div>
 
-    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(240px,1fr)] lg:gap-6">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,2.1fr)_minmax(240px,1fr)] lg:gap-6">
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0 px-4 pb-1 sm:px-5">
           <div><CardTitle><h2 className="text-xl tracking-tight lg:text-base">Últimas movimentações</h2></CardTitle><CardDescription>Atividade registrada</CardDescription></div>
@@ -95,10 +79,10 @@ export function DashboardOverview({ references, report, reportError, series, cat
           {recent.length ? <ul className="flex flex-col gap-1.5">{recent.map(transaction => <TransactionRow key={transaction.id} transaction={transaction} />)}</ul> : <EmptyPanel text="Seus lançamentos aparecerão aqui depois de registrados." />}
         </CardContent>
       </Card>
-      <Card className="hidden lg:flex">
+      <Card>
         <CardHeader className="px-5 pb-1"><CardTitle><h2 className="text-base">Contas</h2></CardTitle><CardDescription>Saldos por conta e moeda</CardDescription></CardHeader>
         <CardContent className="px-5 pb-4">
-          {references.accounts.length ? <ul className="divide-y divide-border">{references.accounts.slice(0, 5).map(account => <li key={account.id} className="flex min-w-0 items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{account.name}</p><p className="mt-1 text-xs text-muted-foreground">{account.type === "credit_card" ? "Cartão" : "Conta"} · {account.currency}</p></div><strong className="max-w-[48%] break-words text-right font-mono text-xs tabular-nums">{formatMinor(account.balanceMinor, account.currency)}</strong></li>)}</ul> : <EmptyPanel text="Adicione uma conta para acompanhar seus saldos." />}
+          {references.accounts.length ? <ul className="divide-y divide-border">{references.accounts.map(account => <li key={account.id} className="flex min-w-0 items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{account.name}</p><p className="mt-1 text-xs text-muted-foreground">{account.type === "credit_card" ? "Cartão" : "Conta"} · {account.currency}</p></div><strong className={`max-w-[48%] break-words text-right font-mono text-xs tabular-nums ${BigInt(account.balanceMinor) < 0n ? "text-destructive" : BigInt(account.balanceMinor) > 0n ? "text-success" : ""}`}>{formatMinor(account.balanceMinor, account.currency)}</strong></li>)}</ul> : <EmptyPanel text="Adicione uma conta para acompanhar seus saldos." />}
         </CardContent>
       </Card>
     </div>
