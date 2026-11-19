@@ -52,7 +52,7 @@ export function filterTransactions(rows: TransactionOption[], { query = "", filt
     const amounts = (row.entries ?? []).map(entry => `${entry.amountMinor} ${formatMinor(entry.amountMinor, entry.currency)}`);
     const text = [row.description, row.counterpartyName, kindLabel(row.kind), ...(row.allocations ?? []).map(item => item.categoryName), ...amounts].filter(Boolean).join(" ").toLocaleLowerCase("pt-BR");
     return text.includes(query.trim().toLocaleLowerCase("pt-BR"));
-  });
+  }).sort((a, b) => b.occurredOn.localeCompare(a.occurredOn));
 }
 
 export function TransactionList({ rows, empty = "Seus lançamentos aparecerão aqui depois de registrados.", transactionActions }: Props) {
