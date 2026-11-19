@@ -15,6 +15,7 @@ export type ReportCategory = CategoryReport;
 
 export type ReportsDashboardProps = {
   range: ReportRange;
+  spending?: React.ReactNode;
   onRangeChange: (range: ReportRange) => void;
   report: ReportsSummary | null;
   series: ReportSeriesPoint[];
@@ -27,7 +28,7 @@ export type ReportsDashboardProps = {
 
 const rangeLabels: Record<ReportRange, string> = { month: "Este mês", "last-month": "Mês passado", year: "Este ano" };
 
-export function ReportsDashboard({ range, onRangeChange, report, series, categories, analyticsLoading, loading = false, error, onRetry }: ReportsDashboardProps) {
+export function ReportsDashboard({ range, onRangeChange, report, series, categories, analyticsLoading, loading = false, error, onRetry, spending }: ReportsDashboardProps) {
   const currencies = [...new Set([
     ...Object.keys(report?.incomeMinorByCurrency ?? {}),
     ...Object.keys(report?.expenseMinorByCurrency ?? {}),
@@ -46,6 +47,7 @@ export function ReportsDashboard({ range, onRangeChange, report, series, categor
     {loading && <p role="status" className="text-sm text-muted-foreground">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
     {!report && !error ? <div className="grid grid-cols-2 gap-2 lg:grid-cols-3 lg:gap-3" aria-hidden="true">{[0, 1, 2].map(item => <div key={item} className="h-32 animate-pulse rounded-xl bg-card" />)}</div> : null}
 
+    {spending}
     {report && !error && <>
       {currencies.length === 0 ? <Card><CardContent className="p-5 text-sm text-muted-foreground">Não há movimentações classificadas neste período.</CardContent></Card> : currencies.map(currency => {
         const income = BigInt(report.incomeMinorByCurrency[currency] ?? "0");

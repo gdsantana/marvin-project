@@ -5,7 +5,7 @@ import {
   addMonths, DomainError, FinanceService, splitInstallments,
   type Account, type Allocation, type Entry, type FinanceRepository, type Statement,
   type StatementItem, type StatementPayment, type Transaction, type TransactionContext,
-  type ExpenseForecast, type TransactionRevision,
+  type ExpenseForecast, type TransactionRevision, type CardSettings,
 } from "./index.js";
 
 class MemoryRepository implements FinanceRepository {
@@ -13,7 +13,7 @@ class MemoryRepository implements FinanceRepository {
   accounts = new Map<string, Account>(); categories = new Map<string, { id: string; type: "income" | "expense"; isArchived: boolean; name: string; parentId: string | null }>();
   transactions = new Map<string, Transaction>(); entries: Entry[] = []; allocations: Allocation[] = [];
   forecasts = new Map<string, ExpenseForecast>(); revisions: TransactionRevision[] = [];
-  settings = new Map<string, { accountId: string; creditLimitMinor: bigint | null; closingDay: number; dueDay: number; billingTimezone: string; billingMode: "manual" | "automatic" }>();
+  settings = new Map<string, CardSettings & { accountId: string }>();
   statements = new Map<string, Statement>(); items: StatementItem[] = []; plans = new Map<string, { id: string; purchaseTransactionId: string; totalAmountMinor: bigint; installmentCount: number }>(); payments: StatementPayment[] = [];
   idempotency = new Map<string, { payload: string; result: unknown | null }>();
   transactionCount = 0;
@@ -53,7 +53,14 @@ class MemoryRepository implements FinanceRepository {
         add: async revision => { this.revisions.push(revision); },
         listByTransaction: async id => this.revisions.filter(revision => revision.transactionId === id),
       },
-      cards: { getSettings: async id => this.settings.get(id) ?? null, saveSettings: async settings => { this.settings.set(settings.accountId, settings); } },
+      cards: {
+        getSettings: async id => this.settings.get(id) ?? null,
+        listReportingCards: async id => [...this.settings.values()].filter(settings => settings.reportingAccountId === id).map(settings => settings.accountId),
+        saveSettings: async settings => {
+          const reportingAccountId = settings.reportingAccountId === undefined ? this.settings.get(settings.accountId)?.reportingAccountId ?? null : settings.reportingAccountId;
+          this.settings.set(settings.accountId, { ...settings, reportingAccountId });
+        },
+      },
       statements: {
         get: async id => this.statements.get(id) ?? null,
         findByClosingDate: async (card, closing) => [...this.statements.values()].find(statement => statement.cardAccountId === card && statement.closingOn === closing) ?? null,
@@ -528,4 +535,49 @@ test("opening balance correction changes signed debt without entries and rejects
   await assert.rejects(service.correctOpeningBalance(input, "opening-stale"), { code: "CONFLICT" });
   await assert.rejects(service.correctOpeningBalance({ ...input, openingBalanceMinor: "0" }, "opening-fix"), { code: "IDEMPOTENCY_CONFLICT" });
   await assert.rejects(service.correctOpeningBalance({ ...input, reason: " " }, "opening-no-reason"), { code: "VALIDATION_ERROR" });
+});
+
+test("gastos por conta usam o vínculo atual do cartão e o consolidado conta cada compra uma vez", async () => {
+  const service = new FinanceService(new MemoryRepository());
+  const institutionId = await service.createInstitution({ name: "Mesmo banco" }, "spending-bank");
+  const common = { currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-01-01", institutionId };
+  const bankA = await service.createAccount({ ...common, name: "Conta A", type: "checking" }, "spending-account-a");
+  const bankB = await service.createAccount({ ...common, name: "Conta B", type: "savings" }, "spending-account-b");
+  const cardSettings = { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" as const };
+  const cardA = await service.createAccount({ ...common, name: "Cartão A", type: "credit_card", cardSettings: { ...cardSettings, reportingAccountId: bankA } }, "spending-card-a");
+  const cardB = await service.createAccount({ ...common, name: "Cartão B", type: "credit_card", cardSettings: { ...cardSettings, reportingAccountId: bankB } }, "spending-card-b");
+  const unlinkedCard = await service.createAccount({ ...common, name: "Cartão avulso", type: "credit_card", cardSettings }, "spending-card-unlinked");
+  const categoryId = await service.createCategory({ name: "Mercado", type: "expense", parentId: null }, "spending-category");
+  const buy = (cardAccountId: string, amountMinor: string) => service.createCreditPurchase({
+    ...metadata, occurredOn: "2026-10-10", cardAccountId, totalAmountMinor: amountMinor, installmentCount: 3,
+    allocations: [{ categoryId, amountMinor }],
+  }, `spending-purchase-${cardAccountId}`);
+  const purchase = await buy(cardA, "900");
+  await buy(cardB, "600");
+  await buy(unlinkedCard, "300");
+  const statementId = purchase.value.items[0]!.statementId;
+  await service.closeStatement(statementId, "spending-close");
+  await service.payStatement({ ...metadata, statementId, fromAccountId: bankB, amountMinor: "100" }, "spending-pay");
+  await service.createRefund({ ...metadata, originalTransactionId: purchase.value.transaction.id, accountId: cardA, amountMinor: "100" }, "spending-refund");
+  for (const [paymentMethod, amountMinor] of [["debit", "200"], ["pix", "300"], ["cash", "50"]] as const) {
+    await service.createExpense({ ...metadata, accountId: bankA, amountMinor, paymentMethod, allocations: [{ categoryId, amountMinor }] }, `spending-${paymentMethod}`);
+  }
+  const report = (accountId?: string) => service.spendingReport("2026-10-01", "2026-10-31", accountId);
+  assert.deepEqual(await report(bankA), {
+    categories: [{ categoryId, categoryName: "Mercado", amountMinor: "1350" }],
+    paymentMethods: [{ method: "credit", amountMinor: "900" }, { method: "debit", amountMinor: "200" }, { method: "pix", amountMinor: "300" }, { method: "other", amountMinor: "50" }],
+  });
+  assert.deepEqual((await report(bankB)).paymentMethods, [{ method: "credit", amountMinor: "600" }]);
+  const consolidated = await report();
+  assert.equal(consolidated.categories[0]?.amountMinor, "2250");
+  assert.equal(consolidated.paymentMethods[0]?.amountMinor, "1800");
+  await assert.rejects(() => service.configureCard({ ...cardSettings, accountId: cardA, reportingAccountId: cardB }, "spending-invalid-link"), { code: "INVALID_ACCOUNT_TYPE" });
+  await service.configureCard({ ...cardSettings, accountId: cardA }, "spending-legacy-settings");
+  assert.equal((await service.cardSettings(cardA)).reportingAccountId, bankA);
+  await service.configureCard({ ...cardSettings, accountId: cardA, reportingAccountId: bankB }, "spending-relink");
+  assert.equal((await report(bankA)).categories[0]?.amountMinor, "550");
+  assert.equal((await report(bankB)).categories[0]?.amountMinor, "1400");
+  await service.configureCard({ ...cardSettings, accountId: cardA, reportingAccountId: null }, "spending-unlink");
+  assert.equal((await report(bankB)).categories[0]?.amountMinor, "600");
+  assert.deepEqual(await report(), consolidated);
 });

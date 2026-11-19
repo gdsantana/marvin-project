@@ -91,6 +91,8 @@ Não confundir os sinais das duas tabelas: um item de fatura positivo representa
 
 Os relatórios devem nomear claramente sua perspectiva. Não somar os lançamentos patrimoniais originais com todas as parcelas como se fossem despesas independentes. O relatório por categoria implementado usa a data da transação original, alocações efetivas e moeda da conta; reembolsos reduzem a despesa da categoria e operações revertidas são excluídas. A série mensal usa a mesma perspectiva do resumo de receitas e despesas.
 
+O relatório de gastos por conta inclui lançamentos da própria conta e dos cartões vinculados a ela em `credit_card_settings`. Usa o vínculo atual em qualquer período, inclusive para compras anteriores à configuração. O consolidado inclui também cartões sem vínculo. Os totais por categoria são líquidos de estornos. A distribuição percentual por meio de pagamento usa despesas brutas do período e agrupa os demais meios em Outros.
+
 ## 3. Modelo entidade-relacionamento
 
 ```mermaid
@@ -152,6 +154,7 @@ Saldo assinado em uma data = `opening_balance_minor + SUM(account_entries.amount
 |---|---|---|
 | `account_id` | UUID | PK/FK `accounts`; apenas `type=credit_card` |
 | `credit_limit_minor` | BIGINT NULL | >= 0 |
+| `reporting_account_id` | UUID NULL | FK `accounts`. Conta corrente ou poupança para relatórios do cartão |
 | `closing_day` | SMALLINT | 1–31, respeitando fim do mês |
 | `due_day` | SMALLINT | 1–31; não assumir mesmo mês de fechamento |
 | `billing_timezone` | TEXT | fuso IANA válido configurado para o cartão; validar antes de persistir |

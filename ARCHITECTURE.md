@@ -84,6 +84,8 @@ A refatoração não altera domínio, contratos, persistência, API, MCP ou aute
 
 Resultados datados e limites da validação ficam em [docs/verification.md](docs/verification.md); capturas e verificações de interface estão em [docs/ui-validation.md](docs/ui-validation.md).
 
+O detalhe de conta em `/accounts/<id>` consulta gastos por categoria e meio de pagamento. Relatórios usa a mesma consulta sem filtro de conta. O domínio agrega a projeção de operações efetivas e o adapter carrega os cartões vinculados na mesma transação. Ver [ADR 0016](docs/adr/0016-spending-attribution.md).
+
 ## 7. Desenvolvimento e validação
 
 Gerenciador: pnpm Workspaces, lockfile na raiz, sem Turborepo. Comandos disponíveis nos manifests:

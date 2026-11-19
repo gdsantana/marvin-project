@@ -214,6 +214,17 @@ test("PostgreSQL constraints and domain ports persist financial operations, fore
     }, "service-payment");
     assert.equal(await service.accountBalance(cashAccount), 96300n);
     assert.equal(await service.accountBalance(serviceCard), 0n);
+
+    const settings = await service.cardSettings(serviceCard);
+    assert.equal(settings.reportingAccountId, null);
+    await service.configureCard({ ...settings, reportingAccountId: checkingId }, "service-report-link");
+    const { reportingAccountId, ...legacySettings } = await service.cardSettings(serviceCard);
+    assert.equal(reportingAccountId, checkingId);
+    await service.configureCard(legacySettings, "service-report-omit");
+    const spending = () => service.spendingReport("2026-01-01", "2026-12-31", checkingId);
+    assert.deepEqual((await spending()).paymentMethods, [{ method: "credit", amountMinor: "1000" }]);
+    await service.configureCard({ ...legacySettings, reportingAccountId: null }, "service-report-unlink");
+    assert.deepEqual((await spending()).paymentMethods, []);
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA "${schemaName}" CASCADE`);

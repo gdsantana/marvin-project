@@ -143,24 +143,39 @@ function CategorySplits({ categories, type, initial = [] }: { categories: Catego
   return <FieldSet className="rounded-xl border p-3 sm:col-span-2"><FieldLegend>Categorias desta operação</FieldLegend><FieldGroup><p className="text-xs leading-5 text-muted-foreground">A soma das categorias deve ser igual ao valor total.</p>{rows.map((id, index) => <FieldGroup key={id} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><div className="min-w-0">{type ? <CategoryPicker label={`Categoria ${index + 1}`} name="allocationCategoryId" categories={categories} type={type} defaultValue={initial[index]?.categoryId ?? ""} disabled={disabled} /> : <FormField label={`Categoria ${index + 1}`} name="allocationCategoryId" required={false} options={options} defaultValue={initial[index]?.categoryId ?? ""} />}</div><FormField label="Valor (R$)" name="allocationAmount" placeholder="Ex.: 85,00" defaultValue={majorInputFromMinor(initial[index]?.amountMinor ?? null)} /><Button type="button" aria-label={`Remover categoria ${index + 1}`} disabled={rows.length === 1} onClick={() => setRows(current => current.filter(item => item !== id))} variant="outline" className="mb-px">−</Button></FieldGroup>)}<Button type="button" onClick={() => { setRows(current => [...current, nextId]); setNextId(value => value + 1); }} variant="outline" className="w-fit">＋ Outra categoria</Button></FieldGroup></FieldSet>;
 }
 
+function ReportingAccountField({ accounts, value, onChange }: {
+  accounts: AccountOption[];
+  value?: string;
+  onChange?: React.ChangeEventHandler<HTMLInputElement | HTMLSelectElement>;
+}) {
+  const options: [string, string][] = [["", "Sem conta vinculada"]];
+  for (const account of accounts) {
+    if (account.type === "checking" || account.type === "savings") options.push([account.id, account.name]);
+  }
+  return <div className="grid gap-2 sm:col-span-2">
+    <p className="text-sm text-muted-foreground">A conta vinculada inclui todo o histórico de gastos deste cartão.</p>
+    <FormField label="Conta para relatórios" name="reportingAccountId" required={false} options={options} value={value} onChange={onChange} />
+  </div>;
+}
+
 function CardSettingsFields({ accounts, onReady }: { accounts: AccountOption[]; onReady: (ready: boolean) => void }) {
   const cards = accounts.filter(account => account.type === "credit_card");
   const firstCardId = cards[0]?.id ?? "";
   const [accountId, setAccountId] = useState(firstCardId);
   useEffect(() => { if (!accountId && firstCardId) setAccountId(firstCardId); }, [accountId, firstCardId]);
-  const [settings, setSettings] = useState({ creditLimitMinor: "", closingDay: "", dueDay: "", billingTimezone: "America/Sao_Paulo", billingMode: "manual" });
+  const [settings, setSettings] = useState({ creditLimitMinor: "", closingDay: "", dueDay: "", billingTimezone: "America/Sao_Paulo", billingMode: "manual", reportingAccountId: "" });
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
     onReady(false);
     if (!accountId) return;
     const controller = new AbortController();
     setLoadError("");
-    setSettings({ creditLimitMinor: "", closingDay: "", dueDay: "", billingTimezone: "America/Sao_Paulo", billingMode: "manual" });
+    setSettings({ creditLimitMinor: "", closingDay: "", dueDay: "", billingTimezone: "America/Sao_Paulo", billingMode: "manual", reportingAccountId: "" });
     fetch(`/api/v1/cards/settings?accountId=${accountId}`, { cache: "no-store", signal: controller.signal }).then(async response => {
       const result = await response.json();
       if (!response.ok) throw new Error("Não foi possível carregar a configuração. Selecione o cartão novamente para tentar.");
       if (controller.signal.aborted) return;
-      setSettings({ creditLimitMinor: majorInputFromMinor(result.data.creditLimitMinor), closingDay: String(result.data.closingDay), dueDay: String(result.data.dueDay), billingTimezone: result.data.billingTimezone, billingMode: result.data.billingMode });
+      setSettings({ creditLimitMinor: majorInputFromMinor(result.data.creditLimitMinor), closingDay: String(result.data.closingDay), dueDay: String(result.data.dueDay), billingTimezone: result.data.billingTimezone, billingMode: result.data.billingMode, reportingAccountId: result.data.reportingAccountId ?? "" });
       setLoadError(""); onReady(true);
     }).catch(() => { if (!controller.signal.aborted) setLoadError("Não foi possível carregar a configuração. Selecione o cartão novamente para tentar."); });
     return () => controller.abort();
@@ -173,6 +188,7 @@ function CardSettingsFields({ accounts, onReady }: { accounts: AccountOption[]; 
     <FormField label="Dia de vencimento" name="dueDay" type="number" min="1" value={settings.dueDay} onChange={update("dueDay")} />
     <FormField label="Fuso horário" name="billingTimezone" value={settings.billingTimezone} onChange={update("billingTimezone")} />
     <FormField label="Fechamento" name="billingMode" options={[["manual", "Manual"], ["automatic", "Automático"]]} value={settings.billingMode} onChange={update("billingMode")} />
+    <ReportingAccountField accounts={accounts} value={settings.reportingAccountId} onChange={update("reportingAccountId")} />
     {loadError && <Alert variant="destructive" className="sm:col-span-2"><AlertDescription>{loadError}</AlertDescription></Alert>}
   </>;
 }
@@ -186,7 +202,7 @@ function AccountFields({ references }: { references: References }) {
     <FormField label="Saldo inicial (moeda da conta)" name="openingBalanceMinor" placeholder="2500,00" />
     <FormField label="Data do saldo inicial" name="openingDate" type="date" defaultValue={todayCivil()} />
     <FormField label="Instituição" name="institutionId" required={false} options={[["", "Sem instituição"], ...references.institutions.map(institution => [institution.id, institution.name] as [string, string])]} />
-    {type === "credit_card" && <><FormField label="Limite do cartão (moeda do cartão)" name="creditLimitMinor" required={false} placeholder="Deixe em branco para sem limite" /><FormField label="Dia de fechamento" name="closingDay" type="number" min="1" /><FormField label="Dia de vencimento" name="dueDay" type="number" min="1" /></>}
+    {type === "credit_card" && <><FormField label="Limite do cartão (moeda do cartão)" name="creditLimitMinor" required={false} placeholder="Deixe em branco para sem limite" /><FormField label="Dia de fechamento" name="closingDay" type="number" min="1" /><FormField label="Dia de vencimento" name="dueDay" type="number" min="1" /><ReportingAccountField accounts={references.accounts} /></>}
   </>;
 }
 

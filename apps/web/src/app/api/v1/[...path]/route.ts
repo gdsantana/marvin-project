@@ -6,7 +6,7 @@ import {
   creditPurchaseCreatedResponseSchema, institutionsResponseSchema, monthlySummaryResponseSchema, monthlySeriesResponseSchema, categoryReportResponseSchema,
   correctTransactionSchema, expenseForecastCreatedResponseSchema, expenseForecastResponseSchema, expenseForecastSchema,
   createStatementAdjustmentSchema, payStatementSchema, previewTransactionResponseEnvelopeSchema, previewTransactionSchema, realizeExpenseForecastSchema, responseSchema,
-  reportQuerySchema, reverseTransactionSchema, persistedResultSchema, statementCloseResponseSchema, statementPaymentCreatedResponseSchema,
+  reportQuerySchema, spendingReportQuerySchema, spendingReportResponseSchema, reverseTransactionSchema, persistedResultSchema, statementCloseResponseSchema, statementPaymentCreatedResponseSchema,
   statementsResponseSchema, transactionCorrectionResponseSchema, transactionCreatedResponseSchema, transactionReversedResponseSchema, transactionResponseSchema, transactionsResponseSchema,
 } from "@finance/contracts";
 import { authorize, apiError, domainErrorResponse, readJsonBody } from "@/server/http";
@@ -68,6 +68,12 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
       const statementIds = Object.values(forecast).flat().map(item => item.statementId);
       const statements = await Promise.all(statementIds.map(id => service.statementDetail(id)));
       return json(statements, 200, statementsResponseSchema);
+    }
+    if (route === "reports/spending") {
+      const parsed = spendingReportQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+      if (!parsed.success) return validationError(parsed.error);
+      const { from, to, accountId } = parsed.data;
+      return json(await service.spendingReport(from, to, accountId), 200, spendingReportResponseSchema);
     }
     if (route === "reports/categories") {
       const dates = parsePeriod(url);

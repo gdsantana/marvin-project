@@ -86,7 +86,7 @@ Lista faturas cujo vencimento está no intervalo inclusivo: cartão e moeda, dat
 
 ### `GET /v1/cards/settings?accountId=<uuid>`
 
-Retorna as configurações atuais do cartão: `accountId`, `creditLimitMinor`, dias de fechamento/vencimento, fuso horário e modo manual/automático. `accountId` precisa apontar para uma conta de cartão.
+Retorna as configurações atuais do cartão: `accountId`, `creditLimitMinor`, dias de fechamento/vencimento, fuso horário, modo manual/automático e `reportingAccountId` (UUID ou `null`). `accountId` precisa apontar para uma conta de cartão.
 
 ### `GET /v1/reports/summary?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
@@ -101,6 +101,15 @@ Exemplo:
 ### `GET /v1/reports/categories?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
 Totais de receitas e despesas por categoria e moeda no intervalo, com `currency`, `categoryId`, `categoryName`, `incomeMinor`, `expenseMinor` e `netMinor`. Valores são strings em unidades mínimas. A classificação considera revisões, reembolsos e reversões; compras parceladas são reconhecidas uma única vez na data da compra. Não há conversão entre moedas.
+
+### `GET /v1/reports/spending?from=YYYY-MM-DD&to=YYYY-MM-DD&accountId=<uuid>`
+
+Relatório de gastos em BRL para o intervalo inclusivo pela data da transação. Com `accountId`, inclui a conta e seus cartões vinculados. Sem esse parâmetro, inclui todas as contas e cartões, inclusive cartões sem vínculo.
+
+- `categories` contém `categoryId`, `categoryName` e `amountMinor` líquido de estornos. Um total negativo indica mais estornos do que gastos na categoria durante o período.
+- `paymentMethods` contém `method` (`credit`, `debit`, `pix` ou `other`) e `amountMinor` bruto de despesas. A UI divide cada valor pela soma para exibir percentuais.
+
+Valores são strings em centavos. Compras parceladas entram uma vez pelo valor integral. Transferências, pagamentos de fatura e transações canceladas ficam fora das despesas.
 
 ## Escritas e preview
 
@@ -120,7 +129,7 @@ Retorna `{ "id": "<uuid>" }`.
 
 ### `POST /v1/accounts`
 
-Schema `createAccountSchema`. Para contas sem cartão, envie nome, tipo (`checking`, `savings`, `cash`), moeda ISO, `openingBalanceMinor` string, `openingDate` e `institutionId` UUID ou `null`. Para cartão, use `type:"credit_card"` e `cardSettings` com `creditLimitMinor` string ou `null`, `closingDay`, `dueDay`, `billingTimezone` e `billingMode` (`manual` ou `automatic`). Conta e configuração do cartão são criadas atomicamente pelo domínio.
+Schema `createAccountSchema`. Para contas sem cartão, envie nome, tipo (`checking`, `savings`, `cash`), moeda ISO, `openingBalanceMinor` string, `openingDate` e `institutionId` UUID ou `null`. Para cartão, use `type:"credit_card"` e `cardSettings` com `creditLimitMinor` string ou `null`, `closingDay`, `dueDay`, `billingTimezone` e `billingMode` (`manual` ou `automatic`). O campo opcional `cardSettings.reportingAccountId` aceita o UUID de uma conta corrente ou poupança ativa, ou `null`. Conta e configuração do cartão são criadas atomicamente pelo domínio.
 
 ```json
 {"name":"Conta principal","type":"checking","currency":"BRL","openingBalanceMinor":"0","openingDate":"2026-10-25","institutionId":null}
@@ -136,7 +145,7 @@ Schema `createCategorySchema`:
 
 ### `POST /v1/cards/configuration`
 
-Atualiza de forma idempotente as configurações de cartão existente. Use o schema `creditCardSettingsSchema` e informe `accountId`, `creditLimitMinor` (string ou `null`), `closingDay`, `dueDay`, `billingTimezone` e `billingMode`. A gravação ocorre por `FinanceService.configureCard`.
+Atualiza de forma idempotente as configurações de cartão existente. Use o schema `creditCardSettingsSchema` e informe `accountId`, `creditLimitMinor` (string ou `null`), `closingDay`, `dueDay`, `billingTimezone` e `billingMode`. Envie `reportingAccountId` para trocar o vínculo usado nos relatórios ou `null` para removê-lo. Omitir o campo preserva o vínculo atual. A gravação ocorre por `FinanceService.configureCard`.
 
 ```json
 {"accountId":"<uuid-do-cartao>","creditLimitMinor":"500000","closingDay":20,"dueDay":28,"billingTimezone":"America/Sao_Paulo","billingMode":"manual"}
