@@ -168,3 +168,39 @@ CHROMIUM_EXECUTABLE=/usr/bin/chromium node scripts/validate-inline-category.cjs
 Validação local em 2026-11-04: build de produção, typecheck e lint do workspace web aprovados. Testes web: 35 aprovados e um teste de integração PostgreSQL ignorado por ausência de banco de teste configurado.
 
 Verificação com Chromium headless e respostas HTTP simuladas em 320, 390 e 1440 px: `/settings` acessível, quatro formulários existentes abrem e fecham, navegação desktop marca a página atual e navegação mobile oferece Configurações em Mais. Cadastros ausentes do menu Novo registro e das telas de contas/cartões. Sem overflow horizontal na nova aba ou erros de execução no navegador. Capturas mobile e desktop inspecionadas visualmente. Nenhuma escrita em banco real foi executada; persistência dos formulários não foi revalidada nesta mudança de navegação.
+
+## Animações — issue #33 — 2026-11-23
+
+Mudanças em `apps/web`: entrada por opacidade nas páginas, skeletons por tipo de conteúdo, deslocamento das linhas existentes quando chegam IDs novos e interpolação de gráficos, barras e percentuais. A consulta por SSE mantém o conteúdo anterior durante o carregamento. Sem mudanças em contratos ou regras financeiras.
+
+Verificação local: typecheck, lint e build da Web concluídos; suíte web com 47 testes aprovados e um teste de integração PostgreSQL ignorado por ausência de ambiente de teste configurado. Os testes de identificação cobrem primeira carga, mudança de escopo, refresh duplicado, remoção e inserções.
+
+Chromium com API interceptada e dados sintéticos: viewports 390×900 e 1440×900, ambos com movimento normal e reduzido. Verificados skeleton inicial da listagem, chegada por evento SSE, entrada de página ao navegar, ausência de erros de runtime e de overflow horizontal. Servidor isolado com conexão de banco apontada para porta local indisponível. Roteiro temporário `/tmp/marvin-motion-check.cjs`, sem persistência de dados financeiros. A suavidade dos gráficos e o desempenho em dispositivos físicos ainda exigem avaliação manual; estes checks não medem FPS nem comprovam acessibilidade integral.
+
+### Correção de flicker entre rotas
+
+A análise focada com `improve-animations` identificou dois problemas: `Workspace` remontado em cada página, reiniciando sessão/dados/SSE, e `<main key={section}>` recriando toda a área principal com fade de opacidade 0,4. A correção mantém workspace e shell no layout compartilhado `(workspace)` e aplica opacidade de 0,9 a 1 somente no painel de conteúdo. Login fica fora desse layout; validações servidor de seção e UUID permanecem.
+
+Typecheck, lint e build Web passaram. Suíte: 49 testes aprovados e um teste PostgreSQL ignorado. `scripts/validate-route-transitions.cjs` passou no Chromium em 390×900 e 1440×900, com movimento normal e reduzido, APIs sintéticas e banco isolado inacessível. O roteiro verifica identidade e ausência de remoção do shell com MutationObserver, uma única consulta de sessão e conexão SSE, links entre início/relatórios/transações, voltar/avançar e ausência de overflow/erros de runtime. Dispositivos físicos e medição de FPS continuam fora da validação.
+
+```bash
+VISUAL_ISOLATED=1 PLAYWRIGHT_MODULE=/caminho/node_modules/playwright/package.json CHROMIUM_EXECUTABLE=/usr/bin/chromium VISUAL_BASE_URL=http://127.0.0.1:3107 node scripts/validate-route-transitions.cjs
+```
+
+Inicie o servidor isolado antes do roteiro, com `DATABASE_URL` apontando para banco descartável ou porta local indisponível. Não use conexão de banco pessoal: o servidor inicia o scheduler financeiro independentemente da interceptação HTTP do navegador.
+
+### Skeletons dentro da estrutura final
+
+O shell e as regiões finais são renderizados desde a consulta de sessão. A estrutura genérica de tela foi substituída por placeholders dentro dos próprios cartões: patrimônio/receitas/despesas, gráficos, distribuição/legendas, últimas movimentações, contas, próximas faturas, filtros/extrato, grupos de previsões, indicadores, resumo, comparação, totais e detalhamento de gastos. Configurações mostra os controles conhecidos desabilitados; o formulário inline mantém os campos reais desabilitados e aplica aparência de skeleton, sem trocar o grid ao receber referências.
+
+`ChartSkeleton` compartilha alturas com os gráficos reais: mensal 256/288 px, donut 224 px com margens de 16 px e horizontal mínimo de 160 px. Regiões de listas e categorias têm alturas mínimas; os registros continuam podendo crescer conforme a quantidade e o tamanho do conteúdo, sem clipping. Estados vazios de gráficos também preservam a área. Status de atualização não inserem parágrafos visuais acima do conteúdo.
+
+Validação local: lint Web e 49 testes aprovados, com um teste de integração PostgreSQL ignorado. Build e `tsc --noEmit` passaram em cópia temporária isolada da Web, com o mesmo código e dependências, para não disputar `.next` com o servidor de desenvolvimento ativo. Tentativas no diretório original encontraram manifests inconsistentes durante essa concorrência; não eram erros TypeScript da mudança.
+
+`scripts/validate-loading-layout.cjs` verifica nove rotas em 390×900 e 1440×900, com APIs sintéticas liberadas separadamente para referências, resumo, analytics e gastos. Compara posições verticais e larguras dos cartões, títulos de seção e formulário durante o carregamento e após todas as respostas, exige a remoção dos skeletons e verifica overflow/erros de runtime. Tolerâncias: 3 px na posição e 1 px na largura. A validação de navegação persistente também passou nas duas larguras, com e sem movimento reduzido. Capturas do resumo, relatório e formulário foram inspecionadas. Estes cenários usam quantidades representativas de registros, não garantem ausência absoluta de layout shift para listas arbitrárias, textos extremos, estados de erro ou ausência de conta no formulário.
+
+```bash
+VISUAL_ISOLATED=1 PLAYWRIGHT_MODULE=/caminho/node_modules/playwright/package.json CHROMIUM_EXECUTABLE=/usr/bin/chromium VISUAL_BASE_URL=http://127.0.0.1:3107 node scripts/validate-loading-layout.cjs
+```
+
+O servidor deve estar isolado, sem credenciais de banco pessoal, como no roteiro de transições acima.

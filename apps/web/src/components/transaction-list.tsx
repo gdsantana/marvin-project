@@ -1,5 +1,7 @@
 "use client";
 
+import { ListSkeleton } from "./workspace-skeleton";
+import { useListArrival } from "@/hooks/use-list-arrival";
 import { useMemo, useState } from "react";
 import { ArrowDownIcon, ArrowDownLeftIcon, ArrowUpRightIcon, ChevronRightIcon, CircleCheckIcon, SearchIcon } from "lucide-react";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -11,6 +13,7 @@ import type { TransactionOption } from "@/components/workspace-types";
 
 type Filter = "all" | "income" | "expense";
 type Props = {
+  loading?: boolean;
   rows: TransactionOption[];
   newTransactionIds?: string[];
   empty?: string;
@@ -56,7 +59,8 @@ export function filterTransactions(rows: TransactionOption[], { query = "", filt
   }).sort((a, b) => b.occurredOn.localeCompare(a.occurredOn));
 }
 
-export function TransactionList({ rows, newTransactionIds = [], empty = "Seus lançamentos aparecerão aqui depois de registrados.", transactionActions }: Props) {
+export function TransactionList({ loading = false, rows, newTransactionIds = [], empty = "Seus lançamentos aparecerão aqui depois de registrados.", transactionActions }: Props) {
+  const listRoot = useListArrival(newTransactionIds);
   const [showCancelled, setShowCancelled] = useState(false);
   const visibleRows = useMemo(() => visibleTransactions(rows, showCancelled), [rows, showCancelled]);
   const [query, setQuery] = useState("");
@@ -77,7 +81,7 @@ export function TransactionList({ rows, newTransactionIds = [], empty = "Seus la
     expense: visibleRows.filter(row => expenseKinds.has(row.kind)).length,
   };
 
-  return <section aria-label="Extrato de transações" className="flex flex-col gap-4">
+  return <div ref={listRoot}><section aria-busy={loading} aria-label="Extrato de transações" className="flex flex-col gap-4">
     <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={showCancelled} onChange={event => setShowCancelled(event.target.checked)} />Mostrar cancelados</label>
     <div className="flex flex-col gap-3 rounded-xl bg-card p-3 sm:p-4">
       <label className="relative block">
@@ -102,11 +106,11 @@ export function TransactionList({ rows, newTransactionIds = [], empty = "Seus la
     <div className="rounded-xl bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0"><p className="font-mono text-[11px] tracking-widest text-muted-foreground">TRANSAÇÕES</p><p className="text-xs text-muted-foreground">Extrato consolidado</p></div>
-        <p className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{filteredRows.length} {filteredRows.length === 1 ? "transação listada" : "transações listadas"}</p>
+        <p className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{loading ? "Carregando registros…" : `${filteredRows.length} ${filteredRows.length === 1 ? "transação listada" : "transações listadas"}`}</p>
       </div>
     </div>
 
-    {!filteredRows.length ? <Empty><EmptyDescription>{rows.length ? "Nenhuma transação corresponde à busca." : empty}</EmptyDescription></Empty> : <>
+    <div className="min-h-96">{loading ? <ListSkeleton rows={3} rowClassName="min-h-28 xl:min-h-16" /> : !filteredRows.length ? <Empty><EmptyDescription>{rows.length ? "Nenhuma transação corresponde à busca." : empty}</EmptyDescription></Empty> : <>
       <div className="flex flex-col gap-4 xl:hidden">
         {grouped.map(([date, items]) => <section key={date} aria-label={formatDate(date)}>
           <div className="mb-1 flex items-center justify-between gap-2 px-1"><h3 className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{formatDate(date)}</h3><span className="font-mono text-[11px] text-muted-foreground">{items.length} {items.length === 1 ? "item" : "itens"}</span></div>
@@ -121,13 +125,13 @@ export function TransactionList({ rows, newTransactionIds = [], empty = "Seus la
         <ul>{filteredRows.map(row => <TransactionTableRow key={row.id} isNew={newTransactionIds.includes(row.id)} row={row} rows={rows} transactionActions={transactionActions} />)}</ul>
         <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">Mostrando {filteredRows.length} de {rows.length} transações</div>
       </div>
-    </>}
-  </section>;
+    </>}</div>
+  </section></div>;
 }
 
 function TransactionCard({ row, rows, transactionActions, isNew }: { isNew: boolean; row: TransactionOption; rows: TransactionOption[]; transactionActions?: Props["transactionActions"] }) {
   const category = row.allocations?.find(item => item.categoryName)?.categoryName;
-  return <li id={`transaction-${row.id}`} className={`min-w-0 rounded-xl bg-card p-3 shadow-sm ${isNew ? "new-transaction" : ""}`}>
+  return <li data-transaction-id={row.id} id={`transaction-${row.id}`} className={`min-w-0 rounded-xl bg-card p-3 shadow-sm ${isNew ? "new-transaction" : ""}`}>
     <div className="flex items-center justify-between gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">{incomeKinds.has(row.kind) ? <ArrowDownLeftIcon aria-hidden="true" className="text-success" /> : <ArrowUpRightIcon aria-hidden="true" className="text-destructive" />}</div>
@@ -142,7 +146,7 @@ function TransactionCard({ row, rows, transactionActions, isNew }: { isNew: bool
 function TransactionTableRow({ row, rows, transactionActions, isNew }: { isNew: boolean; row: TransactionOption; rows: TransactionOption[]; transactionActions?: Props["transactionActions"] }) {
   const category = row.allocations?.find(item => item.categoryName)?.categoryName ?? "Sem categoria";
   const account = row.entries?.[0]?.accountName ?? "—";
-  return <li id={`transaction-${row.id}`} className={`grid min-w-[960px] grid-cols-[minmax(80px,0.7fr)_minmax(190px,2fr)_minmax(130px,1fr)_minmax(125px,1fr)_minmax(125px,1fr)_minmax(115px,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 text-sm last:border-b-0 ${isNew ? "new-transaction" : ""}`}>
+  return <li data-transaction-id={row.id} id={`transaction-${row.id}`} className={`grid min-w-[960px] grid-cols-[minmax(80px,0.7fr)_minmax(190px,2fr)_minmax(130px,1fr)_minmax(125px,1fr)_minmax(125px,1fr)_minmax(115px,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 text-sm last:border-b-0 ${isNew ? "new-transaction" : ""}`}>
     <span className="font-mono text-xs text-muted-foreground">{formatDate(row.occurredOn)}</span><div className="min-w-0"><p className="truncate font-medium">{row.description}</p><p className="truncate text-xs text-muted-foreground">{row.counterpartyName ?? kindLabel(row.kind)}</p></div><span className="truncate text-xs text-muted-foreground">{category}</span><span className="truncate text-xs text-muted-foreground">{account}</span><span>{row.reviewStatus === "needs_review" ? <Badge variant="outline">Precisa revisar</Badge> : <Badge variant="secondary" className="text-success"><CircleCheckIcon aria-hidden="true" />Confirmado</Badge>}</span><span className={`text-right font-mono text-xs tabular-nums ${amountTone(row)}`}>{formatAmount(row)}</span><details className="relative"><summary className="flex size-8 cursor-pointer list-none items-center justify-center rounded-md text-muted-foreground hover:bg-muted"><span aria-hidden="true">···</span><span className="sr-only">Detalhes e ações de {row.description}</span></summary><div className="absolute right-0 z-10 mt-1 w-72 rounded-lg bg-popover p-3 shadow-lg ring-1 ring-foreground/15"><TransactionMeta row={row} />{row.notes && <p className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{row.notes}</p>}{transactionActions && <ActionButtons row={row} rows={rows} actions={transactionActions} />}</div></details>
   </li>;
 }

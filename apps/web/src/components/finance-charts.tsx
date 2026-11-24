@@ -26,7 +26,7 @@ const monthlyConfig = {
 export function MonthlyFinanceChart({ series, currency }: { series: FinanceSeriesPoint[]; currency: string }) {
   const animate = useChartAnimation();
   const data = monthlyChartData(series, currency);
-  if (!data.some(row => BigInt(row.incomeMinor) !== 0n || BigInt(row.expenseMinor) !== 0n)) return <ChartEmpty />;
+  if (!data.some(row => BigInt(row.incomeMinor) !== 0n || BigInt(row.expenseMinor) !== 0n)) return <div className="h-64 lg:h-72"><ChartEmpty /></div>;
   return <>
     <div className="relative"><ChartContainer config={monthlyConfig} className="h-64 min-h-64 w-full min-w-0 aspect-auto lg:h-72" aria-label={`Entradas e saídas mensais em ${currency}`}>
       <BarChart accessibilityLayer data={data} margin={{ top: 12, right: 8, left: 8, bottom: 0 }}>
@@ -40,10 +40,10 @@ export function MonthlyFinanceChart({ series, currency }: { series: FinanceSerie
           return <span>{name === "income" ? "Entradas" : "Saídas líquidas"}: <span className="font-mono">{formatMinor(row[key], currency)}</span></span>;
         }} />} />
         <ChartLegend content={<ChartLegendContent />} />
-        <Bar dataKey="income" fill="var(--color-income)" radius={3} maxBarSize={28} isAnimationActive={animate} animationDuration={280} animationEasing="ease-in-out" />
-        <Bar dataKey="expense" fill="var(--color-expense)" radius={3} maxBarSize={28} isAnimationActive={animate} animationDuration={280} animationEasing="ease-in-out" />
+        <Bar dataKey="income" fill="var(--color-income)" radius={3} maxBarSize={28} isAnimationActive={animate} animationBegin={0} animationDuration={280} animationEasing="ease-in-out" />
+        <Bar dataKey="expense" fill="var(--color-expense)" radius={3} maxBarSize={28} isAnimationActive={animate} animationBegin={0} animationDuration={280} animationEasing="ease-in-out" />
       </BarChart>
-    </ChartContainer><ChartUpdate key={JSON.stringify(series)} /></div>
+    </ChartContainer></div>
     <table className="sr-only"><caption>Valores mensais em {currency}</caption><thead><tr><th>Mês</th><th>Entradas</th><th>Saídas líquidas</th></tr></thead><tbody>{data.map((row, index) => <tr key={index}><th>{row.label}</th><td>{formatMinor(row.incomeMinor, currency)}</td><td>{formatMinor(row.expenseMinor, currency)}</td></tr>)}</tbody></table>
   </>;
 }
@@ -51,7 +51,7 @@ export function MonthlyFinanceChart({ series, currency }: { series: FinanceSerie
 export function ExpenseDonutChart({ rows, currency, groupLabel = "categoria", totalLabel = "Despesas líquidas" }: { rows: { label: string; amountMinor: string; fill: string }[]; currency: string; groupLabel?: string; totalLabel?: string }) {
   const animate = useChartAnimation();
   const data = amountChartData(rows).map(row => ({ ...row, value: Math.abs(row.value) }));
-  if (!data.some(row => row.value !== 0)) return <ChartEmpty />;
+  if (!data.some(row => row.value !== 0)) return <div className="my-4 h-56"><ChartEmpty /></div>;
   const total = rows.reduce((sum, row) => sum + BigInt(row.amountMinor), 0n);
   return <div className="relative mx-auto my-4 w-full max-w-64">
     <ChartContainer config={{ value: { label: "Despesas" } }} className="h-56 min-h-56 w-full aspect-auto" aria-label={`Distribuição das despesas por ${groupLabel} em ${currency}`}>
@@ -60,10 +60,10 @@ export function ExpenseDonutChart({ rows, currency, groupLabel = "categoria", to
           const row = item.payload as (typeof data)[number];
           return <span>{row.label}: <span className="font-mono">{formatMinor(row.amountMinor, currency)}</span></span>;
         }} />} />
-        <Pie data={data} dataKey="value" nameKey="label" innerRadius="68%" outerRadius="90%" strokeWidth={2} stroke="var(--card)" isAnimationActive={animate} animationDuration={280} animationEasing="ease-in-out" />
+        <Pie data={data} dataKey="value" nameKey="label" innerRadius="68%" outerRadius="90%" strokeWidth={2} stroke="var(--card)" isAnimationActive={animate} animationBegin={0} animationDuration={280} animationEasing="ease-in-out" />
       </PieChart>
     </ChartContainer>
-    <ChartUpdate key={JSON.stringify(rows)} />
+
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><div className="max-w-32 text-center"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{totalLabel}</p><p className="break-words font-mono text-sm font-medium">{formatMinor(total.toString(), currency)}</p>{groupLabel === "categoria" && <p className="mt-1 text-xs text-muted-foreground">{rows.length} categorias</p>}</div></div>
   </div>;
 }
@@ -83,17 +83,13 @@ export function AmountFinanceChart({ rows, currency }: { rows: { label: string; 
           const row = item.payload as (typeof data)[number];
           return <span>{row.label}: <span className="font-mono">{formatMinor(row.amountMinor, currency)}</span></span>;
         }} />} />
-        <Bar dataKey="value" fill="var(--color-value)" radius={3} maxBarSize={16} isAnimationActive={animate} animationDuration={280} animationEasing="ease-in-out" />
+        <Bar dataKey="value" fill="var(--color-value)" radius={3} maxBarSize={16} isAnimationActive={animate} animationBegin={0} animationDuration={280} animationEasing="ease-in-out" />
       </BarChart>
-    </ChartContainer><ChartUpdate key={JSON.stringify(rows)} /></div>
+    </ChartContainer></div>
     <ul className="sr-only">{rows.map((row, index) => <li key={index}>{row.label}: {formatMinor(row.amountMinor, currency)}</li>)}</ul>
   </>;
 }
 
 function ChartEmpty() {
-  return <Empty className="min-h-40"><EmptyDescription>Sem movimentações neste período.</EmptyDescription></Empty>;
-}
-
-function ChartUpdate() {
-  return <span aria-hidden="true" className="chart-update pointer-events-none absolute inset-0 rounded-lg bg-primary" />;
+  return <Empty className="h-full min-h-40"><EmptyDescription>Sem movimentações neste período.</EmptyDescription></Empty>;
 }

@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import Image from "next/image";
 import logo from "../../marvin-logo.webp";
 import { ArrowDownUpIcon, ChartNoAxesCombinedIcon, CreditCardIcon, HouseIcon, LogOutIcon, PlusCircleIcon, ReceiptTextIcon, SettingsIcon, WalletIcon } from "lucide-react";
@@ -22,6 +23,7 @@ const navigation = [
 ] as const;
 
 export function AppShell({ section, title, description, onCreate, onSignOut, createDisabled, children }: { section: Section; title: string; description: string; onCreate: (action: Action) => void; onSignOut: () => void; createDisabled?: boolean; children: ReactNode }) {
+  const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
   const mobileNavigation = navigation.filter(item => ["overview", "entries", "new", "reports"].includes(item.id));
   return <div className="min-h-dvh md:grid md:grid-cols-[16rem_minmax(0,1fr)]">
@@ -43,7 +45,7 @@ export function AppShell({ section, title, description, onCreate, onSignOut, cre
       </header>
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-7xl px-4 py-6 outline-none sm:px-6 lg:px-6 lg:py-6">
         <div className={cn("mb-6 flex flex-col gap-2", section === "new" && "hidden md:flex")}><span className="hidden font-mono text-[10px] tracking-widest text-primary md:block">● SISTEMA OPERACIONAL FINANCEIRO</span><h1 className="sr-only text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] md:not-sr-only lg:text-3xl">{title}</h1><p className="hidden max-w-2xl text-sm leading-6 text-muted-foreground md:block">{description}</p></div>
-        {children}
+        <div key={pathname} className="page-enter">{children}</div>
       </main>
     </div>
     {moreOpen && <div className="fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-40 rounded-xl border border-border bg-popover p-3 shadow-xl md:hidden"><nav aria-label="Mais opções" className="grid grid-cols-2 gap-2">{navigation.filter(item => !mobileNavigation.some(link => link.id === item.id)).map(item => <Link key={item.id} href={item.href} onClick={() => setMoreOpen(false)} className="flex min-h-12 items-center gap-2 rounded-lg px-3 hover:bg-accent"><item.icon className="size-4" />{item.label}</Link>)}</nav><Button variant="ghost" className="mt-2 w-full" onClick={onSignOut}><LogOutIcon />Sair</Button></div>}

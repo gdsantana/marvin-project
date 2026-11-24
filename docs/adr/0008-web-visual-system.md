@@ -36,3 +36,11 @@ Mobile first, foco visível, estados de consulta e preferência por movimento re
 A implementação é verificada por typecheck, lint, build, testes financeiros em PostgreSQL descartável, integração web/MCP e cenários de navegador com dados sintéticos. Os comandos, resultados e limites estão em [docs/ui-validation.md](../ui-validation.md). Essa validação não equivale a uma certificação integral WCAG ou a testes em dispositivos físicos.
 
 Reavaliar a decisão quando houver demanda aprovada por tema claro ou novos dados/recursos reais, ou quando validações demonstrarem limitações das primitivas escolhidas. Novas capacidades financeiras exigem escopo próprio; esta decisão não as autoriza.
+
+## Refinamento de movimento — issue #33
+
+A UI reutiliza CSS, Web Animations API e Recharts, sem nova dependência. Entrada de página por opacidade, skeletons por componente e atualizações animadas preservam consultas e contratos. O refetch SSE mantém os dados visíveis; primeira carga e mudança de período não são tratadas como inserções. `prefers-reduced-motion` remove deslocamentos e interpolação de gráficos e percentuais. A animação altera somente apresentação, sem interpolar dinheiro ou persistir valores intermediários.
+
+O grupo `(workspace)` mantém a composição financeira em um layout client persistente, evitando reiniciar sessão e SSE a cada troca de rota. Páginas servidor mantêm validação de rota e 404. A animação se restringe ao painel de conteúdo, com opacidade de 0,9 a 1 em 180 ms; o shell permanece estável. Listagens aguardam a consulta do escopo correto antes de exibir registros, evitando mostrar dados de outro período ou seção durante a navegação.
+
+Skeletons devem ocupar a estrutura final de cada componente, em vez de substituir a tela por um grid genérico. Títulos, filtros, cartões e seções permanecem montados; apenas valores, gráficos e linhas desconhecidos são substituídos. Áreas de gráficos têm a mesma altura mínima nos estados de carregamento, vazio e com dados; listas usam reservas mínimas sem limitar a quantidade de registros. O formulário usa sua própria geometria para os placeholders, com controles desabilitados até carregar referências. Atualizações SSE mantêm os dados atuais visíveis.
