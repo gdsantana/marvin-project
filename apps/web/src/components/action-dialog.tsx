@@ -235,7 +235,7 @@ function ReversalFields({ references }: { references: References }) {
   return <><Alert role="note" className="sm:col-span-2"><AlertDescription>O cancelamento é definitivo e cria uma compensação, preservando o lançamento original. Não é possível reverter operações ligadas a cartões, faturas, reembolsos ou lançamentos já revertidos.</AlertDescription></Alert><FormField label="Data da compensação" name="occurredOn" type="date" defaultValue={todayCivil()} /><FormField label="Motivo" name="reason" placeholder="Ex.: lançamento duplicado" /><FormField label="Substituir por um novo lançamento?" name="replacementKind" required={false} value={replacementKind} onChange={event => setReplacementKind(event.target.value)} options={[["", "Não criar substituição"], ["income", "Nova receita"], ["expense", "Nova despesa"], ["transfer", "Nova transferência"]]} />{replacementKind && <><FormField label="Descrição do novo lançamento" name="replacementDescription" placeholder="Descreva o registro correto" /><FormField label="Data do novo lançamento" name="replacementOn" type="date" defaultValue={todayCivil()} /><FormField label="Valor (R$)" name="amountMinor" placeholder="85,00" />{replacementKind === "transfer" ? <><FormField label="Conta de origem" name="replacementFromAccountId" options={accountOptions(account => account.type !== "credit_card")} /><FormField label="Conta de destino" name="replacementToAccountId" options={accountOptions(account => account.type !== "credit_card")} /></> : <><FormField label="Conta" name="replacementAccountId" options={accountOptions(account => account.type !== "credit_card")} />{replacementKind === "income" ? <FormField label="Categoria" name="replacementCategoryId" required={false} options={[["", "Sem categoria"], ...categories.map(category => [category.id, category.name] as [string, string])]} /> : <><FormField label="Forma de pagamento" name="replacementPaymentMethod" options={[["pix", "Pix"], ["debit", "Débito"], ["cash", "Dinheiro"], ["other", "Outra"]]} /><CategorySplits categories={categories} /></>}</>}{<FormField label="Status do novo lançamento" name="replacementReviewStatus" options={[["confirmed", "Confirmado"], ["needs_review", "Precisa revisar"]]} />}</>}</>;
 }
 
-export function ActionDialog({ action, busy, message, close, submit, references, selectedTransaction, selectedForecast, setAction, pendingPreview, pendingReverseReview, clearPreview, presentation = "dialog" }: { action: Action; busy: boolean; message: string; close: () => void; submit: (event: FormEvent<HTMLFormElement>) => void; references: References; selectedTransaction: TransactionOption | null; selectedForecast: ExpenseForecastOption | null; setAction: (action: Action) => void; pendingPreview: { signature: string; data: Record<string, unknown> } | null; pendingReverseReview: { signature: string; reason: string; replacement: Record<string, unknown> | null } | null; clearPreview: () => void; presentation?: "dialog" | "inline" }) {
+export function ActionDialog({ action, busy, message, close, submit, references, selectedTransaction, selectedForecast, setAction, pendingPreview, pendingReverseReview, clearPreview, presentation = "dialog", loading = false }: { loading?: boolean; action: Action; busy: boolean; message: string; close: () => void; submit: (event: FormEvent<HTMLFormElement>) => void; references: References; selectedTransaction: TransactionOption | null; selectedForecast: ExpenseForecastOption | null; setAction: (action: Action) => void; pendingPreview: { signature: string; data: Record<string, unknown> } | null; pendingReverseReview: { signature: string; reason: string; replacement: Record<string, unknown> | null } | null; clearPreview: () => void; presentation?: "dialog" | "inline" }) {
   const [returnFocus] = useState(() => typeof document === "undefined" ? null : document.activeElement as HTMLElement | null);
   const formRef = useRef<HTMLFormElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -292,7 +292,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     }
   }, [action, references, selectedTransaction, selectedForecast]);
 
-  const typePicker = !selectedTransaction && !selectedForecast && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
+  const typePicker = !selectedTransaction && !selectedForecast && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy || loading} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
   const form = <>
     <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
     <form ref={formRef} className={`flex flex-col gap-4 ${presentation === "inline" ? "pb-[var(--form-actions-height,6rem)] md:pb-0" : ""}`} onChange={clearPreview} onSubmit={event => {
@@ -300,7 +300,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
       setReviewDetails({ description: String(data.get("description") ?? ""), occurredOn: String(data.get("occurredOn") ?? "") });
       submit(event);
     }} aria-busy={busy}>
-      <fieldset hidden={Boolean(pendingPreview)} disabled={busy} className="min-w-0 border-0 p-0">
+      <fieldset hidden={Boolean(pendingPreview)} disabled={busy || loading} className="min-w-0 border-0 p-0">
         <FieldGroup key={action === "income" || action === "expense" || action === "purchase" ? "transaction" : action} className={`grid grid-cols-1 sm:grid-cols-2 ${presentation === "inline" ? "gap-5 sm:gap-4" : "gap-4"}`}>{fields}</FieldGroup>
       </fieldset>
       {pendingPreview && <div ref={reviewRef} tabIndex={-1} className="outline-none"><PreviewSummary result={pendingPreview.data} references={references} {...reviewDetails} /></div>}
@@ -308,23 +308,24 @@ export function ActionDialog({ action, busy, message, close, submit, references,
       {message && <Alert ref={errorRef} tabIndex={-1} role="alert" variant="destructive"><AlertDescription>{message}</AlertDescription></Alert>}
       <div ref={actionsRef} className={`grid border-t sm:flex sm:justify-end ${presentation === "inline" ? "fixed inset-x-0 bottom-[var(--mobile-navigation-height)] z-20 grid-cols-[auto_minmax(0,1fr)] gap-3 bg-card p-4 sm:px-6 md:static md:mt-2 md:px-0 md:pb-0 [&>button]:h-auto [&>button]:min-h-11 [&>button]:whitespace-normal [&>button]:py-3" : "grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 bg-card pt-3"}`}>
         {pendingPreview && <Button type="button" variant="outline" disabled={busy} onClick={() => { clearPreview(); requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>("input:not([type=hidden]),select")?.focus()); }}>Editar dados</Button>}
-        {!pendingPreview && <Button type="button" onClick={close} disabled={busy} variant="outline">Cancelar</Button>}
-        <Button type="submit" disabled={busy || (action === "configureCard" && !cardSettingsReady)}>{busy ? (pendingPreview ? "Salvando…" : "Validando…") : pendingReverseReview ? "Confirmar reversão" : pendingPreview ? "Confirmar e salvar" : ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "statementAdjustment"].includes(action) ? "Revisar transação" : action === "cancelForecast" ? "Confirmar cancelamento" : action === "reverse" ? "Revisar reversão" : actionLabels[action]}</Button>
+        {!pendingPreview && <Button type="button" onClick={close} disabled={busy || loading} variant="outline">Cancelar</Button>}
+        <Button type="submit" disabled={busy || loading || (action === "configureCard" && !cardSettingsReady)}>{busy ? (pendingPreview ? "Salvando…" : "Validando…") : pendingReverseReview ? "Confirmar reversão" : pendingPreview ? "Confirmar e salvar" : ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "statementAdjustment"].includes(action) ? "Revisar transação" : action === "cancelForecast" ? "Confirmar cancelamento" : action === "reverse" ? "Revisar reversão" : actionLabels[action]}</Button>
       </div>
     </form>
   </>;
   const title = action === "income" || action === "expense" ? "Nova transação" : actionLabels[action];
   const description = action === "cancelForecast" ? "Confira a previsão antes de cancelar." : "Confira os dados da operação. Para valores em reais, use o formato 2500,00.";
 
-  if (presentation === "inline") return <PendingContext value={busy}>
+  if (presentation === "inline") return <PendingContext value={busy || loading}>
     <div className="w-full">
       <h1 className="sr-only md:hidden">{title}</h1>
       <div className="grid items-start gap-4">
-      <section className="min-w-0 rounded-xl bg-card p-4 shadow-sm sm:p-6">
+      <section aria-busy={loading} className={`min-w-0 rounded-xl bg-card p-4 shadow-sm sm:p-6 ${loading ? "loading-form" : ""}`}>
+        {loading && <span role="status" className="sr-only">Carregando formulário</span>}
         <div className="flex flex-col gap-5">
           {!pendingPreview && typePicker}
           {action === "purchase" && !references.accounts.some(account => account.type === "credit_card") && <p className="text-sm text-muted-foreground">Adicione um cartão para registrar compras no crédito. <Link href="/cards" className="inline-flex min-h-11 items-center text-primary">Adicionar cartão</Link></p>}
-          {!references.accounts.some(account => account.type !== "credit_card") && (action === "income" || action === "expense") ? <div className="grid gap-3"><p>Adicione uma conta para registrar transações.</p><Link href="/accounts" className="inline-flex min-h-11 items-center text-primary">Adicionar conta</Link></div> : form}
+          {!loading && !references.accounts.some(account => account.type !== "credit_card") && (action === "income" || action === "expense") ? <div className="grid gap-3"><p>Adicione uma conta para registrar transações.</p><Link href="/accounts" className="inline-flex min-h-11 items-center text-primary">Adicionar conta</Link></div> : form}
         </div>
       </section>
 
@@ -332,7 +333,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     </div>
   </PendingContext>;
 
-  return <PendingContext value={busy}><Dialog open onOpenChange={open => { if (!open && !busy) close(); }}>
+  return <PendingContext value={busy || loading}><Dialog open onOpenChange={open => { if (!open && !busy) close(); }}>
     <DialogContent showCloseButton={false} className={`overscroll-contain ${action === "income" || action === "expense" ? "sm:max-w-2xl" : "sm:max-w-xl"}`} finalFocus={returnFocus ? { current: returnFocus } : true} initialFocus={() => formRef.current?.querySelector<HTMLElement>("input,select,textarea,button") ?? true}>
       <DialogHeader>
         <DialogTitle>{title}</DialogTitle>

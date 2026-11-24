@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createdIdResponseSchemaEnvelope, type CreateCategoryInput, type CategoryReport } from "@finance/contracts";
+import { addedTransactionIds, type TransactionSnapshot } from "./transaction-updates";
 import { CategoryCreationContext } from "./category-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ListSkeleton } from "./workspace-skeleton";
 import { Badge } from "@/components/ui/badge";
 import { AppShell } from "./app-shell";
 import { recentMonths } from "./finance-chart-data";
@@ -69,9 +70,11 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const [historyPeriod, setHistoryPeriod] = useState(() => reportPeriod("month"));
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
+  const [loadedHistoryScope, setLoadedHistoryScope] = useState("");
+  const historyScope = `${section}:${historyPeriod.from}:${historyPeriod.to}`;
   const [hasData, setHasData] = useState(false);
   const [newTransactionIds, setNewTransactionIds] = useState<string[]>([]);
-  const previousTransactions = useRef<{ rows: Map<string, string>; scope: string; token: number } | null>(null);
+  const previousTransactions = useRef<TransactionSnapshot | null>(null);
   const [report, setReport] = useState<{ range: string; data: ReportData } | null>(null);
   const [reportError, setReportError] = useState("");
   const [reportLoading, setReportLoading] = useState(true);
@@ -88,6 +91,8 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const [pendingReverseReview, setPendingReverseReview] = useState<{ signature: string; reason: string; replacement: Record<string, unknown> | null } | null>(null);
 
   useEffect(() => {
+    setMessage("");
+    setNewTransactionIds([]);
     setForm(section === "new" ? "expense" : null);
     setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null);
   }, [section]);
@@ -149,10 +154,10 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
       if (!accounts.ok || !categories.ok || !transactions.ok || !statements.ok || !institutions.ok || !expenseForecasts.ok) throw new Error("Não foi possível carregar os dados. Tente novamente.");
       if (cancelled) return;
       const scope = `${section}:${historyPeriod.from}:${historyPeriod.to}`;
-      const previous = previousTransactions.current;
-      const rows = new Map<string, string>((responses[2].data as TransactionOption[]).map(row => [row.id, JSON.stringify(row)]));
-      setNewTransactionIds(previous && previous.scope === scope && previous.token !== reloadToken ? [...rows].filter(([id, value]) => previous.rows.get(id) !== value).map(([id]) => id) : []);
-      previousTransactions.current = { rows, scope, token: reloadToken };
+      const snapshot = { ids: new Set((responses[2].data as TransactionOption[]).map(row => row.id)), scope, token: reloadToken };
+      setNewTransactionIds(addedTransactionIds(previousTransactions.current, snapshot));
+      previousTransactions.current = snapshot;
+      setLoadedHistoryScope(scope);
       setHasData(true);
       setReferences({ accounts: responses[0].data, categories: responses[1].data, transactions: responses[2].data, statements: responses[3].data, institutions: responses[4].data });
       setForecasts(responses[5].data);
@@ -329,11 +334,13 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
     finally { setBusy(false); }
   }
 
-  if (!authenticated) return <main className="grid min-h-dvh place-items-center text-sm text-muted-foreground">Preparando seu espaço…</main>;
+  const referencesLoading = !hasData && !dataError;
+  const historyLoading = loadedHistoryScope !== historyScope && !dataError;
 
-  return <AppShell createDisabled={dataLoading || Boolean(dataError)} section={section} title={selectedAccount?.name ?? current.title} description={accountId ? "Gastos e meios de pagamento da conta." : current.intro}
+  return <AppShell createDisabled={!authenticated || dataLoading || Boolean(dataError)} section={section} title={selectedAccount?.name ?? current.title} description={accountId ? "Gastos e meios de pagamento da conta." : current.intro}
     onCreate={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }}
     onSignOut={async () => {
+      if (!authenticated) return;
       try {
         const response = await fetch("/api/auth/session", { method: "DELETE", headers: { "x-csrf-token": csrf } });
         if (!response.ok) { setMessage("Não foi possível sair agora. Tente novamente."); return; }
@@ -344,38 +351,38 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
         {message && !form && <Alert role="status" className="mb-5"><AlertDescription>{message}</AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && analyticsError && <Alert variant="destructive" className="mb-5"><AlertDescription>{analyticsError}{currentAnalytics && " Os dados exibidos podem estar desatualizados."}<Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button></AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{currentReport && !reportError.startsWith("Você não tem permissão") && " Os dados exibidos podem estar desatualizados."}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
-        {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="mb-3 text-sm text-muted-foreground">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
-        {dataLoading && !hasData ? <div role="status" className="grid gap-4"><span className="sr-only">Carregando seus dados</span><Skeleton className="h-36 w-full" /><Skeleton className="h-52 w-full" /></div> : dataError && !hasData ? null : <>
-          {section === "overview" && <DashboardOverview newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
-          {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
+        {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="sr-only">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
+        {dataError && !hasData ? null : <>
+          {section === "overview" && <DashboardOverview referencesLoading={referencesLoading} newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
+          {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" disabled={referencesLoading} onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
           {section === "accounts" && (accountId ? <div className="grid gap-4">
             <Link href="/accounts" className={buttonVariants({ variant: "outline", className: "w-fit" })}>Voltar para contas</Link>
-            {selectedAccount ? <>
+            {selectedAccount || referencesLoading ? <>
               <div className="w-full sm:max-w-72"><DateRangeSelect value={spendingPeriod} onChange={setSpendingPeriod} /></div>
               <SpendingBreakdown key={accountId} accountId={accountId} period={spendingPeriod} reloadToken={reloadToken} />
             </> : <EmptyInline text="Conta não encontrada." />}
-          </div> : <ResourceSection title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} linkAccounts />)}
-          {section === "cards" && <ResourceSection title="Seus cartões" detail="Cartões e limites disponíveis." setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
+          </div> : <ResourceSection loading={referencesLoading} title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} linkAccounts />)}
+          {section === "cards" && <ResourceSection loading={referencesLoading} title="Seus cartões" detail="Cartões e limites disponíveis." setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
           {section === "entries" && <div className="mb-4 w-full"><DateRangeSelect value={historyPeriod} onChange={setHistoryPeriod} /></div>}
           {section === "statements" && <div className="mb-4 flex flex-wrap gap-3">
             <label className="grid gap-1 text-sm">De<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.from} max={historyPeriod.to} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, from: event.target.value })); }} /></label>
             <label className="grid gap-1 text-sm">Até<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.to} min={historyPeriod.from} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, to: event.target.value })); }} /></label>
           </div>}
           {section === "entries" && <>
-            <TransactionList newTransactionIds={newTransactionIds} rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
-            <ExpenseForecasts forecasts={forecasts} references={references} setForm={setForm} onRealize={forecast => openForecastAction("realizeForecast", forecast)} onCancel={forecast => openForecastAction("cancelForecast", forecast)} />
+            <TransactionList loading={historyLoading} newTransactionIds={newTransactionIds} rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
+            <ExpenseForecasts loading={historyLoading} forecasts={forecasts} references={references} setForm={setForm} onRealize={forecast => openForecastAction("realizeForecast", forecast)} onCancel={forecast => openForecastAction("cancelForecast", forecast)} />
           </>}
-          {section === "statements" && <ResourceSection title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={setForm} rows={references.statements} />}
-          {section === "reports" && (!reportError || currentReport) && <ReportsDashboard spending={<SpendingBreakdown period={reportPeriod(range)} reloadToken={reloadToken} />} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading} range={range} onRangeChange={setRange} report={currentReport} />}
+          {section === "statements" && <ResourceSection loading={historyLoading} title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={setForm} rows={references.statements} />}
+          {section === "reports" && (!reportError || currentReport) && <ReportsDashboard spending={<SpendingBreakdown period={reportPeriod(range)} reloadToken={reloadToken} />} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} range={range} onRangeChange={setRange} report={currentReport} />}
         </>}
-    {form && (section !== "new" || (!dataLoading && !dataError)) && <CategoryCreationContext value={createInlineCategory}><ActionDialog presentation={section === "new" ? "inline" : "dialog"} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} /></CategoryCreationContext>}
+    {form && (section !== "new" || !dataError) && <CategoryCreationContext value={createInlineCategory}><ActionDialog loading={section === "new" && referencesLoading} presentation={section === "new" ? "inline" : "dialog"} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} /></CategoryCreationContext>}
   </AppShell>;
 }
 
 function EmptyInline({ text }: { text: string }) { return <Empty><EmptyDescription>{text}</EmptyDescription></Empty>; }
 
-function ResourceSection({ title, detail, action, setForm, rows, transactionActions, linkAccounts }: { title: string; detail: string; action?: Action; linkAccounts?: boolean; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
-  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{action === "close" && <Button variant="outline" onClick={() => setForm("statementAdjustment")}>Ajustar fatura</Button>}{action && <Button onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button>}</div></div></CardHeader><CardContent><Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} linkAccounts={linkAccounts} /></CardContent></Card>;
+function ResourceSection({ title, detail, action, setForm, rows, transactionActions, linkAccounts, loading = false }: { loading?: boolean; title: string; detail: string; action?: Action; linkAccounts?: boolean; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
+  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{action === "close" && <Button disabled={loading} variant="outline" onClick={() => setForm("statementAdjustment")}>Ajustar fatura</Button>}{action && <Button disabled={loading} onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button>}</div></div></CardHeader><CardContent className="min-h-48" aria-busy={loading}>{loading ? <ListSkeleton /> : <Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} linkAccounts={linkAccounts} />}</CardContent></Card>;
 }
 
 function Rows({ rows, empty, transactionActions, linkAccounts }: { linkAccounts?: boolean; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; empty: string; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
@@ -400,16 +407,16 @@ function Rows({ rows, empty, transactionActions, linkAccounts }: { linkAccounts?
   })}</ul>;
 }
 
-function ExpenseForecasts({ forecasts, references, setForm, onRealize, onCancel }: { forecasts: ExpenseForecastOption[]; references: References; setForm: (action: Action) => void; onRealize: (forecast: ExpenseForecastOption) => void; onCancel: (forecast: ExpenseForecastOption) => void }) {
+function ExpenseForecasts({ forecasts, references, setForm, onRealize, onCancel, loading = false }: { loading?: boolean; forecasts: ExpenseForecastOption[]; references: References; setForm: (action: Action) => void; onRealize: (forecast: ExpenseForecastOption) => void; onCancel: (forecast: ExpenseForecastOption) => void }) {
   const groups: [ExpenseForecastOption["status"], string][] = [["projected", "Projetadas"], ["realized", "Realizadas"], ["cancelled", "Canceladas"]];
-  return <Card className="mt-6"><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>Previsões avulsas</h2></CardTitle><CardDescription>Compromissos esperados. Só alteram o saldo e as despesas quando realizados.</CardDescription></div><Button onClick={() => setForm("forecast")}>Nova previsão</Button></div></CardHeader>
+  return <Card className="mt-6"><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>Previsões avulsas</h2></CardTitle><CardDescription>Compromissos esperados. Só alteram o saldo e as despesas quando realizados.</CardDescription></div><Button disabled={loading} onClick={() => setForm("forecast")}>Nova previsão</Button></div></CardHeader>
     <CardContent className="grid gap-5">{groups.map(([status, title]) => {
       const items = forecasts.filter(forecast => forecast.status === status).sort((a, b) => a.expectedOn.localeCompare(b.expectedOn));
-      return <section key={status} aria-labelledby={`forecast-${status}`}><div className="flex items-baseline justify-between gap-2"><h3 id={`forecast-${status}`} className="font-medium">{title}</h3><span className="text-xs text-muted-foreground">{items.length}</span></div>{items.length ? <ul className="mt-2 divide-y divide-border">{items.map(forecast => {
+      return <section key={status} aria-labelledby={`forecast-${status}`}><div className="flex items-baseline justify-between gap-2"><h3 id={`forecast-${status}`} className="font-medium">{title}</h3><span className="text-xs text-muted-foreground">{loading ? "…" : items.length}</span></div><div className="flow-root min-h-24">{loading ? <ListSkeleton rows={1} /> : items.length ? <ul className="mt-2 divide-y divide-border">{items.map(forecast => {
         const account = references.accounts.find(item => item.id === forecast.accountId);
         const category = references.categories.find(item => item.id === forecast.categoryId);
         return <li key={forecast.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{forecast.description}</p><p className="mt-1 text-xs text-muted-foreground">{formatDate(forecast.expectedOn)} · {account?.name ?? "Conta"} · {category?.name ?? "Sem categoria"}</p>{forecast.realizedTransactionId && <a className="mt-1 inline-block inline-flex min-h-11 items-center font-medium text-primary underline-offset-4 hover:underline text-xs" href={`/entries#transaction-${forecast.realizedTransactionId}`}>Ver despesa realizada</a>}</div><div className="flex max-w-full flex-wrap items-center gap-3"><strong className="break-words font-mono text-sm tabular-nums">{formatMinor(forecast.amountMinor, forecast.currency)}</strong>{status === "projected" && <div className="flex gap-1"><Button variant="outline" onClick={() => onRealize(forecast)}>Realizar</Button><Button variant="outline" onClick={() => onCancel(forecast)}>Cancelar</Button></div>}</div></li>;
-      })}</ul> : <p className="mt-2 text-sm text-muted-foreground">Nenhuma previsão {status === "projected" ? "projetada" : status === "realized" ? "realizada" : "cancelada"} neste período.</p>}</section>;
+      })}</ul> : <p className="mt-2 text-sm text-muted-foreground">Nenhuma previsão {status === "projected" ? "projetada" : status === "realized" ? "realizada" : "cancelada"} neste período.</p>}</div></section>;
     })}</CardContent>
   </Card>;
 }
