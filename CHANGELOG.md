@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/gdsantana/marvin-project/compare/v0.3.0...v0.4.0) (2026-11-26)
+
+
+### Features
+
+* **web:** suaviza navegação e atualizações com skeletons estáveis ([f5c54e0](https://github.com/gdsantana/marvin-project/commit/f5c54e080cb078c536ba4cd2f3214988ba45d05b))
+* **web:** suaviza navegação e atualizações com skeletons estáveis ([2eac94d](https://github.com/gdsantana/marvin-project/commit/2eac94d6f85659a9408cc59161a34f0233c00804))
+
+
+### Bug Fixes
+
+* inclui dívida inicial na fatura do cartão ([4a211b1](https://github.com/gdsantana/marvin-project/commit/4a211b1cee48b4b598905e0a3e92a01b020b7993))
+* inclui dívida inicial na fatura do cartão ([c06f996](https://github.com/gdsantana/marvin-project/commit/c06f996eddac5c9c25fb92ce5937e7580807c0ec))
+
 ## [0.3.0](https://github.com/gdsantana/marvin-project/compare/v0.2.2...v0.3.0) (2026-11-19)
 
 
