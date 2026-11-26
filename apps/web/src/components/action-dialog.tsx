@@ -9,7 +9,7 @@ import { Field, FieldError, FieldGroup, FieldLabel, FieldSet, FieldLegend } from
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { formatDate, formatMinor, majorInputFromMinor, todayCivil } from "./finance-format";
-import { actionLabels, primaryActions, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type References } from "./workspace-types";
+import { actionLabels, primaryActions, settingsActions, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type References } from "./workspace-types";
 
 import { CategoryPicker } from "./category-picker";
 import { categoryPath } from "./category-path";
@@ -199,10 +199,30 @@ function AccountFields({ references }: { references: References }) {
     <FormField label="Nome da conta ou cartão" name="name" placeholder="Ex.: Conta principal" />
     <FormField label="Tipo" name="type" options={[["checking", "Conta corrente"], ["savings", "Poupança"], ["cash", "Dinheiro"], ["credit_card", "Cartão de crédito"]]} value={type} onChange={event => setType(event.target.value)} />
     <input type="hidden" name="currency" value="BRL" />
-    <FormField label="Saldo inicial (moeda da conta)" name="openingBalanceMinor" placeholder="2500,00" />
+    {type === "credit_card" && <Alert role="note" className="sm:col-span-2"><AlertDescription>Informe como saldo inicial negativo somente a dívida da fatura do ciclo de abertura. Deixe as parcelas futuras de fora.</AlertDescription></Alert>}
+    <FormField label="Saldo inicial" name="openingBalanceMinor" placeholder={type === "credit_card" ? "-800,00" : "2500,00"} />
     <FormField label="Data do saldo inicial" name="openingDate" type="date" defaultValue={todayCivil()} />
     <FormField label="Instituição" name="institutionId" required={false} options={[["", "Sem instituição"], ...references.institutions.map(institution => [institution.id, institution.name] as [string, string])]} />
     {type === "credit_card" && <><FormField label="Limite do cartão (moeda do cartão)" name="creditLimitMinor" required={false} placeholder="Deixe em branco para sem limite" /><FormField label="Dia de fechamento" name="closingDay" type="number" min="1" /><FormField label="Dia de vencimento" name="dueDay" type="number" min="1" /><ReportingAccountField accounts={references.accounts} /></>}
+  </>;
+}
+
+function OpeningDebtFields({ references, busy }: { references: References; busy: boolean }) {
+  const [cardId, setCardId] = useState("");
+  const cards = references.accounts.filter(account => account.type === "credit_card" && !account.isArchived
+    && account.openingBalanceMinor && BigInt(account.openingBalanceMinor) < 0n
+    && !references.statements.some(statement => statement.cardAccountId === account.id && statement.openingDebtMinor));
+  const openStatements = references.statements.filter(statement => statement.cardAccountId === cardId && statement.status === "open");
+  return <>
+    <Alert role="note" className="sm:col-span-2"><AlertDescription>Vincule somente o valor ainda pendente da dívida de abertura. O valor entra uma vez na fatura, sem criar despesa nem alterar o saldo do cartão.</AlertDescription></Alert>
+    {cards.length === 0 && <p className="text-sm text-muted-foreground sm:col-span-2">Nenhum cartão elegível para vincular dívida inicial.</p>}
+    <FormField label="Cartão" name="cardAccountId" value={cardId} onChange={event => setCardId(event.target.value)} options={[["", "Selecione um cartão"], ...cards.map(card => [card.id, card.name] as [string, string])]} />
+    <FormField key={cardId} label="Fatura aberta" name="statementId" required={false} options={[["", "Usar ciclo vigente"], ...openStatements.map(statement => [statement.id, `Vence em ${formatDate(statement.dueOn)}`] as [string, string])]} />
+    <FormField label="Valor pendente" name="amountMinor" placeholder="800,00" />
+    <Field orientation="horizontal" className="sm:col-span-2">
+      <Input id="confirms-outstanding-debt" name="confirmsOutstandingDebt" type="checkbox" required className="size-5 min-h-5 w-5" disabled={busy} />
+      <FieldLabel htmlFor="confirms-outstanding-debt">Confirmo que o valor ainda está pendente e não consta em outra fatura</FieldLabel>
+    </Field>
   </>;
 }
 
@@ -272,6 +292,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     switch (action) {
       case "institution": return <FormField label="Nome da instituição" name="name" placeholder="Ex.: Banco do Brasil" />;
       case "correctOpeningBalance": return <OpeningBalanceFields accounts={references.accounts} />;
+      case "allocateOpeningDebt": return <OpeningDebtFields references={references} busy={busy} />;
       case "account": return <AccountFields references={references} />;
       case "configureCard": return <CardSettingsFields accounts={references.accounts} onReady={setCardSettingsReady} />;
       case "category": return <><FormField label="Nome da categoria" name="name" placeholder="Ex.: Moradia" /><FormField label="Tipo" name="type" options={[["expense", "Despesa"], ["income", "Receita"]]} /><FormField label="Categoria superior" name="parentId" required={false} options={[["", "Sem categoria superior"], ...categoryOptions()]} /></>;
@@ -292,7 +313,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     }
   }, [action, references, selectedTransaction, selectedForecast]);
 
-  const typePicker = !selectedTransaction && !selectedForecast && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy || loading} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
+  const typePicker = !selectedTransaction && !selectedForecast && !settingsActions.includes(action) && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy || loading} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
   const form = <>
     <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
     <form ref={formRef} className={`flex flex-col gap-4 ${presentation === "inline" ? "pb-[var(--form-actions-height,6rem)] md:pb-0" : ""}`} onChange={clearPreview} onSubmit={event => {

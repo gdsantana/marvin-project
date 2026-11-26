@@ -152,6 +152,11 @@ mesmo preview/commit. Não há plano de parcelas nem repetição automática. Ve
 
 ## Correção de saldo inicial
 
+A dívida na criação do cartão integra a fatura do ciclo de abertura. O domínio
+e o PostgreSQL incluem o valor na cobrança e no limite de pagamento. Para
+cartões existentes, Web e MCP usam a mesma vinculação explícita a uma fatura
+aberta. Ver [ADR 0017](docs/adr/0017-statement-opening-debt.md).
+
 Complementa §§3–6: contrato `correctOpeningBalanceSchema`, serviço
 `FinanceService.correctOpeningBalance`, endpoint POST `accounts/opening-balance`
 e tool MCP `correct_opening_balance` compartilham uma operação idempotente.

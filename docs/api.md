@@ -82,6 +82,10 @@ Consulta o intervalo inclusivo por data econômica e retorna `id`, tipo, data ec
 
 ### `GET /v1/statements?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
+`openingDebtMinor` identifica a dívida de abertura já incluída em `billedMinor`;
+é `null` quando a fatura não tem esse vínculo. O valor não aparece em `items`,
+pois não tem transação de origem.
+
 Lista faturas cujo vencimento está no intervalo inclusivo: cartão e moeda, datas do ciclo, status, itens, pagamentos, total faturado, pago e saldo restante. Parcelas projetadas não são novas movimentações de conta.
 
 ### `GET /v1/cards/settings?accountId=<uuid>`
@@ -128,6 +132,10 @@ Schema de entrada `createInstitutionSchema`; exemplo:
 Retorna `{ "id": "<uuid>" }`.
 
 ### `POST /v1/accounts`
+
+Para cartões, o saldo inicial negativo deve conter somente a dívida da fatura do
+ciclo vigente na data de abertura. A criação registra a fatura com a respectiva
+dívida, mesmo sem compras.
 
 Schema `createAccountSchema`. Para contas sem cartão, envie nome, tipo (`checking`, `savings`, `cash`), moeda ISO, `openingBalanceMinor` string, `openingDate` e `institutionId` UUID ou `null`. Para cartão, use `type:"credit_card"` e `cardSettings` com `creditLimitMinor` string ou `null`, `closingDay`, `dueDay`, `billingTimezone` e `billingMode` (`manual` ou `automatic`). O campo opcional `cardSettings.reportingAccountId` aceita o UUID de uma conta corrente ou poupança ativa, ou `null`. Conta e configuração do cartão são criadas atomicamente pelo domínio.
 
@@ -178,6 +186,16 @@ Schema `createRefundSchema`; `originalTransactionId`, `accountId` e `amountMinor
 ### `POST /v1/statements/payment`
 
 Schema `payStatementSchema`; `statementId`, `fromAccountId`, `amountMinor` positivo e metadados. Registra transferência para o cartão, sem nova despesa; pagamento parcial deixa o restante na fatura.
+
+### `POST /v1/statements/opening-debt`
+
+Vincula uma única vez a parte ainda pendente da dívida de abertura de um cartão
+existente. Envie `cardAccountId`, `amountMinor` como valor positivo em centavos e
+`confirmsOutstandingDebt: true` após confirmar que o valor permanece pendente e
+não está em outra fatura. `statementId` seleciona uma fatura aberta do cartão; se
+omitido, usa ou cria a fatura do ciclo vigente no fuso do cartão. O valor não pode
+exceder a dívida original cadastrada. Retorna `200` com `{ id }` da fatura e exige
+`Idempotency-Key`. Nenhuma movimentação ou despesa é criada.
 
 ### `POST /v1/statements/close`
 

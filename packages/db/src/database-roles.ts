@@ -18,6 +18,7 @@ const runtimeTables = {
 } as const;
 const financialFunctions = [
   "enforce_credit_card_settings_account", "enforce_statement_card_account", "enforce_statement_payment_limits",
+  "protect_statement_opening_debt",
   "reject_financial_mutation", "enforce_statement_item_source", "validate_installment_plan",
   "check_installment_plan_trigger", "enforce_refund_limit", "enforce_expense_forecast_transition",
   "validate_expense_forecast", "enforce_revision_sequence",

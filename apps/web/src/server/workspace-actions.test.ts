@@ -3,7 +3,7 @@ import test from "node:test";
 import { actionLabels, primaryActions, settingsActions } from "../components/workspace-types";
 
 test("infrequent registrations remain accessible only through the settings action list", () => {
-  assert.deepEqual(settingsActions, ["institution", "account", "correctOpeningBalance", "configureCard", "category"]);
+  assert.deepEqual(settingsActions, ["institution", "account", "correctOpeningBalance", "allocateOpeningDebt", "configureCard", "category"]);
   for (const action of settingsActions) {
     assert.ok(actionLabels[action]);
     assert.ok(!primaryActions.includes(action));

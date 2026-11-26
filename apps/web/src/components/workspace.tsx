@@ -239,7 +239,7 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
         const minor = parseMajorToMinor(value);
         if (minor === null) { setBusy(false); setMessage("Use um valor válido, com até duas casas decimais e sem separador de milhar."); return; }
         body[key] = minor;
-      } else if (key === "creditLimitMinor") body[key] = null;
+      } else if (key === "creditLimitMinor" && value === "") body[key] = null;
     }
     const needsAllocations = form === "expense" || form === "purchase"
       || (form === "correct" && formData.get("replaceCategories") === "on")
@@ -301,7 +301,12 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
       if (body.reportingAccountId === "") body.reportingAccountId = null;
     }
     if (form === "statementAdjustment") body.confirmsUnrecordedDebt = entries.confirmsUnrecordedDebt === "on";
+    if (form === "allocateOpeningDebt") {
+      if (!body.statementId) delete body.statementId;
+      body.confirmsOutstandingDebt = entries.confirmsOutstandingDebt === "on";
+    }
     const endpoint: Record<Action, string> = {
+      allocateOpeningDebt: "/api/v1/statements/opening-debt",
       correctOpeningBalance: "/api/v1/accounts/opening-balance", institution: "/api/v1/institutions", account: "/api/v1/accounts", configureCard: "/api/v1/cards/configuration", category: "/api/v1/categories",
       income: "/api/v1/transactions/income", expense: "/api/v1/transactions/expense", transfer: "/api/v1/transactions/transfer",
       purchase: "/api/v1/transactions/credit-purchase", cashback: "/api/v1/transactions/cashback", refund: "/api/v1/transactions/refund",
@@ -390,7 +395,7 @@ function Rows({ rows, empty, transactionActions, linkAccounts }: { linkAccounts?
   return <ul className="divide-y divide-border">{rows.map(row => {
     let title: string, detail: string, amount = "";
     if ("balanceMinor" in row) { title = row.name; detail = `${row.type === "credit_card" ? "Cartão" : "Conta"} · ${row.currency}${row.type === "credit_card" && row.availableCreditMinor !== undefined ? ` · disponível ${row.availableCreditMinor === null ? "sem limite definido" : formatMinor(row.availableCreditMinor, row.currency)}` : ""}`; amount = formatMinor(row.balanceMinor, row.currency); }
-    else if ("dueOn" in row) { title = row.cardAccountName; detail = `Vence em ${formatDate(row.dueOn)} · ${statementStatusLabel(row.status)}${row.billedMinor !== undefined ? ` · Total ${formatMinor(row.billedMinor, row.currency)}` : ""}${row.paidMinor !== undefined ? ` · Pago ${formatMinor(row.paidMinor, row.currency)}` : ""}`; amount = row.creditBalanceMinor && BigInt(row.creditBalanceMinor) > 0n ? `Crédito ${formatMinor(row.creditBalanceMinor, row.currency)}` : row.remainingMinor ? formatMinor(row.remainingMinor, row.currency) : ""; }
+    else if ("dueOn" in row) { title = row.cardAccountName; detail = `Vence em ${formatDate(row.dueOn)} · ${statementStatusLabel(row.status)}${row.billedMinor !== undefined ? ` · Total ${formatMinor(row.billedMinor, row.currency)}` : ""}${row.paidMinor !== undefined ? ` · Pago ${formatMinor(row.paidMinor, row.currency)}` : ""}${row.openingDebtMinor ? ` · Dívida inicial ${formatMinor(row.openingDebtMinor, row.currency)}` : ""}`; amount = row.creditBalanceMinor && BigInt(row.creditBalanceMinor) > 0n ? `Crédito ${formatMinor(row.creditBalanceMinor, row.currency)}` : row.remainingMinor ? formatMinor(row.remainingMinor, row.currency) : ""; }
     else if ("occurredOn" in row) { title = row.description; detail = [formatDate(row.occurredOn), transactionKindLabel(row.kind), row.counterpartyName].filter(Boolean).join(" · "); amount = row.entries?.map(entry => entry.currency ? formatMinor(entry.amountMinor, entry.currency) : entry.amountMinor).join(" / ") ?? ""; }
     else { title = row.name; detail = row.type === "income" ? "Categoria de receita" : "Categoria de despesa"; }
     return <li id={"occurredOn" in row ? `transaction-${row.id}` : undefined} key={row.id} className="py-3">
