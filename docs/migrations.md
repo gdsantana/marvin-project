@@ -55,3 +55,10 @@ despesa `Ajuste de fatura`, preservando uma categoria existente de mesmo nome
 normalizado e tipo. O bootstrap de categorias também a inclui para ambientes de
 desenvolvimento que tenham limpado o catálogo. Esta migration cria somente a
 categoria; o fluxo de lançamento usa a categoria ativa conforme ADR 0014.
+
+### Migration 0006 — Dívida de abertura em fatura
+
+Acrescenta a coluna opcional `opening_debt_minor`, com vínculo único por cartão,
+e inclui o valor na validação de pagamentos. Diferentemente dos lançamentos em
+`BIGINT`, a coluna usa `numeric(19,0)` para representar inclusive o valor absoluto
+do menor saldo assinado. A migration não vincula nem reescreve faturas existentes.

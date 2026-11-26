@@ -44,6 +44,11 @@ export const correctOpeningBalanceSchema = z.object({
   reason: z.string().trim().min(1).max(500),
 }).strict();
 export type CorrectOpeningBalanceInput = z.infer<typeof correctOpeningBalanceSchema>;
+const openingDebtAmountSchema = z.string().regex(positiveMinorAmountPattern).refine(value => !positiveMinorAmountPattern.test(value) || BigInt(value) <= -MIN_BIGINT, "Valor excede o máximo da dívida de abertura");
+export const allocateOpeningDebtSchema = z.object({
+  cardAccountId: idSchema, statementId: idSchema.optional(), amountMinor: openingDebtAmountSchema, confirmsOutstandingDebt: z.literal(true),
+}).strict();
+export type AllocateOpeningDebtInput = z.infer<typeof allocateOpeningDebtSchema>;
 export const creditCardSettingsSchema = creditCardSettingsInputSchema.extend({ accountId: idSchema });
 export const categorySchema = z.object({ id: idSchema, name: z.string().trim().min(1), type: categoryTypeSchema, parentId: idSchema.nullable(), isArchived: z.boolean().default(false) });
 export const createCategorySchema = categorySchema.omit({ id: true, isArchived: true });
@@ -139,6 +144,7 @@ export const statementDetailSchema = z.object({
   id: idSchema, cardAccountId: idSchema, cardAccountName: z.string(), currency: currencySchema,
   cycleStartOn: dateSchema, closingOn: dateSchema, dueOn: dateSchema, status: statementStatusSchema,
   items: z.array(statementItemResponseSchema), payments: z.array(statementPaymentResponseSchema),
+  openingDebtMinor: openingDebtAmountSchema.nullable().optional(),
   billedMinor: derivedMinorAmountSchema, paidMinor: derivedMinorAmountSchema, remainingMinor: derivedMinorAmountSchema, creditBalanceMinor: derivedMinorAmountSchema,
 });
 export const monthlyReportSchema = z.record(currencyMapKeySchema, z.object({ incomeMinor: derivedMinorAmountSchema, expenseMinor: derivedMinorAmountSchema, netMinor: derivedMinorAmountSchema }));

@@ -1,7 +1,7 @@
-import { correctOpeningBalanceSchema } from "@finance/contracts";
+import { allocateOpeningDebtSchema, correctOpeningBalanceSchema } from "@finance/contracts";
 import type {
   CreateStatementAdjustmentInput, CreateCashbackInput, CreateCreditPurchaseInput, CreateExpenseInput, CreateIncomeInput, CreateRefundInput,
-  CreateStatementInput, CreateTransferInput, DomainErrorCode, PayStatementInput,
+  AllocateOpeningDebtInput, CreateStatementInput, CreateTransferInput, DomainErrorCode, PayStatementInput,
   PreviewTransactionInput, PreviewTransactionOutput, CreateExpenseForecastInput, CategoryReport, SpendingReport,
   RealizeExpenseForecastInput, CorrectTransactionInput, ReverseTransactionInput, TransactionAuditContext,
 } from "@finance/contracts";
@@ -18,7 +18,7 @@ export type ExpenseForecast = CreateExpenseForecastInput & { id: UUID; currency:
 export type TransactionRevision = { id: UUID; transactionId: UUID; revisionNumber: number; reason: string; actor: string; source: string; metadata: Partial<Pick<Transaction, "description" | "counterpartyName" | "notes" | "reviewStatus">>; allocations: Array<{ categoryId: UUID | null; amountMinor: Minor }> | null; createdAt: string };
 export type Entry = { id: UUID; transactionId: UUID; accountId: UUID; amountMinor: Minor };
 export type Allocation = { id: UUID; transactionId: UUID; categoryId: UUID | null; amountMinor: Minor };
-export type Statement = { id: UUID; cardAccountId: UUID; cycleStartOn: string; closingOn: string; dueOn: string; status: "open" | "closed" | "paid" | "partially_paid" | "overdue" };
+export type Statement = { id: UUID; cardAccountId: UUID; cycleStartOn: string; closingOn: string; dueOn: string; openingDebtMinor?: Minor | null; status: "open" | "closed" | "paid" | "partially_paid" | "overdue" };
 type RefundStatementTarget = { statement: Statement; plan: null } | { statement: null; plan: { cycleStartOn: string; closingOn: string; dueOn: string } };
 export type StatementItem = { id: UUID; statementId: UUID; sourceTransactionId: UUID; installmentPlanId: UUID | null; installmentNumber: number | null; itemType: string; amountMinor: Minor; description: string };
 export type InstallmentPlan = { id: UUID; purchaseTransactionId: UUID; totalAmountMinor: Minor; installmentCount: number };
@@ -46,6 +46,7 @@ export interface TransactionContext {
   readonly statements: {
     get(id: UUID): Promise<Statement | null>; findByClosingDate(cardAccountId: UUID, closingOn: string): Promise<Statement | null>;
     list(cardAccountId: UUID, from?: string, to?: string): Promise<Statement[]>; save(value: Statement): Promise<void>;
+    setOpeningDebt(id: UUID, amount: Minor): Promise<void>;
     addItems(values: Array<Omit<StatementItem, "id">>): Promise<StatementItem[]>; items(id: UUID): Promise<StatementItem[]>;
   };
   readonly installmentPlans: { save(value: InstallmentPlan): Promise<void>; getByPurchase(id: UUID): Promise<InstallmentPlan | null> };
@@ -87,6 +88,10 @@ function dueDate(closingOn: string, closingDay: number, dueDay: number): string 
   return dueDay <= closingDay ? addMonths(dueInClosingMonth, 1, dueDay) : dueInClosingMonth;
 }
 
+function statementBilled(statement: Statement, items: StatementItem[]): Minor {
+  return items.reduce((sum, item) => sum + item.amountMinor, statement.openingDebtMinor ?? 0n);
+}
+
 function splitByCurrency<T extends { currency: string }>(rows: T[]): Map<string, T[]> {
   const result = new Map<string, T[]>();
   for (const row of rows) result.set(row.currency, [...(result.get(row.currency) ?? []), row]);
@@ -123,7 +128,14 @@ export class FinanceService {
       if (await tx.accounts.get(accountId)) fail("CONFLICT", "Conta já existe");
       const { cardSettings, ...accountInput } = input;
       await tx.accounts.save({ ...accountInput, id: accountId, isArchived: false });
-      if (cardSettings) await tx.cards.saveSettings({ ...cardSettings, accountId });
+      if (cardSettings) {
+        await tx.cards.saveSettings({ ...cardSettings, accountId });
+        if (input.openingBalanceMinor < 0n) {
+          const { closingOn, cycleStartOn } = this.purchaseStatements(input.openingDate, input.openingDate, cardSettings.closingDay);
+          const statement = await this.ensureStatement(tx, accountId, closingOn, cycleStartOn, cardSettings.closingDay, cardSettings.dueDay, 0);
+          await tx.statements.setOpeningDebt(statement.id, -input.openingBalanceMinor);
+        }
+      }
       return accountId;
     })).value;
   }
@@ -138,6 +150,34 @@ export class FinanceService {
       await tx.accounts.correctOpeningBalance(account.id, BigInt(input.openingBalanceMinor));
       return { ...input, correctedAt: new Date().toISOString() };
     })).value.accountId;
+  }
+
+  async allocateOpeningDebt(input: AllocateOpeningDebtInput, key: string): Promise<UUID> {
+    const parsed = allocateOpeningDebtSchema.safeParse(input);
+    if (!parsed.success) return fail("VALIDATION_ERROR", "Informe o valor pendente e confirme a dívida de abertura.");
+    return (await this.idempotent("allocateOpeningDebt", key, parsed.data, async tx => {
+      const card = await this.requireAccount(tx, parsed.data.cardAccountId);
+      if (card.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "Selecione um cartão de crédito.");
+      const amount = BigInt(parsed.data.amountMinor);
+      if (amount > -card.openingBalanceMinor) return fail("VALIDATION_ERROR", "O valor supera a dívida registrada na abertura do cartão.");
+      const statements = await tx.statements.list(card.id);
+      if (statements.some(statement => statement.openingDebtMinor != null)) return fail("CONFLICT", "A dívida de abertura já foi vinculada a uma fatura.");
+      let statement = statements.find(row => row.id === parsed.data.statementId);
+      if (!parsed.data.statementId) {
+        const settings = await tx.cards.getSettings(card.id);
+        if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada.");
+        const today = new Intl.DateTimeFormat("en-CA", { timeZone: settings.billingTimezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+        this.assertAfterOpening(card, today);
+        statement = statements.find(row => row.cycleStartOn <= today && today < row.closingOn);
+        if (!statement) {
+          const { closingOn, cycleStartOn } = this.purchaseStatements(today, today, settings.closingDay);
+          statement = await this.ensureStatement(tx, card.id, closingOn, cycleStartOn, settings.closingDay, settings.dueDay, 0);
+        }
+      }
+      if (!statement || statement.status !== "open" || statement.closingOn <= card.openingDate) return fail("CONFLICT", "Selecione uma fatura aberta do cartão posterior à abertura.");
+      await tx.statements.setOpeningDebt(statement.id, amount);
+      return statement.id;
+    })).value;
   }
 
   async configureCard(input: CardSettings & { accountId: UUID }, key: string): Promise<void> {
@@ -462,7 +502,7 @@ export class FinanceService {
       const statement = await tx.statements.get(statementId); if (!statement) return fail("NOT_FOUND", "Fatura não encontrada");
       const card = await this.requireAccount(tx, statement.cardAccountId);
       const [items, payments] = await Promise.all([tx.statements.items(statementId), tx.payments.list(statementId)]);
-      const billedMinor = items.reduce((sum, item) => sum + item.amountMinor, 0n);
+      const billedMinor = statementBilled(statement, items);
       const paidMinor = payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
       const remainingMinor = billedMinor - paidMinor;
       const settings = await tx.cards.getSettings(card.id);
@@ -495,7 +535,7 @@ export class FinanceService {
         if (account.type !== "credit_card") continue;
         for (const statement of await tx.statements.list(account.id)) {
           const [items, payments] = await Promise.all([tx.statements.items(statement.id), tx.payments.list(statement.id)]);
-          const billed = items.reduce((sum, item) => sum + item.amountMinor, 0n);
+          const billed = statementBilled(statement, items);
           const paid = payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
           if ((statement.dueOn < from || statement.dueOn > to) && !(includePending && billed > paid)) continue;
           (forecast[account.currency] ??= []).push({ statementId: statement.id, dueOn: statement.dueOn, billedMinor: billed.toString(), paidMinor: paid.toString(), remainingMinor: (billed - paid).toString() });
@@ -701,7 +741,7 @@ export class FinanceService {
     if (bank.currency !== card.currency) fail("CURRENCY_MISMATCH", "Pagamento deve usar a moeda da fatura");
     this.assertAfterOpening(bank, input.occurredOn); this.assertAfterOpening(card, input.occurredOn);
     const [items, payments] = await Promise.all([tx.statements.items(statement.id), tx.payments.list(statement.id)]);
-    const amount = asMinor(input.amountMinor), due = items.reduce((sum, item) => sum + item.amountMinor, 0n) - payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
+    const amount = asMinor(input.amountMinor), due = statementBilled(statement, items) - payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
     if (amount > due) fail("INSUFFICIENT_STATEMENT_BALANCE", "Pagamento supera o saldo da fatura", { dueMinor: due.toString() });
     return { statement, card, bank, amount, due };
   }

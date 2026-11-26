@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { DomainError, type ExpenseForecast, type FinanceRepository, type TransactionContext, type TransactionRevision } from "@finance/domain";
 import type { Database } from "./client.js";
 import {
@@ -45,7 +45,7 @@ const isRetryable = (error: unknown): boolean => {
   while (current && typeof current === "object") {
     const value = current as { code?: unknown; constraint?: unknown; cause?: unknown };
     if (value.code === "40001" || value.code === "40P01") return true;
-    if (value.code === "23505" && (value.constraint === "card_statements_card_closing_unique" || value.constraint === "transaction_revisions_transaction_number_unique")) return true;
+    if (value.code === "23505" && (value.constraint === "card_statements_card_closing_unique" || value.constraint === "card_statements_one_opening_debt_per_card" || value.constraint === "transaction_revisions_transaction_number_unique")) return true;
     current = value.cause;
   }
   return false;
@@ -227,6 +227,12 @@ function createContext(db: Database): TransactionContext {
           target: cardStatements.id,
           set: { status: value.status, updatedAt: new Date() },
         });
+      },
+      async setOpeningDebt(id, amount) {
+        const [updated] = await db.update(cardStatements).set({ openingDebtMinor: amount, updatedAt: new Date() })
+          .where(and(eq(cardStatements.id, id), eq(cardStatements.status, "open"), isNull(cardStatements.openingDebtMinor)))
+          .returning({ id: cardStatements.id });
+        if (!updated) throw new DomainError("CONFLICT", "A fatura foi fechada ou já contém dívida de abertura.");
       },
       async addItems(values) { return values.length ? db.insert(cardStatementItems).values(values).returning() : []; },
       async items(id) { return db.select().from(cardStatementItems).where(eq(cardStatementItems.statementId, id)); },

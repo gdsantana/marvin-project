@@ -21,6 +21,7 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
       currency: "BRL", openingBalanceMinor: "10000", openingDate: "2026-01-01", isArchived: false, balanceMinor: "10000",
     }] });
     if (url.pathname === "/api/v1/accounts/opening-balance") return Response.json({ ok: true, data: { id: body.accountId } });
+    if (url.pathname === "/api/v1/statements/opening-debt") return Response.json({ ok: true, data: { id: body.statementId } });
     if (url.pathname === "/api/v1/cards/settings") return Response.json({ ok: true, data: {
       accountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54", creditLimitMinor: "500000", closingDay: 20,
       dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual",
@@ -110,6 +111,12 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
     assert.equal(forwarded.headers.get("idempotency-key"), correction.idempotencyKey);
     const { idempotencyKey: _key, ...correctionBody } = correction;
     assert.deepEqual(forwarded.body, correctionBody);
+    const allocation = { cardAccountId: correction.accountId, statementId: "3f194c10-21d9-4c28-bf03-11bd00eea323", amountMinor: "8000", confirmsOutstandingDebt: true };
+    const allocated = await client.callTool({ name: "allocate_opening_debt", arguments: { ...allocation, idempotencyKey: "allocate-opening-1" } });
+    assert.equal(allocated.isError, undefined);
+    assert.equal(requests.at(-1)?.url, "http://web.test/api/v1/statements/opening-debt");
+    assert.equal(requests.at(-1)?.headers.get("idempotency-key"), "allocate-opening-1");
+    assert.deepEqual(requests.at(-1)?.body, allocation);
     const accountResult = await client.callTool({ name: "get_accounts", arguments: {} });
     assert.equal(accountResult.isError, undefined);
     assert.match((accountResult.content as Array<{ text?: string }>)[0]?.text ?? "", /"balanceMinor":"10000"/);

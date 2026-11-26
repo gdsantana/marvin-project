@@ -66,6 +66,7 @@ class MemoryRepository implements FinanceRepository {
         findByClosingDate: async (card, closing) => [...this.statements.values()].find(statement => statement.cardAccountId === card && statement.closingOn === closing) ?? null,
         list: async card => [...this.statements.values()].filter(statement => statement.cardAccountId === card),
         save: async statement => { this.statements.set(statement.id, statement); },
+        setOpeningDebt: async (id, openingDebtMinor) => { this.statements.set(id, { ...this.statements.get(id)!, openingDebtMinor }); },
         addItems: async values => { const result = values.map(value => ({ ...value, id: crypto.randomUUID() })); this.items.push(...result); return result; },
         items: async id => this.items.filter(item => item.statementId === id),
       },
@@ -492,6 +493,10 @@ test("ajuste de fatura reconhece somente a diferença como despesa e dívida, se
   const repository = new MemoryRepository(), service = new FinanceService(repository);
   const categoryId = await service.createCategory({ name: "Ajuste de fatura", type: "expense", parentId: null }, "adjust-category");
   const card = await service.createAccount({ name: "Cartão", type: "credit_card", currency: "BRL", openingBalanceMinor: -80000n, openingDate: "2026-10-01", institutionId: null, cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, "adjust-card");
+  const [openingStatement] = (await service.statementForecast("2026-10-01", "2026-10-31")).BRL;
+  assert.equal(openingStatement.billedMinor, "80000");
+  assert.deepEqual((await service.statementDetail(openingStatement.statementId)).items, []);
+  assert.equal(await service.accountBalance(card), -80000n);
   const statement = await service.createStatement({ cardAccountId: card, cycleStartOn: "2026-10-20", closingOn: "2026-11-20", dueOn: "2026-11-28" });
   const input = { ...metadata, cardAccountId: card, statementId: statement.id, amountMinor: "30000", confirmsUnrecordedDebt: true as const };
   const preview = await service.previewTransaction({ ...input, operation: "statement_adjustment" });
@@ -507,6 +512,7 @@ test("ajuste de fatura reconhece somente a diferença como despesa e dívida, se
   assert.equal(repository.plans.size, 0);
   assert.equal(repository.allocations[0]!.categoryId, categoryId);
   assert.equal((await service.statementDetail(statement.id)).billedMinor, 30000n);
+  assert.equal(await service.accountBalance(card), -110000n);
   const report = await service.categoryReport("2026-10-01", "2026-10-31");
   assert.equal(report.find(row => row.categoryId === categoryId)?.expenseMinor, "30000");
   assert.equal(created.value.kind, "expense");

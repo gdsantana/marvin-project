@@ -17,7 +17,7 @@ export function notifyFinanceChanges() {
 const mutations = new Set([
   "createInstitution", "correctOpeningBalance", "createAccount", "createCategory", "configureCard",
   "createIncome", "createExpense", "createTransfer", "createCreditPurchase", "createCashback", "createRefund",
-  "createStatementAdjustment", "payStatement", "closeStatement", "createExpenseForecast", "cancelExpenseForecast",
+  "createStatementAdjustment", "allocateOpeningDebt", "payStatement", "closeStatement", "createExpenseForecast", "cancelExpenseForecast",
   "realizeExpenseForecast", "correctTransaction", "reverseTransaction",
 ]);
 

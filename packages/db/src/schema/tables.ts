@@ -6,6 +6,7 @@ import {
   integer,
   index,
   jsonb,
+  numeric,
   pgTable,
   smallint,
   text,
@@ -215,6 +216,7 @@ export const cardStatements = pgTable("card_statements", {
   cycleStartOn: date("cycle_start_on", { mode: "string" }).notNull(),
   closingOn: date("closing_on", { mode: "string" }).notNull(),
   dueOn: date("due_on", { mode: "string" }).notNull(),
+  openingDebtMinor: numeric("opening_debt_minor", { precision: 19, scale: 0, mode: "bigint" }),
   status: text("status").$type<Statement["status"]>().notNull().default("open"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -222,6 +224,8 @@ export const cardStatements = pgTable("card_statements", {
   check("card_statements_cycle_valid", sql`${table.cycleStartOn} < ${table.closingOn}`),
   check("card_statements_due_on_valid", sql`${table.dueOn} >= ${table.closingOn}`),
   check("card_statements_status_valid", sql`${table.status} in ('open', 'closed', 'paid', 'partially_paid', 'overdue')`),
+  check("card_statements_opening_debt_valid", sql`${table.openingDebtMinor} > 0 and ${table.openingDebtMinor} <= 9223372036854775808`),
+  uniqueIndex("card_statements_one_opening_debt_per_card").on(table.cardAccountId).where(sql`${table.openingDebtMinor} is not null`),
   uniqueIndex("card_statements_card_closing_unique").on(table.cardAccountId, table.closingOn),
   index("card_statements_cycle_idx").on(table.cardAccountId, table.cycleStartOn, table.closingOn),
 ]);
@@ -254,4 +258,3 @@ export const statementPayments = pgTable("statement_payments", {
   index("statement_payments_statement_id_idx").on(table.statementId),
   index("statement_payments_transfer_transaction_id_idx").on(table.transferTransactionId),
 ]);
-

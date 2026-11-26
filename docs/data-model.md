@@ -256,6 +256,7 @@ Toda compra em cartão pode possuir um plano de 1 ou N parcelas. A transação o
 | `closing_on` | DATE | data de fechamento; limite exclusivo do ciclo |
 | `due_on` | DATE | vencimento |
 | `status` | TEXT | `open`, `closed`, `paid`, `partially_paid`, `overdue` |
+| `opening_debt_minor` | NUMERIC(19,0) NULL | parcela positiva da dívida de abertura incluída nesta fatura; no máximo uma fatura por cartão |
 | `created_at`, `updated_at` | TIMESTAMPTZ | obrigatórios |
 
 Não usar apenas o mês da compra para determinar a fatura. A atribuição leva em conta ciclo real e, quando disponível, `posted_on` do emissor. Para estorno de cartão, usar `posted_on ?? occurred_on` tanto ao escolher fatura aberta quanto ao calcular o ciclo. O preview deve expor a fatura existente ou as datas planejadas (`cycleStartOn`, `closingOn`, `dueOn`) quando o commit criar uma. Os ciclos de um mesmo cartão não podem se sobrepor. Status monetário deve ser **derivado/validado** pelos pagamentos; `status` persistido, se houver, é apenas estado operacional/cache coerente.
@@ -389,7 +390,7 @@ O emissor pode distribuir os centavos de outra maneira. Permitir ajuste manual d
 ### 6.4 Pagamentos de fatura
 
 ```text
-statement_gross_minor = SUM(card_statement_items.amount_minor)
+statement_gross_minor = COALESCE(opening_debt_minor, 0) + SUM(card_statement_items.amount_minor)
 statement_paid_minor = SUM(statement_payments.amount_minor)
 statement_open_minor = statement_gross_minor - statement_paid_minor
 ```
@@ -425,7 +426,7 @@ Descontos, antecipações, cancelamentos, reembolsos e estornos devem preservar 
 
 **Receita do mês:** alocações de receitas positivas cuja data econômica pertence ao mês; excluir transferências próprias.
 
-**Fatura atual:** soma das linhas da fatura atual, mostrando bruto, créditos, pagamentos e saldo a pagar separadamente.
+**Fatura atual:** soma das linhas da fatura atual e da dívida de abertura vinculada, se houver, mostrando bruto, créditos, pagamentos e saldo a pagar separadamente.
 
 **Próximas faturas:** somas de `card_statement_items` de faturas com fechamento/vencimento futuro, **sem** movimentar saldo novamente.
 
@@ -720,3 +721,13 @@ motivo guardados no claim idempotente. Não gera entradas ou alocações e não
 altera faturas. Saldo desde a abertura e patrimônio histórico refletem a correção;
 receitas/despesas permanecem iguais. Concorrência usa transação serializável e
 comparação do valor anterior. Ver ADR 0015.
+
+## 21. Dívida de abertura na fatura
+
+Para um cartão novo, o saldo inicial negativo representa apenas a dívida da
+fatura do ciclo vigente na data de abertura. A criação vincula o valor absoluto
+a esse ciclo, mesmo sem compras. Cartões existentes permitem vincular uma vez
+o valor ainda pendente a uma fatura aberta. O vínculo não cria transação,
+movimentação ou despesa. Pagamentos reduzem o saldo a pagar da fatura e, por
+transferência, o passivo do cartão. Corrigir o saldo inicial não reescreve o
+vínculo. Ver ADR 0017.
