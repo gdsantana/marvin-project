@@ -358,6 +358,13 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
         {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{currentReport && !reportError.startsWith("Você não tem permissão") && " Os dados exibidos podem estar desatualizados."}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="sr-only">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
         {dataError && !hasData ? null : <>
+          {(section === "overview" || section === "statements") && references.accounts.some(account => account.hasUnallocatedOpeningDebt) &&
+            <Alert className="mb-4">
+              <AlertDescription className="flex flex-wrap items-center gap-2">
+                <span>Há cartões com dívida inicial fora da fatura. Se houver valor pendente, vincule-o a uma fatura aberta.</span>
+                <Button className="min-h-11" variant="outline" onClick={() => setForm("allocateOpeningDebt")}>{actionLabels.allocateOpeningDebt}</Button>
+              </AlertDescription>
+            </Alert>}
           {section === "overview" && <DashboardOverview referencesLoading={referencesLoading} newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
           {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" disabled={referencesLoading} onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
           {section === "accounts" && (accountId ? <div className="grid gap-4">

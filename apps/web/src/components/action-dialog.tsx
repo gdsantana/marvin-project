@@ -209,9 +209,7 @@ function AccountFields({ references }: { references: References }) {
 
 function OpeningDebtFields({ references, busy }: { references: References; busy: boolean }) {
   const [cardId, setCardId] = useState("");
-  const cards = references.accounts.filter(account => account.type === "credit_card" && !account.isArchived
-    && account.openingBalanceMinor && BigInt(account.openingBalanceMinor) < 0n
-    && !references.statements.some(statement => statement.cardAccountId === account.id && statement.openingDebtMinor));
+  const cards = references.accounts.filter(account => account.hasUnallocatedOpeningDebt);
   const openStatements = references.statements.filter(statement => statement.cardAccountId === cardId && statement.status === "open");
   return <>
     <Alert role="note" className="sm:col-span-2"><AlertDescription>Vincule somente o valor ainda pendente da dívida de abertura. O valor entra uma vez na fatura, sem criar despesa nem alterar o saldo do cartão.</AlertDescription></Alert>

@@ -52,7 +52,7 @@ function apiToolResult<T>(work: () => Promise<T>) {
 export function createFinanceMcpServer(api: WebApiClient) {
   const server = new McpServer({ name: "marvin-finance", version: "0.1.0" });
   server.registerTool("get_accounts", {
-    description: "Lista contas e saldos atuais para selecionar uma conta existente.", inputSchema: {},
+    description: "Lista contas e saldos assinados. Em cartões, saldo negativo é dívida. hasUnallocatedOpeningDebt indica saldo inicial negativo sem vínculo a fatura; confirme quanto segue pendente antes de usar allocate_opening_debt.", inputSchema: {},
   }, () => apiToolResult(() => api.request("v1/accounts", accountOutputSchema)));
   server.registerTool("get_card_settings", {
     description: "Consulta limite, fechamento, vencimento, fuso e modo de faturamento de um cartão.",
@@ -95,7 +95,7 @@ export function createFinanceMcpServer(api: WebApiClient) {
     return api.request(`v1/reports/monthly-series?from=${from}&to=${to}`, monthlySeriesSchema);
   }));
   server.registerTool("get_statements", {
-    description: "Consulta faturas no período e, opcionalmente, pendências antigas.", inputSchema: pendingPeriodSchema.shape,
+    description: "Consulta faturas no período e, opcionalmente, pendências antigas. Use remainingMinor para o valor a pagar quando positivo. billedMinor já inclui openingDebtMinor e os itens da fatura.", inputSchema: pendingPeriodSchema.shape,
   }, input => apiToolResult(() => {
     const { from, to } = validatedPeriod(input);
     const { includePending } = pendingPeriodSchema.parse(input);
@@ -125,7 +125,7 @@ export function createFinanceMcpServer(api: WebApiClient) {
     ["create_income", "Registra uma receita validada pela API financeira.", "transactions/income", createIncomeSchema, persistedTransactionSchema],
     ["create_expense", "Registra uma despesa validada pela API financeira.", "transactions/expense", createExpenseSchema, persistedTransactionSchema],
     ["create_transfer", "Registra uma transferência entre contas validada pela API financeira.", "transactions/transfer", createTransferSchema, persistedTransactionSchema],
-    ["create_credit_purchase", "Registra compra no cartão com total e quantidade de parcelas.", "transactions/credit-purchase", createCreditPurchaseSchema, purchaseDataSchema],
+    ["create_credit_purchase", "Registra compra no cartão com total positivo em centavos e quantidade de parcelas. A entrada no saldo do cartão é negativa; os itens da fatura são cobranças positivas.", "transactions/credit-purchase", createCreditPurchaseSchema, purchaseDataSchema],
     ["create_cashback", "Registra cashback validado pela API financeira.", "transactions/cashback", createCashbackSchema, persistedTransactionSchema],
     ["create_refund", "Registra estorno vinculado à transação original.", "transactions/refund", createRefundSchema, persistedTransactionSchema],
   ] as const;

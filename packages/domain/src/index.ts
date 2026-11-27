@@ -443,12 +443,14 @@ export class FinanceService {
 
   async listInstitutions(): Promise<Institution[]> { return this.repository.transaction(tx => tx.institutions.list()); }
 
-  async listAccounts(through?: string): Promise<Array<Account & { balanceMinor: Minor; availableCreditMinor?: Minor | null }>> {
+  async listAccounts(through?: string): Promise<Array<Account & { balanceMinor: Minor; availableCreditMinor?: Minor | null; hasUnallocatedOpeningDebt?: boolean }>> {
     return this.repository.transaction(async tx => Promise.all((await tx.accounts.list()).map(async account => {
       const result = { ...account, balanceMinor: await this.balanceAt(tx, account, through) };
       if (account.type !== "credit_card") return result;
       const settings = await tx.cards.getSettings(account.id);
-      return { ...result, availableCreditMinor: settings?.creditLimitMinor === null || !settings ? null : settings.creditLimitMinor + result.balanceMinor };
+      const hasUnallocatedOpeningDebt = !account.isArchived && account.openingBalanceMinor < 0n
+        && !(await tx.statements.list(account.id)).some(statement => statement.openingDebtMinor != null);
+      return { ...result, hasUnallocatedOpeningDebt, availableCreditMinor: settings?.creditLimitMinor === null || !settings ? null : settings.creditLimitMinor + result.balanceMinor };
     })));
   }
 

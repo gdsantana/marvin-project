@@ -731,3 +731,8 @@ o valor ainda pendente a uma fatura aberta. O vínculo não cria transação,
 movimentação ou despesa. Pagamentos reduzem o saldo a pagar da fatura e, por
 transferência, o passivo do cartão. Corrigir o saldo inicial não reescreve o
 vínculo. Ver ADR 0017.
+
+O total faturado usa `opening_debt_minor + SUM(card_statement_items.amount_minor)`,
+com dívida ausente tratada como zero. Uma compra de R$ 50 em um cartão com
+saldo inicial de −R$ 100 gera saldo patrimonial de −R$ 150 e cobrança de R$ 150
+quando a compra e a dívida de abertura pertencem ao mesmo ciclo.

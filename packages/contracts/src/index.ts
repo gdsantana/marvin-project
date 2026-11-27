@@ -114,7 +114,11 @@ export const payStatementSchema = transactionMetadataSchema.extend({ statementId
 export const reportQuerySchema = z.object({ from: dateSchema, to: dateSchema, currency: currencySchema.optional() }).refine(value => value.from <= value.to, { path: ["to"], message: "A data final deve ser igual ou posterior à inicial" });
 export const idempotentRequestSchema = z.object({ idempotencyKey: idempotencyKeySchema });
 
-export const accountWithBalanceSchema = accountSchema.extend({ balanceMinor: derivedMinorAmountSchema, availableCreditMinor: derivedMinorAmountSchema.nullable().optional() });
+export const accountWithBalanceSchema = accountSchema.extend({
+  balanceMinor: derivedMinorAmountSchema,
+  availableCreditMinor: derivedMinorAmountSchema.nullable().optional(),
+  hasUnallocatedOpeningDebt: z.boolean().optional(),
+});
 export const institutionResponseSchema = institutionSchema;
 export const accountResponseSchema = accountWithBalanceSchema;
 export const categoryResponseSchema = categorySchema;

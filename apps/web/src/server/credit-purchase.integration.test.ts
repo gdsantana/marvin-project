@@ -38,21 +38,31 @@ test("credit purchase API persists installments and protects paid statement cycl
     const categoryId = await service.createCategory({ name: "Home", type: "expense", parentId: null }, "credit-api-category");
     const secondCategoryId = await service.createCategory({ name: "Utilities", type: "expense", parentId: null }, "credit-api-second-category");
     const checkingAccountId = await service.createAccount({ name: "Checking", type: "checking", currency: "BRL", openingBalanceMinor: 50000n, openingDate: "2026-01-01", institutionId }, "credit-api-checking");
-    const cardAccountId = await service.createAccount({
-      name: "Credit card", type: "credit_card", currency: "BRL", openingBalanceMinor: -10000n,
-      openingDate: "2026-10-20", institutionId,
-      cardSettings: { creditLimitMinor: 500000n, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" },
-    }, "credit-api-card");
-
-    const response = await POST(new Request("http://localhost/api/v1/transactions/credit-purchase", {
+    const post = (path: string, key: string, payload: unknown) => POST(new Request(`http://localhost/api/v1/${path}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}`, "content-type": "application/json", "idempotency-key": "credit-api-purchase" },
-      body: JSON.stringify({
-        occurredOn: "2026-10-25", description: "Three installments", source: "manual",
-        cardAccountId, totalAmountMinor: "100000", installmentCount: 3,
-        allocations: [{ categoryId, amountMinor: "70000" }, { categoryId: secondCategoryId, amountMinor: "30000" }],
-      }),
-    }), { params: Promise.resolve({ path: ["transactions", "credit-purchase"] }) });
+      headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}`, "content-type": "application/json", "idempotency-key": key },
+      body: JSON.stringify(payload),
+    }), { params: Promise.resolve({ path: path.split("/") }) });
+    const readAccounts = async () => {
+      const response = await GET(new Request("http://localhost/api/v1/accounts", {
+        headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}` },
+      }), { params: Promise.resolve({ path: ["accounts"] }) });
+      assert.equal(response.status, 200);
+      return (await response.json()).data as Array<{ id: string; balanceMinor: string; hasUnallocatedOpeningDebt?: boolean }>;
+    };
+    const cardResponse = await post("accounts", "credit-api-card", {
+      name: "Credit card", type: "credit_card", currency: "BRL", openingBalanceMinor: "-10000",
+      openingDate: "2026-10-20", institutionId,
+      cardSettings: { creditLimitMinor: "500000", closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" },
+    });
+    assert.equal(cardResponse.status, 201);
+    const cardAccountId = (await cardResponse.json()).data.id as string;
+
+    const response = await post("transactions/credit-purchase", "credit-api-purchase", {
+      occurredOn: "2026-10-25", description: "Three installments", source: "hermes",
+      cardAccountId, totalAmountMinor: "100000", installmentCount: 3,
+      allocations: [{ categoryId, amountMinor: "70000" }, { categoryId: secondCategoryId, amountMinor: "30000" }],
+    });
     const body = await response.json();
     assert.equal(response.status, 201, JSON.stringify(body));
     assert.equal(body.ok, true);
@@ -60,6 +70,16 @@ test("credit purchase API persists installments and protects paid statement cycl
     assert.equal(body.data.value.transaction.entries.find((entry: { accountId: string }) => entry.accountId === cardAccountId)?.amountMinor, "-100000");
 
     const statementId = body.data.value.items[0].statementId as string;
+    const purchase = { occurredOn: "2026-11-01", description: "Single charge", source: "manual", cardAccountId, totalAmountMinor: "2500", installmentCount: 1, allocations: [{ categoryId, amountMinor: "2500" }] };
+    const manual = await post("transactions/credit-purchase", "credit-api-manual", purchase);
+    assert.equal(manual.status, 201);
+    const manualResult = (await manual.json()).data.value;
+    assert.equal(manualResult.transaction.entries[0].amountMinor, "-2500");
+    assert.equal(manualResult.items[0].amountMinor, "2500");
+    assert.equal(manualResult.items[0].statementId, statementId);
+    assert.equal((await (await post("transactions/credit-purchase", "credit-api-manual", purchase)).json()).data.replayed, true);
+    assert.equal((await post("transactions/credit-purchase", "credit-api-invalid-sign", { ...purchase, totalAmountMinor: "-2500" })).status, 400);
+
     const statements = await GET(new Request("http://localhost/api/v1/statements?from=2026-11-01&to=2026-12-31", {
       headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}` },
     }), { params: Promise.resolve({ path: ["statements"] }) });
@@ -67,23 +87,28 @@ test("credit purchase API persists installments and protects paid statement cycl
     const { data: [november, december] } = await statements.json();
     assert.equal(november.id, statementId);
     assert.equal(november.openingDebtMinor, "10000");
-    assert.equal(november.billedMinor, "43333");
+    assert.equal(november.status, "open");
+    assert.equal(november.billedMinor, "45833");
+    assert.equal(november.remainingMinor, "45833");
     assert.equal(december.billedMinor, "33333");
-    assert.equal(await service.accountBalance(cardAccountId), -110000n);
+    const card = (await readAccounts()).find(account => account.id === cardAccountId);
+    assert.equal(card?.balanceMinor, "-112500");
+    assert.equal(card?.hasUnallocatedOpeningDebt, false);
     const closeResponse = await POST(new Request("http://localhost/api/v1/statements/close", {
       method: "POST", headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}`, "content-type": "application/json", "idempotency-key": "credit-api-close" },
       body: JSON.stringify({ statementId }),
     }), { params: Promise.resolve({ path: ["statements", "close"] }) });
     assert.equal(closeResponse.status, 200);
+    assert.equal((await service.statementDetail(statementId)).remainingMinor, 45833n);
     const paymentResponse = await POST(new Request("http://localhost/api/v1/statements/payment", {
       method: "POST", headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}`, "content-type": "application/json", "idempotency-key": "credit-api-payment" },
       body: JSON.stringify({ occurredOn: "2026-11-28", description: "Partially pay November statement", source: "manual", statementId, fromAccountId: checkingAccountId, amountMinor: "40000" }),
     }), { params: Promise.resolve({ path: ["statements", "payment"] }) });
     assert.equal(paymentResponse.status, 201);
-    assert.equal((await service.statementDetail(statementId)).remainingMinor, 3333n);
-    assert.equal(await service.accountBalance(cardAccountId), -70000n);
-    const { payment } = (await service.payStatement({ occurredOn: "2026-11-28", description: "Pay the remainder", source: "manual", reviewStatus: "confirmed", statementId, fromAccountId: checkingAccountId, amountMinor: "3333" }, "credit-api-pay-remainder")).value;
-    assert.equal(payment.amountMinor, 3333n);
+    assert.equal((await service.statementDetail(statementId)).remainingMinor, 5833n);
+    assert.equal(await service.accountBalance(cardAccountId), -72500n);
+    const { payment } = (await service.payStatement({ occurredOn: "2026-11-28", description: "Pay the remainder", source: "manual", reviewStatus: "confirmed", statementId, fromAccountId: checkingAccountId, amountMinor: "5833" }, "credit-api-pay-remainder")).value;
+    assert.equal(payment.amountMinor, 5833n);
     assert.equal((await service.statementDetail(statementId)).status, "paid");
     const closedCyclePurchase = await POST(new Request("http://localhost/api/v1/transactions/credit-purchase", {
       method: "POST", headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}`, "content-type": "application/json", "idempotency-key": "credit-api-closed-cycle-purchase" },
@@ -126,6 +151,9 @@ test("credit purchase API persists installments and protects paid statement cycl
     await service.correctOpeningBalance({ accountId: legacyCardId, expectedOpeningBalanceMinor: "0", openingBalanceMinor: "-80000", reason: "Simulate a legacy opening balance" }, "legacy-balance");
     const legacyStatement = await service.createStatement({ cardAccountId: legacyCardId, cycleStartOn: "2026-10-20", closingOn: "2026-11-20", dueOn: "2026-11-28" });
     const otherLegacyStatement = await service.createStatement({ cardAccountId: legacyCardId, cycleStartOn: "2026-11-20", closingOn: "2026-12-20", dueOn: "2026-12-28" });
+    assert.equal((await post("transactions/credit-purchase", "legacy-purchase", { ...purchase, cardAccountId: legacyCardId })).status, 201);
+    assert.equal((await service.statementDetail(legacyStatement.id)).remainingMinor, 2500n);
+    assert.equal((await readAccounts()).find(account => account.id === legacyCardId)?.hasUnallocatedOpeningDebt, true);
     const allocate = (key: string, statementId: string) => POST(new Request("http://localhost/api/v1/statements/opening-debt", {
       method: "POST", headers: { authorization: `Bearer ${process.env.MCP_API_TOKEN}`, "content-type": "application/json", "idempotency-key": key },
       body: JSON.stringify({ cardAccountId: legacyCardId, statementId, amountMinor: "50000", confirmsOutstandingDebt: true }),
@@ -135,9 +163,11 @@ test("credit purchase API persists installments and protects paid statement cycl
     assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
     const winner = results.findIndex(result => result.status === 200);
     assert.equal((await allocate(`legacy-allocation-${winner}`, candidates[winner])).status, 200);
-    assert.equal((await service.statementDetail(candidates[winner])).remainingMinor, 50000n);
-    assert.equal((await service.statementDetail(candidates[1 - winner])).remainingMinor, 0n);
-    assert.equal(await service.accountBalance(legacyCardId), -80000n);
+    assert.equal((await service.statementDetail(legacyStatement.id)).remainingMinor, winner === 0 ? 52500n : 2500n);
+    assert.equal((await service.statementDetail(otherLegacyStatement.id)).remainingMinor, winner === 1 ? 50000n : 0n);
+    const legacyCard = (await readAccounts()).find(account => account.id === legacyCardId);
+    assert.equal(legacyCard?.balanceMinor, "-82500");
+    assert.equal(legacyCard?.hasUnallocatedOpeningDebt, false);
   } finally {
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDatabaseUrl;

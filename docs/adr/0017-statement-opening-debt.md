@@ -19,3 +19,8 @@ limita o valor à dívida de abertura e permite apenas um vínculo por cartão.
 Não há atualização automática de cartões existentes. Correções de saldo
 continuam sem reescrever faturas (ADR 0015); ajustes mensais continuam
 reservados a cobranças ainda não registradas no passivo (ADR 0014).
+
+A consulta de contas sinaliza cartões ativos com saldo inicial negativo e
+sem vínculo, considerando todo o histórico de faturas. Essa indicação abre
+o fluxo de confirmação existente na Visão geral e em Faturas e fica disponível
+ao Hermes em `get_accounts`.

@@ -72,6 +72,8 @@ Lista `id`, `name` e `isArchived`; não retorna credenciais bancárias.
 
 Lista nome, instituição, tipo, moeda, saldo inicial, data-base, status de arquivamento e `balanceMinor` derivado pelo domínio. Para cartão, também inclui `availableCreditMinor` (string ou `null`, quando não existe limite configurado); saldo usa a convenção de passivo assinado.
 
+`hasUnallocatedOpeningDebt` sinaliza um cartão ativo com saldo inicial negativo sem vínculo em qualquer fatura, inclusive fora do período exibido. Confirme o valor ainda pendente antes de vinculá-lo.
+
 ### `GET /v1/categories`
 
 Lista nome, tipo, categoria superior e status de arquivamento.
@@ -85,6 +87,11 @@ Consulta o intervalo inclusivo por data econômica e retorna `id`, tipo, data ec
 `openingDebtMinor` identifica a dívida de abertura já incluída em `billedMinor`;
 é `null` quando a fatura não tem esse vínculo. O valor não aparece em `items`,
 pois não tem transação de origem.
+
+As compras geram entradas negativas no saldo do cartão e itens positivos na
+fatura. O total da fatura soma a dívida de abertura vinculada aos itens do
+ciclo, incluindo créditos com sinal negativo. `remainingMinor` é o total
+menos os pagamentos.
 
 Lista faturas cujo vencimento está no intervalo inclusivo: cartão e moeda, datas do ciclo, status, itens, pagamentos, total faturado, pago e saldo restante. Parcelas projetadas não são novas movimentações de conta.
 

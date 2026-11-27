@@ -1,7 +1,7 @@
 import type { AccountWithBalance, CategoryResponse, InstitutionResponse, MonthlySummary, StatementDetail, TransactionResponse } from "@finance/contracts";
 export type Section = "settings" | "overview" | "new" | "accounts" | "cards" | "entries" | "statements" | "reports";
 export type Action = "institution" | "account" | "correctOpeningBalance" | "allocateOpeningDebt" | "configureCard" | "category" | "income" | "expense" | "transfer" | "purchase" | "cashback" | "refund" | "payment" | "statementAdjustment" | "close" | "forecast" | "realizeForecast" | "cancelForecast" | "correct" | "reverse";
-export type AccountOption = Pick<AccountWithBalance, "id" | "name" | "type" | "currency" | "balanceMinor"> & Partial<Pick<AccountWithBalance, "availableCreditMinor" | "openingBalanceMinor" | "isArchived">>;
+export type AccountOption = Pick<AccountWithBalance, "id" | "name" | "type" | "currency" | "balanceMinor"> & Partial<Pick<AccountWithBalance, "availableCreditMinor" | "openingBalanceMinor" | "isArchived" | "hasUnallocatedOpeningDebt">>;
 export type CategoryOption = Pick<CategoryResponse, "id" | "name" | "type" | "isArchived"> & Partial<Pick<CategoryResponse, "parentId">>;
 export type TransactionOption = Pick<TransactionResponse, "id" | "description" | "kind" | "occurredOn"> & Partial<Omit<TransactionResponse, "id" | "description" | "kind" | "occurredOn">>;
 export type ExpenseForecastOption = import("@finance/contracts").CreateExpenseForecastInput & { id: string; currency: string; status: "projected" | "realized" | "cancelled"; realizedTransactionId: string | null; createdAt: string };

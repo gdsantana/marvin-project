@@ -38,6 +38,11 @@ Moeda suportada na criação de contas é BRL. `get_transactions` pode incluir `
 
 - `create_institution`, `create_account`, `create_category`.
 - `allocate_opening_debt`: vincula a dívida de abertura ainda pendente de um cartão existente a uma fatura aberta. Exige confirmação do usuário e encaminha `POST /api/v1/statements/opening-debt`.
+
+Em `get_accounts`, `hasUnallocatedOpeningDebt` indica que a dívida inicial do
+cartão ainda está sem vínculo. Confirme o valor pendente com o usuário. Em
+`get_statements`, `billedMinor` já inclui a dívida vinculada e `remainingMinor`
+positivo é o valor a pagar.
 - `create_income`, `create_expense`, `create_transfer`, `create_credit_purchase`, `create_cashback`, `create_refund`.
 - `pay_statement`, `close_statement`.
 - `configure_card`: recebe as configurações completas do cartão e `idempotencyKey`; alterações são validadas pela API e preservam as regras de ciclo existentes.
