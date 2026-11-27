@@ -9,7 +9,7 @@ import { GET, POST } from "../app/api/v1/[...path]/route";
 
 const databaseUrl = process.env.DATABASE_URL_TEST;
 
-test("credit purchase API persists installments and protects paid statement cycles", { skip: !databaseUrl }, async () => {
+test("credit purchase API persists installments and protects paid statement cycles", { skip: !databaseUrl }, async t => {
   const adminPool = createDatabase(databaseUrl!).pool;
   const schemaName = `marvin_credit_api_${randomUUID().replaceAll("-", "")}`;
   await adminPool.query(`CREATE SCHEMA "${schemaName}"`);
@@ -168,6 +168,50 @@ test("credit purchase API persists installments and protects paid statement cycl
     const legacyCard = (await readAccounts()).find(account => account.id === legacyCardId);
     assert.equal(legacyCard?.balanceMinor, "-82500");
     assert.equal(legacyCard?.hasUnallocatedOpeningDebt, false);
+
+    const correctionCardId = await service.createAccount({
+      name: "Card for opening-debt correction", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId,
+      cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" },
+    }, "correction-card");
+    await service.correctOpeningBalance({ accountId: correctionCardId, expectedOpeningBalanceMinor: "0", openingBalanceMinor: "-80000", reason: "Simulate a legacy opening balance" }, "correction-card-balance");
+    const earlierPurchase = await post("transactions/credit-purchase", "correction-card-purchase", { ...purchase, cardAccountId: correctionCardId, totalAmountMinor: "64992", allocations: [{ categoryId, amountMinor: "64992" }] });
+    assert.equal(earlierPurchase.status, 201);
+    const earlierId = (await earlierPurchase.json()).data.value.items[0].statementId as string;
+    const later = await service.createStatement({ cardAccountId: correctionCardId, cycleStartOn: "2026-11-20", closingOn: "2026-12-20", dueOn: "2026-12-28" });
+    assert.equal((await post("statements/opening-debt", "misplaced-opening-debt", {
+      cardAccountId: correctionCardId, statementId: later.id, amountMinor: "80000", confirmsOutstandingDebt: true,
+    })).status, 200);
+    const move = { cardAccountId: correctionCardId, sourceStatementId: later.id, statementId: earlierId, amountMinor: "80000", confirmsOutstandingDebt: true };
+    assert.equal((await post("statements/opening-debt", "wrong-debt-amount", { ...move, amountMinor: "1" })).status, 409);
+    assert.equal((await service.statementDetail(later.id)).billedMinor, 80000n);
+    assert.equal((await post("statements/opening-debt", "move-opening-debt", move)).status, 200);
+    assert.equal((await post("statements/opening-debt", "move-opening-debt", move)).status, 200);
+    assert.equal((await service.statementDetail(earlierId)).billedMinor, 144992n);
+    assert.equal((await service.statementDetail(later.id)).openingDebtMinor, null);
+    assert.equal(await service.accountBalance(correctionCardId), -144992n);
+    assert.ok(!(await service.statementForecast("2026-12-01", "2026-12-31", true)).BRL!.some(row => row.statementId === later.id));
+    assert.equal((await post("transactions/credit-purchase", "correction-card-next-purchase", {
+      ...purchase, cardAccountId: correctionCardId, occurredOn: "2026-12-01",
+    })).status, 201);
+    assert.equal((await service.statementForecast("2026-12-01", "2026-12-31")).BRL!.find(row => row.statementId === later.id)?.billedMinor, "2500");
+
+    const defaultCardId = await service.createAccount({
+      name: "Card for automatic selection", type: "credit_card", currency: "BRL", openingBalanceMinor: 0n, openingDate: "2026-10-01", institutionId,
+      cardSettings: { creditLimitMinor: null, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" },
+    }, "default-selection-card");
+    await service.correctOpeningBalance({ accountId: defaultCardId, expectedOpeningBalanceMinor: "0", openingBalanceMinor: "-80000", reason: "Simulate a legacy opening balance" }, "default-selection-balance");
+    const defaultPurchase = await post("transactions/credit-purchase", "default-selection-purchase", { ...purchase, cardAccountId: defaultCardId });
+    assert.equal(defaultPurchase.status, 201);
+    const defaultId = (await defaultPurchase.json()).data.value.items[0].statementId as string;
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-27T12:00:00Z") });
+    try {
+      const linked = await post("statements/opening-debt", "default-opening-debt", {
+        cardAccountId: defaultCardId, amountMinor: "80000", confirmsOutstandingDebt: true,
+      });
+      assert.equal(linked.status, 200);
+      assert.equal((await linked.json()).data.id, defaultId);
+      assert.equal((await service.statementDetail(defaultId)).billedMinor, 82500n);
+    } finally { t.mock.timers.reset(); }
   } finally {
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDatabaseUrl;

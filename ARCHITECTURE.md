@@ -108,6 +108,8 @@ Para desenvolvimento local, `pnpm db:up` aplica `infra/compose.dev.yml`: preserv
 
 O pacote DB também fornece `pnpm db:seed` e `pnpm db:clean`, exclusivos para PostgreSQL local de desenvolvimento com confirmação `SEED_DEVELOPMENT=true` e bloqueio em produção. O seed primeiro trunca as tabelas da aplicação, preservando schema e migrations, e cria três meses relativos à data de São Paulo usando `FinanceService`: compras, receitas, despesas e parcelas, com faturas anteriores pagas e atuais abertas em modo manual. A limpeza também pode ser executada separadamente. A carga é atômica por operação, não globalmente; detalhes e efeitos destrutivos estão no README. Essa ferramenta de desenvolvimento não altera as regras de histórico da API.
 
+O seed exercita a correção de saldo inicial para deixar dívida pendente de vínculo (modelo de dados §§20–21) e registra um ajuste em uma fatura aberta pelo serviço financeiro existente (modelo de dados §19).
+
 ## 8. Segurança e dados
 
 A [auditoria das comunicações de 07/11/2026](docs/security-audit.md) registra o modelo de ameaças Discord/Hermes → MCP → Web → PostgreSQL, evidências, recomendações priorizadas e limites da revisão. É uma análise parcial: deploy real não inspecionado, um candidato de restauração de sessões pendente e uma lacuna de cobertura das políticas específicas de build. Não representa certificação do homelab nem alteração da arquitetura.
@@ -157,7 +159,8 @@ e o PostgreSQL incluem o valor na cobrança e no limite de pagamento. Para
 cartões existentes, Web e MCP usam a mesma vinculação explícita a uma fatura
 aberta. A consulta de contas identifica a dívida de abertura sem vínculo em
 todo o histórico. Visão geral e Faturas sinalizam essa pendência e oferecem o
-formulário de vinculação. Ver [ADR 0017](docs/adr/0017-statement-opening-debt.md).
+formulário de vinculação. O domínio permite mover um vínculo isolado entre
+faturas abertas sob as regras do [ADR 0017](docs/adr/0017-statement-opening-debt.md).
 
 Complementa §§3–6: contrato `correctOpeningBalanceSchema`, serviço
 `FinanceService.correctOpeningBalance`, endpoint POST `accounts/opening-balance`

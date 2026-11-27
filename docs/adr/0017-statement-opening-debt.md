@@ -14,7 +14,8 @@ pagamento consideram esse valor. Pagamentos reduzem o restante na mesma fatura;
 o saldo inicial continua sendo a base do saldo patrimonial.
 
 Cartões existentes exigem confirmação explícita do valor ainda pendente e da
-fatura aberta, com opção de usar o ciclo vigente no fuso do cartão. A API
+fatura aberta. A seleção automática usa a fatura aberta com lançamentos mais
+antiga cujo ciclo já começou. Sem ela, usa o ciclo vigente no fuso do cartão. A API
 limita o valor à dívida de abertura e permite apenas um vínculo por cartão.
 Não há atualização automática de cartões existentes. Correções de saldo
 continuam sem reescrever faturas (ADR 0015); ajustes mensais continuam
@@ -29,3 +30,13 @@ Quando nenhum cartão está elegível, o modal indica o saldo de abertura de
 cartões sem dívida cadastrada e identifica cartões com dívida já vinculada.
 O modal oferece acesso à correção de saldo inicial quando há cartão ativo
 com saldo de abertura zero ou positivo.
+
+No modal de vínculo, o botão **Usar valor inicial inteiro** preenche o valor
+absoluto do saldo inicial do cartão. O campo aceita edição e a confirmação é
+necessária para vincular o valor preenchido.
+
+É possível mover um vínculo isolado para uma fatura aberta anterior do mesmo
+cartão que já tenha lançamentos. A fatura de origem deve estar aberta e sem
+itens ou pagamentos. A operação move o valor integral em uma única transação.
+O ciclo de origem fica disponível para receber compras futuras e só volta a
+aparecer na listagem quando tiver movimento.

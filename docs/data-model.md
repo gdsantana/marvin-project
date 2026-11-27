@@ -732,6 +732,10 @@ movimentação ou despesa. Pagamentos reduzem o saldo a pagar da fatura e, por
 transferência, o passivo do cartão. Corrigir o saldo inicial não reescreve o
 vínculo. Ver ADR 0017.
 
+Um vínculo isolado em fatura aberta sem itens ou pagamentos pode ser movido,
+mediante confirmação, para uma fatura aberta anterior com lançamentos do
+mesmo cartão. O valor deixa a origem e entra no destino na mesma transação.
+
 O total faturado usa `opening_debt_minor + SUM(card_statement_items.amount_minor)`,
 com dívida ausente tratada como zero. Uma compra de R$ 50 em um cartão com
 saldo inicial de −R$ 100 gera saldo patrimonial de −R$ 150 e cobrança de R$ 150

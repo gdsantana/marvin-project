@@ -37,7 +37,7 @@ Todas as ferramentas abaixo exigem `idempotencyKey`; o MCP o envia como `Idempot
 Moeda suportada na criação de contas é BRL. `get_transactions` pode incluir `canReverse`, calculado pela API a partir do histórico completo. `get_statements` pode incluir `creditBalanceMinor`; o `status` derivado também vem da API. O MCP não implementa regras para esses campos.
 
 - `create_institution`, `create_account`, `create_category`.
-- `allocate_opening_debt`: vincula a dívida de abertura ainda pendente de um cartão existente a uma fatura aberta. Exige confirmação do usuário e encaminha `POST /api/v1/statements/opening-debt`.
+- `allocate_opening_debt`: vincula a dívida de abertura pendente a uma fatura aberta. Com `sourceStatementId` e `statementId`, pode mover um vínculo isolado para a fatura aberta anterior escolhida pelo usuário. Exige confirmação do usuário e encaminha `POST /api/v1/statements/opening-debt`.
 
 Em `get_accounts`, `hasUnallocatedOpeningDebt` indica que a dívida inicial do
 cartão ainda está sem vínculo. Confirme o valor pendente com o usuário. Em

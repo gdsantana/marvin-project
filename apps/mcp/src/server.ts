@@ -143,7 +143,7 @@ export function createFinanceMcpServer(api: WebApiClient) {
     ["correct_opening_balance", "Corrige o saldo inicial da conta existente. Informe o saldo anterior exato, o novo saldo assinado e o motivo confirmado pelo usuário. Dívida de cartão é negativa. Altera saldos históricos desde a abertura, sem criar despesa nem itens de fatura.", "accounts/opening-balance", correctOpeningBalanceSchema],
     ["create_institution", "Cria uma instituição financeira.", "institutions", createInstitutionSchema],
     ["create_account", "Cria uma conta financeira. Para cartões, informe no saldo inicial negativo somente a dívida da fatura do ciclo de abertura, sem parcelas futuras.", "accounts", createAccountSchema],
-    ["allocate_opening_debt", "Vincula uma única vez a parte ainda pendente da dívida de abertura de um cartão existente. Confirme o valor com o usuário e selecione uma fatura aberta ou use o ciclo vigente sem statementId. Não cria despesa nem altera o saldo do cartão.", "statements/opening-debt", allocateOpeningDebtSchema],
+    ["allocate_opening_debt", "Vincula dívida de abertura pendente. Confirme o valor e a fatura com o usuário. Sem statementId, a API prioriza a fatura aberta com lançamentos mais antiga cujo ciclo já começou. Para mover um vínculo isolado entre faturas abertas, confirme o valor integral, sourceStatementId e o statementId anterior.", "statements/opening-debt", allocateOpeningDebtSchema],
     ["create_category", "Cria uma categoria de receita ou despesa.", "categories", createCategorySchema],
   ] as const;
   for (const [name, description, path, schema] of setupWrites) {

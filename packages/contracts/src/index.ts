@@ -46,7 +46,8 @@ export const correctOpeningBalanceSchema = z.object({
 export type CorrectOpeningBalanceInput = z.infer<typeof correctOpeningBalanceSchema>;
 const openingDebtAmountSchema = z.string().regex(positiveMinorAmountPattern).refine(value => !positiveMinorAmountPattern.test(value) || BigInt(value) <= -MIN_BIGINT, "Valor excede o máximo da dívida de abertura");
 export const allocateOpeningDebtSchema = z.object({
-  cardAccountId: idSchema, statementId: idSchema.optional(), amountMinor: openingDebtAmountSchema, confirmsOutstandingDebt: z.literal(true),
+  cardAccountId: idSchema, statementId: idSchema.optional(), sourceStatementId: idSchema.optional(),
+  amountMinor: openingDebtAmountSchema, confirmsOutstandingDebt: z.literal(true),
 }).strict();
 export type AllocateOpeningDebtInput = z.infer<typeof allocateOpeningDebtSchema>;
 export const creditCardSettingsSchema = creditCardSettingsInputSchema.extend({ accountId: idSchema });

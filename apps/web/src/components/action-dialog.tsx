@@ -9,7 +9,7 @@ import { Field, FieldError, FieldGroup, FieldLabel, FieldSet, FieldLegend } from
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { formatDate, formatMinor, majorInputFromMinor, todayCivil } from "./finance-format";
-import { actionLabels, primaryActions, settingsActions, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type References } from "./workspace-types";
+import { actionLabels, openingDebtCards, openingDebtMoveTargets, primaryActions, settingsActions, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type References } from "./workspace-types";
 
 import { CategoryPicker } from "./category-picker";
 import { categoryPath } from "./category-path";
@@ -23,9 +23,13 @@ function FormField({ label, name, type = "text", required = true, options, place
   const controlled = value === undefined ? {} : { value };
   const initial = value === undefined && defaultValue !== undefined ? { defaultValue } : {};
   const id = useId();
-  const [error, setError] = useState("");
+  const [invalid, setInvalid] = useState<{ value: string; message: string } | null>(null);
+  const error = invalid && (value === undefined || value === invalid.value) ? invalid.message : "";
   const validate = (control: HTMLInputElement | HTMLSelectElement) => {
-    setError(control.validity.valid ? "" : control.validity.valueMissing ? "Preencha este campo." : "Confira o valor informado.");
+    setInvalid(control.validity.valid ? null : {
+      value: control.value,
+      message: control.validity.valueMissing ? "Preencha este campo." : "Confira o valor informado.",
+    });
   };
   const props = {
     id, name, required, disabled, "aria-invalid": Boolean(error), "aria-describedby": error ? `${id}-error` : undefined,
@@ -212,7 +216,7 @@ function OpeningDebtUnavailable({ accounts, onCorrectBalance }: { accounts: Acco
   if (cards.length === 0) return <p className="text-sm text-muted-foreground">Cadastre um cartão em Configurações para acompanhar suas faturas.</p>;
   const hasNonnegativeBalance = cards.some(card => card.openingBalanceMinor !== undefined && BigInt(card.openingBalanceMinor) >= 0n);
   return <div className="grid gap-3 text-sm">
-    <p>O vínculo exige um saldo inicial negativo e só pode ser feito uma vez por cartão.</p>
+    <p>Para registrar um vínculo, o cartão precisa ter saldo inicial negativo. Cada cartão pode ter dívida inicial em uma única fatura.</p>
     <ul className="divide-y divide-border">
       {cards.map(card => <li key={card.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 py-2">
         <span className="min-w-0 break-words">{card.name}</span>
@@ -232,17 +236,37 @@ function OpeningDebtUnavailable({ accounts, onCorrectBalance }: { accounts: Acco
 
 function OpeningDebtFields({ references }: { references: References }) {
   const [cardId, setCardId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
   const busy = useContext(PendingContext);
-  const cards = references.accounts.filter(account => account.hasUnallocatedOpeningDebt);
-  const openStatements = references.statements.filter(statement => statement.cardAccountId === cardId && statement.status === "open");
+  const cards = openingDebtCards(references);
+  const card = cards.find(account => account.id === cardId);
+  const openingBalance = BigInt(card?.openingBalanceMinor ?? "0");
+  const fullAmount = openingBalance < 0n ? majorInputFromMinor((-openingBalance).toString()) : "";
+  const source = references.statements.find(statement => statement.cardAccountId === cardId && statement.status === "open"
+    && statement.openingDebtMinor && statement.items?.length === 0);
+  const openStatements = source ? openingDebtMoveTargets(references.statements, source)
+    : references.statements.filter(statement => statement.cardAccountId === cardId && statement.status === "open");
+  function updateAmount(value: string) {
+    setAmount(value);
+    setConfirmed(false);
+  }
   return <>
-    <Alert role="note" className="sm:col-span-2"><AlertDescription>Vincule somente o valor ainda pendente da dívida de abertura. O valor entra uma vez na fatura, sem criar despesa nem alterar o saldo do cartão.</AlertDescription></Alert>
-    <FormField label="Cartão" name="cardAccountId" value={cardId} onChange={event => setCardId(event.target.value)} options={[["", "Selecione um cartão"], ...cards.map(card => [card.id, card.name] as [string, string])]} />
-    <FormField key={cardId} label="Fatura aberta" name="statementId" required={false} options={[["", "Usar ciclo vigente"], ...openStatements.map(statement => [statement.id, `Vence em ${formatDate(statement.dueOn)}`] as [string, string])]} />
-    <FormField label="Valor pendente" name="amountMinor" placeholder="800,00" />
+    <Alert role="note" className="sm:col-span-2"><AlertDescription>{source
+      ? `Mova ${formatMinor(source.openingDebtMinor!, source.currency)} da fatura com vencimento em ${formatDate(source.dueOn)} para uma fatura anterior com lançamentos.`
+      : "Vincule somente o valor ainda pendente da dívida de abertura. O valor entra uma vez na fatura, sem criar despesa nem alterar o saldo do cartão."}</AlertDescription></Alert>
+    <FormField label="Cartão" name="cardAccountId" value={cardId} onChange={event => { setCardId(event.target.value); updateAmount(""); }} options={[["", "Selecione um cartão"], ...cards.map(card => [card.id, card.name] as [string, string])]} />
+    <FormField key={cardId} label="Fatura aberta" name="statementId" required={Boolean(source)} options={[["", source ? "Selecione a fatura de destino" : "Usar fatura aberta com lançamentos"], ...openStatements.map(statement => [statement.id, `Vence em ${formatDate(statement.dueOn)}`] as [string, string])]} />
+    {source ? <>
+      <input type="hidden" name="sourceStatementId" value={source.id} />
+      <input type="hidden" name="amountMinor" value={majorInputFromMinor(source.openingDebtMinor!)} />
+    </> : <div className="grid min-w-0 gap-2 sm:col-span-2">
+      <FormField label="Valor pendente" name="amountMinor" placeholder="800,00" value={amount} onChange={event => updateAmount(event.target.value)} />
+      <Button type="button" variant="outline" className="min-h-11 justify-self-start" disabled={busy || !fullAmount} onClick={() => updateAmount(fullAmount)}>Usar valor inicial inteiro</Button>
+    </div>}
     <Field orientation="horizontal" className="sm:col-span-2">
-      <Input id="confirms-outstanding-debt" name="confirmsOutstandingDebt" type="checkbox" required className="size-5 min-h-5 w-5" disabled={busy} />
-      <FieldLabel htmlFor="confirms-outstanding-debt">Confirmo que o valor ainda está pendente e não consta em outra fatura</FieldLabel>
+      <Input id="confirms-outstanding-debt" name="confirmsOutstandingDebt" type="checkbox" required className="size-5 min-h-5 w-5" disabled={busy} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />
+      <FieldLabel htmlFor="confirms-outstanding-debt">{source ? "Confirmo que a dívida deve somar à fatura de destino" : "Confirmo que o valor ainda está pendente e não consta em outra fatura"}</FieldLabel>
     </Field>
   </>;
 }
@@ -335,7 +359,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
   }, [action, references, selectedTransaction, selectedForecast]);
 
   const typePicker = !selectedTransaction && !selectedForecast && !settingsActions.includes(action) && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy || loading} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
-  const openingDebtUnavailable = action === "allocateOpeningDebt" && !references.accounts.some(account => account.hasUnallocatedOpeningDebt);
+  const openingDebtUnavailable = action === "allocateOpeningDebt" && openingDebtCards(references).length === 0;
   const form = openingDebtUnavailable ? <OpeningDebtUnavailable accounts={references.accounts} onCorrectBalance={() => setAction("correctOpeningBalance")} /> : <>
     <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
     <form ref={formRef} className={`flex flex-col gap-4 ${presentation === "inline" ? "pb-[var(--form-actions-height,6rem)] md:pb-0" : ""}`} onChange={clearPreview} onSubmit={event => {

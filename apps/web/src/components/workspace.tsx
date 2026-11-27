@@ -20,7 +20,7 @@ import { TransactionList } from "./transaction-list";
 import { SpendingBreakdown } from "./spending-breakdown";
 import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
-import { settingsActions, actionLabels, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
+import { settingsActions, actionLabels, openingDebtCards, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
 import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod } from "./finance-format";
 
@@ -358,10 +358,10 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
         {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{currentReport && !reportError.startsWith("Você não tem permissão") && " Os dados exibidos podem estar desatualizados."}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="sr-only">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
         {dataError && !hasData ? null : <>
-          {(section === "overview" || section === "statements") && references.accounts.some(account => account.hasUnallocatedOpeningDebt) &&
+          {(section === "overview" || section === "statements") && openingDebtCards(references).length > 0 &&
             <Alert className="mb-4">
               <AlertDescription className="flex flex-wrap items-center gap-2">
-                <span>Há cartões com dívida inicial fora da fatura. Se houver valor pendente, vincule-o a uma fatura aberta.</span>
+                <span>Confira a dívida inicial dos cartões e vincule o valor pendente à fatura aberta correspondente.</span>
                 <Button className="min-h-11" variant="outline" onClick={() => setForm("allocateOpeningDebt")}>{actionLabels.allocateOpeningDebt}</Button>
               </AlertDescription>
             </Alert>}
