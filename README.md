@@ -64,4 +64,4 @@ A separação técnica do banco está no [ADR 0012](docs/adr/0012-database-runti
 
 ## Licença
 
-O código original está disponível sob a [PolyForm Noncommercial License 1.0.0](LICENSE). Dependências e componentes de terceiros mantêm suas próprias licenças.
+O código original está disponível sob a [licença MIT](LICENSE). Dependências e componentes de terceiros mantêm suas próprias licenças.
