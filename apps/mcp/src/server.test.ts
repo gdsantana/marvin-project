@@ -19,6 +19,10 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
     if (url.pathname === "/api/v1/accounts") return Response.json({ ok: true, data: [{
       id: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54", institutionId: null, name: "Corrente", type: "checking",
       currency: "BRL", openingBalanceMinor: "10000", openingDate: "2026-01-01", isArchived: false, balanceMinor: "10000",
+    }, {
+      id: "66e865b1-4778-4e96-a243-5300a7226f7e", institutionId: null, name: "Cartão", type: "credit_card",
+      currency: "BRL", openingBalanceMinor: "-8000", openingDate: "2026-01-01", isArchived: false, balanceMinor: "-10000",
+      hasUnallocatedOpeningDebt: true,
     }] });
     if (url.pathname === "/api/v1/accounts/opening-balance") return Response.json({ ok: true, data: { id: body.accountId } });
     if (url.pathname === "/api/v1/statements/opening-debt") return Response.json({ ok: true, data: { id: body.statementId } });
@@ -119,7 +123,10 @@ test("Streamable HTTP exposes typed tools and forwards reads/writes to the authe
     assert.deepEqual(requests.at(-1)?.body, allocation);
     const accountResult = await client.callTool({ name: "get_accounts", arguments: {} });
     assert.equal(accountResult.isError, undefined);
-    assert.match((accountResult.content as Array<{ text?: string }>)[0]?.text ?? "", /"balanceMinor":"10000"/);
+    const accounts = JSON.parse((accountResult.content as Array<{ text: string }>)[0]!.text);
+    assert.equal(accounts[0].balanceMinor, "10000");
+    assert.equal(accounts[1].balanceMinor, "-10000");
+    assert.equal(accounts[1].hasUnallocatedOpeningDebt, true);
     const cardSettings = await client.callTool({ name: "get_card_settings", arguments: { accountId: "3b68c5e8-e4b7-43f1-8ce8-e8d16a0cba54" } });
     assert.equal(cardSettings.isError, undefined);
     assert.match((cardSettings.content as Array<{ text?: string }>)[0]?.text ?? "", /"creditLimitMinor":"500000"/);

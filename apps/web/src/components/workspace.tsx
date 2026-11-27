@@ -20,7 +20,7 @@ import { TransactionList } from "./transaction-list";
 import { SpendingBreakdown } from "./spending-breakdown";
 import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
-import { settingsActions, actionLabels, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
+import { settingsActions, actionLabels, openingDebtCards, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
 import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod } from "./finance-format";
 
@@ -358,6 +358,13 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
         {(section === "overview" || section === "reports") && reportError && <Alert variant="destructive" className="mb-5"><AlertDescription>{reportError}{currentReport && !reportError.startsWith("Você não tem permissão") && " Os dados exibidos podem estar desatualizados."}{!reportError.startsWith("Você não tem permissão") && <Button variant="outline" onClick={() => setReportReload(value => value + 1)}>Tentar novamente</Button>}</AlertDescription></Alert>}
         {(section === "overview" || section === "reports") && reportLoading && <p role="status" className="sr-only">{report ? "Atualizando relatório…" : "Carregando relatório…"}</p>}
         {dataError && !hasData ? null : <>
+          {(section === "overview" || section === "statements") && openingDebtCards(references).length > 0 &&
+            <Alert className="mb-4">
+              <AlertDescription className="flex flex-wrap items-center gap-2">
+                <span>Confira a dívida inicial dos cartões e vincule o valor pendente à fatura aberta correspondente.</span>
+                <Button className="min-h-11" variant="outline" onClick={() => setForm("allocateOpeningDebt")}>{actionLabels.allocateOpeningDebt}</Button>
+              </AlertDescription>
+            </Alert>}
           {section === "overview" && <DashboardOverview referencesLoading={referencesLoading} newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
           {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" disabled={referencesLoading} onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
           {section === "accounts" && (accountId ? <div className="grid gap-4">

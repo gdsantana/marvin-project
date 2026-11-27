@@ -10,7 +10,7 @@ export async function seedDevelopment(service: FinanceService, now = new Date())
   const openingDate = monthStart(-2);
   const categories: Record<string, string> = {};
   for (const [type, names] of [
-    ["expense", ["Alimentação", "Mercado", "Transporte", "Lazer", "Esporte", "Saúde", "Moradia", "Educação", "Compras", "Serviços"]],
+    ["expense", ["Alimentação", "Mercado", "Transporte", "Lazer", "Esporte", "Saúde", "Moradia", "Educação", "Compras", "Serviços", "Ajuste de fatura"]],
     ["income", ["Salário", "Rendimentos", "Outras receitas"]],
   ] as const) {
     for (const name of names) categories[name] = await service.createCategory({ name, type, parentId: null }, `dev-seed-v1-category-${type}-${name}`);
@@ -23,6 +23,12 @@ export async function seedDevelopment(service: FinanceService, now = new Date())
     accounts[`${bank}-checking`] = await service.createAccount({ ...common, name: `Conta ${bank}`, type: "checking", openingBalanceMinor: 300000n }, `dev-seed-v1-account-${bank}-checking`);
     accounts[`${bank}-card`] = await service.createAccount({ ...common, name: `Cartão ${bank}`, type: "credit_card", openingBalanceMinor: 0n, cardSettings: { creditLimitMinor: 1000000n, closingDay: 20, dueDay: 28, billingTimezone: "America/Sao_Paulo", billingMode: "manual" } }, `dev-seed-v1-account-${bank}-card`);
   }
+
+  // Reproduce an existing card whose opening debt has yet to be linked to an invoice.
+  await service.correctOpeningBalance({
+    accountId: accounts["Nubank-card"]!, expectedOpeningBalanceMinor: "0", openingBalanceMinor: "-80000",
+    reason: "Dívida de abertura fictícia ainda pendente",
+  }, "dev-seed-v2-opening-debt");
 
   for (const offset of [-2, -1, 0]) {
     const month = monthStart(offset).slice(0, 7);
@@ -57,7 +63,12 @@ export async function seedDevelopment(service: FinanceService, now = new Date())
       await service.createCreditPurchase({ ...metadata, occurredOn: date(day), description, cardAccountId: accounts[account]!, totalAmountMinor, installmentCount: offset === -2 ? installments : 1, allocations: [{ categoryId: categories[category]!, amountMinor: totalAmountMinor }] }, key(name));
     }
 
-    if (offset < 0) {
+    if (offset === 0) {
+      await service.createStatementAdjustment({
+        ...metadata, occurredOn: date(16), description: "Ajuste fictício da fatura Itaú",
+        cardAccountId: accounts["Itaú-card"]!, amountMinor: "30000", confirmsUnrecordedDebt: true,
+      }, key("statement-adjustment"));
+    } else {
       for (const bank of ["Nubank", "Itaú"]) {
         const forecast = await service.statementForecast(`${month}-01`, `${month}-28`);
         for (const statement of forecast.BRL ?? []) {

@@ -62,3 +62,9 @@ Acrescenta a coluna opcional `opening_debt_minor`, com vínculo único por cart�
 e inclui o valor na validação de pagamentos. Diferentemente dos lançamentos em
 `BIGINT`, a coluna usa `numeric(19,0)` para representar inclusive o valor absoluto
 do menor saldo assinado. A migration não vincula nem reescreve faturas existentes.
+
+### Migration 0007 — Correção do vínculo da dívida de abertura
+
+Atualiza o gatilho para liberar um vínculo exclusivamente em fatura aberta
+sem itens ou pagamentos. A API move o valor integral para outro ciclo aberto
+na mesma transação. A migration por si só preserva os vínculos existentes.

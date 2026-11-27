@@ -72,6 +72,8 @@ Lista `id`, `name` e `isArchived`; não retorna credenciais bancárias.
 
 Lista nome, instituição, tipo, moeda, saldo inicial, data-base, status de arquivamento e `balanceMinor` derivado pelo domínio. Para cartão, também inclui `availableCreditMinor` (string ou `null`, quando não existe limite configurado); saldo usa a convenção de passivo assinado.
 
+`hasUnallocatedOpeningDebt` sinaliza um cartão ativo com saldo inicial negativo sem vínculo em qualquer fatura, inclusive fora do período exibido. Confirme o valor ainda pendente antes de vinculá-lo.
+
 ### `GET /v1/categories`
 
 Lista nome, tipo, categoria superior e status de arquivamento.
@@ -86,7 +88,12 @@ Consulta o intervalo inclusivo por data econômica e retorna `id`, tipo, data ec
 é `null` quando a fatura não tem esse vínculo. O valor não aparece em `items`,
 pois não tem transação de origem.
 
-Lista faturas cujo vencimento está no intervalo inclusivo: cartão e moeda, datas do ciclo, status, itens, pagamentos, total faturado, pago e saldo restante. Parcelas projetadas não são novas movimentações de conta.
+As compras geram entradas negativas no saldo do cartão e itens positivos na
+fatura. O total da fatura soma a dívida de abertura vinculada aos itens do
+ciclo, incluindo créditos com sinal negativo. `remainingMinor` é o total
+menos os pagamentos.
+
+Lista faturas com dívida inicial, itens ou pagamentos cujo vencimento está no intervalo inclusivo: cartão e moeda, datas do ciclo, status, itens, pagamentos, total faturado, pago e saldo restante. Parcelas projetadas não são novas movimentações de conta.
 
 ### `GET /v1/cards/settings?accountId=<uuid>`
 
@@ -192,10 +199,16 @@ Schema `payStatementSchema`; `statementId`, `fromAccountId`, `amountMinor` posit
 Vincula uma única vez a parte ainda pendente da dívida de abertura de um cartão
 existente. Envie `cardAccountId`, `amountMinor` como valor positivo em centavos e
 `confirmsOutstandingDebt: true` após confirmar que o valor permanece pendente e
-não está em outra fatura. `statementId` seleciona uma fatura aberta do cartão; se
-omitido, usa ou cria a fatura do ciclo vigente no fuso do cartão. O valor não pode
+não está em outra fatura. `statementId` seleciona uma fatura aberta do cartão. Se
+omitido, usa a fatura aberta com lançamentos mais antiga cujo ciclo já começou.
+Na ausência dela, usa ou cria a fatura do ciclo vigente no fuso do cartão. O valor não pode
 exceder a dívida original cadastrada. Retorna `200` com `{ id }` da fatura e exige
 `Idempotency-Key`. Nenhuma movimentação ou despesa é criada.
+
+Para corrigir um vínculo isolado, envie `sourceStatementId`, o `statementId`
+de uma fatura aberta anterior do mesmo cartão com lançamentos e o mesmo
+`amountMinor` vinculado. A confirmação autoriza mover o valor inteiro da
+fatura de origem, que deve estar aberta e sem itens ou pagamentos.
 
 ### `POST /v1/statements/close`
 

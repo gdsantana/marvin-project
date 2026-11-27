@@ -36,7 +36,14 @@ for (const scenario of scenarios) test(`development seed: ${scenario.today}`, { 
     await seed();
     const assertSeed = async () => {
       const counts = await pool.query("SELECT (SELECT count(*) FROM institutions)::int AS institutions, (SELECT count(*) FROM accounts)::int AS accounts, (SELECT count(*) FROM categories)::int AS categories, (SELECT count(*) FROM transactions)::int AS transactions, (SELECT count(*) FROM installment_plans)::int AS plans, (SELECT count(*) FROM statement_payments)::int AS payments");
-      assert.deepEqual(counts.rows[0], { institutions: 2, accounts: 4, categories: 13, transactions: 34, plans: 12, payments: 4 });
+      assert.deepEqual(counts.rows[0], { institutions: 2, accounts: 4, categories: 14, transactions: 35, plans: 12, payments: 4 });
+      const accounts = await service.listAccounts();
+      const nubank = accounts.find(account => account.name === "Cartão Nubank")!;
+      const itau = accounts.find(account => account.name === "Cartão Itaú")!;
+      assert.equal(nubank.openingBalanceMinor, -80000n);
+      assert.equal(nubank.hasUnallocatedOpeningDebt, true);
+      assert.equal(itau.openingBalanceMinor, 0n);
+      assert.equal(itau.hasUnallocatedOpeningDebt, false);
       const balances = await pool.query("SELECT a.type, a.opening_balance_minor + COALESCE(sum(e.amount_minor), 0) AS balance FROM accounts a LEFT JOIN account_entries e ON e.account_id = a.id GROUP BY a.id");
       assert.ok(balances.rows.every(row => row.type === "checking" ? BigInt(row.balance) > 0n : BigInt(row.balance) < 0n));
       const invalid = await pool.query("SELECT count(*)::int AS count FROM installment_plans p WHERE p.total_amount_minor <> (SELECT sum(i.amount_minor) FROM card_statement_items i WHERE i.installment_plan_id = p.id)");
@@ -53,14 +60,29 @@ for (const scenario of scenarios) test(`development seed: ${scenario.today}`, { 
         const detail = await service.statementDetail(row.id);
         assert.equal(detail.remainingMinor, current ? detail.billedMinor : 0n);
         assert.equal(detail.payments.length, current ? 0 : 1);
+        assert.equal(detail.openingDebtMinor, null);
+        const adjustments = detail.items.filter(item => item.itemType === "adjustment");
+        if (current && detail.cardAccountId === itau.id) {
+          assert.equal(adjustments.length, 1);
+          const adjustment = adjustments[0]!;
+          assert.equal(adjustment.amountMinor, 30000n);
+          assert.equal(adjustment.installmentPlanId, null);
+          const history = await service.transactionHistory(`${row.month}-01`, scenario.today);
+          const transaction = history.find(item => item.id === adjustment.sourceTransactionId)!;
+          assert.equal(transaction.kind, "expense");
+          assert.equal(transaction.entries[0]?.amountMinor, -30000n);
+          assert.equal(transaction.allocations[0]?.categoryName, "Ajuste de fatura");
+          assert.equal(transaction.allocations[0]?.amountMinor, -30000n);
+        } else assert.equal(adjustments.length, 0);
       }
       for (const [index, month] of scenario.months.entries()) {
         const delta = BigInt(index) * 1000n;
+        const adjustment = index === 2 ? 30000n : 0n;
         const report = await service.monthlyReport(`${month}-01`, `${month}-31`);
         assert.deepEqual(report.BRL, {
           incomeMinor: (735000n + 2n * delta).toString(),
-          expenseMinor: (284283n + 8n * delta).toString(),
-          netMinor: (450717n - 6n * delta).toString(),
+          expenseMinor: (284283n + 8n * delta + adjustment).toString(),
+          netMinor: (450717n - 6n * delta - adjustment).toString(),
         });
         const salary = await pool.query("SELECT count(*)::int AS count FROM transactions t JOIN category_allocations a ON a.transaction_id = t.id JOIN categories c ON c.id = a.category_id WHERE c.name = 'Salário' AND to_char(t.occurred_on, 'YYYY-MM') = $1", [month]);
         assert.equal(salary.rows[0].count, 1);
@@ -79,6 +101,17 @@ for (const scenario of scenarios) test(`development seed: ${scenario.today}`, { 
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM __drizzle_migrations")).rows[0].count, 1);
     await seed();
     await assertSeed();
+
+    const nubank = (await service.listAccounts()).find(account => account.name === "Cartão Nubank")!;
+    const month = scenario.months[2];
+    const forecast = await service.statementForecast(`${month}-01`, `${month}-28`);
+    const statements = await Promise.all(forecast.BRL!.map(item => service.statementDetail(item.statementId)));
+    const statement = statements.find(item => item.cardAccountId === nubank.id)!;
+    await service.allocateOpeningDebt({
+      cardAccountId: nubank.id, statementId: statement.id, amountMinor: "80000", confirmsOutstandingDebt: true,
+    }, "test-seed-opening-debt");
+    assert.equal((await service.statementDetail(statement.id)).billedMinor, statement.billedMinor + 80000n);
+    assert.equal(await service.accountBalance(nubank.id), nubank.balanceMinor);
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`);

@@ -46,7 +46,7 @@ export interface TransactionContext {
   readonly statements: {
     get(id: UUID): Promise<Statement | null>; findByClosingDate(cardAccountId: UUID, closingOn: string): Promise<Statement | null>;
     list(cardAccountId: UUID, from?: string, to?: string): Promise<Statement[]>; save(value: Statement): Promise<void>;
-    setOpeningDebt(id: UUID, amount: Minor): Promise<void>;
+    setOpeningDebt(id: UUID, amount: Minor | null): Promise<void>;
     addItems(values: Array<Omit<StatementItem, "id">>): Promise<StatementItem[]>; items(id: UUID): Promise<StatementItem[]>;
   };
   readonly installmentPlans: { save(value: InstallmentPlan): Promise<void>; getByPurchase(id: UUID): Promise<InstallmentPlan | null> };
@@ -159,16 +159,34 @@ export class FinanceService {
       const card = await this.requireAccount(tx, parsed.data.cardAccountId);
       if (card.type !== "credit_card") return fail("INVALID_ACCOUNT_TYPE", "Selecione um cartão de crédito.");
       const amount = BigInt(parsed.data.amountMinor);
-      if (amount > -card.openingBalanceMinor) return fail("VALIDATION_ERROR", "O valor supera a dívida registrada na abertura do cartão.");
       const statements = await tx.statements.list(card.id);
-      if (statements.some(statement => statement.openingDebtMinor != null)) return fail("CONFLICT", "A dívida de abertura já foi vinculada a uma fatura.");
+      const source = statements.find(statement => statement.openingDebtMinor != null);
       let statement = statements.find(row => row.id === parsed.data.statementId);
+      if (parsed.data.sourceStatementId) {
+        if (!source || source.id !== parsed.data.sourceStatementId || source.status !== "open" || source.openingDebtMinor !== amount
+          || !statement || statement.status !== "open" || statement.closingOn >= source.closingOn
+          || statement.closingOn <= card.openingDate) return fail("CONFLICT", "Selecione duas faturas abertas do mesmo cartão e confirme o valor original do vínculo.");
+        const [sourceItems, sourcePayments, targetItems] = await Promise.all([
+          tx.statements.items(source.id), tx.payments.list(source.id), tx.statements.items(statement.id),
+        ]);
+        if (sourceItems.length || sourcePayments.length || !targetItems.length) return fail("CONFLICT", "Só é possível mover um vínculo isolado para uma fatura anterior com lançamentos.");
+        await tx.statements.setOpeningDebt(source.id, null);
+        await tx.statements.setOpeningDebt(statement.id, amount);
+        return statement.id;
+      }
+      if (amount > -card.openingBalanceMinor) return fail("VALIDATION_ERROR", "O valor supera a dívida registrada na abertura do cartão.");
+      if (source) return fail("CONFLICT", "A dívida de abertura já foi vinculada a uma fatura.");
       if (!parsed.data.statementId) {
         const settings = await tx.cards.getSettings(card.id);
         if (!settings) return fail("NOT_FOUND", "Configuração do cartão não encontrada.");
         const today = new Intl.DateTimeFormat("en-CA", { timeZone: settings.billingTimezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
         this.assertAfterOpening(card, today);
-        statement = statements.find(row => row.cycleStartOn <= today && today < row.closingOn);
+        const openStatements = statements.filter(row => row.status === "open" && row.closingOn > card.openingDate && row.cycleStartOn <= today)
+          .sort((first, second) => first.closingOn.localeCompare(second.closingOn));
+        for (const open of openStatements) {
+          if ((await tx.statements.items(open.id)).length) { statement = open; break; }
+        }
+        statement ??= statements.find(row => row.cycleStartOn <= today && today < row.closingOn);
         if (!statement) {
           const { closingOn, cycleStartOn } = this.purchaseStatements(today, today, settings.closingDay);
           statement = await this.ensureStatement(tx, card.id, closingOn, cycleStartOn, settings.closingDay, settings.dueDay, 0);
@@ -443,12 +461,14 @@ export class FinanceService {
 
   async listInstitutions(): Promise<Institution[]> { return this.repository.transaction(tx => tx.institutions.list()); }
 
-  async listAccounts(through?: string): Promise<Array<Account & { balanceMinor: Minor; availableCreditMinor?: Minor | null }>> {
+  async listAccounts(through?: string): Promise<Array<Account & { balanceMinor: Minor; availableCreditMinor?: Minor | null; hasUnallocatedOpeningDebt?: boolean }>> {
     return this.repository.transaction(async tx => Promise.all((await tx.accounts.list()).map(async account => {
       const result = { ...account, balanceMinor: await this.balanceAt(tx, account, through) };
       if (account.type !== "credit_card") return result;
       const settings = await tx.cards.getSettings(account.id);
-      return { ...result, availableCreditMinor: settings?.creditLimitMinor === null || !settings ? null : settings.creditLimitMinor + result.balanceMinor };
+      const hasUnallocatedOpeningDebt = !account.isArchived && account.openingBalanceMinor < 0n
+        && !(await tx.statements.list(account.id)).some(statement => statement.openingDebtMinor != null);
+      return { ...result, hasUnallocatedOpeningDebt, availableCreditMinor: settings?.creditLimitMinor === null || !settings ? null : settings.creditLimitMinor + result.balanceMinor };
     })));
   }
 
@@ -535,6 +555,7 @@ export class FinanceService {
         if (account.type !== "credit_card") continue;
         for (const statement of await tx.statements.list(account.id)) {
           const [items, payments] = await Promise.all([tx.statements.items(statement.id), tx.payments.list(statement.id)]);
+          if (statement.openingDebtMinor == null && items.length === 0 && payments.length === 0) continue;
           const billed = statementBilled(statement, items);
           const paid = payments.reduce((sum, payment) => sum + payment.amountMinor, 0n);
           if ((statement.dueOn < from || statement.dueOn > to) && !(includePending && billed > paid)) continue;

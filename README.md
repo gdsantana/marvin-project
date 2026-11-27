@@ -48,6 +48,8 @@ pnpm install
 
 Para configurar o banco, aplicar migrations e criar a conta proprietária, siga o [guia de desenvolvimento local](docs/deployment.md#postgresql-para-desenvolvimento-local). Depois, inicie a interface com `pnpm dev:web`; para iniciar o servidor MCP em outro terminal, use `pnpm dev:mcp`.
 
+`pnpm db:seed` substitui os dados financeiros locais por dados fictícios e preserva o login e as sessões. O Cartão Nubank fica com R$ 800,00 de dívida inicial disponível para vincular em **Faturas**. A fatura aberta do Cartão Itaú inclui R$ 300,00 registrados como **Ajuste de fatura**.
+
 A separação técnica do banco está no [ADR 0012](docs/adr/0012-database-runtime-and-migration-roles.md): a Web usa `marvin_app`; migrations e manutenção usam `marvin_migrator`; o provisionamento de roles usa a conexão administrativa. Isso não cria perfis de usuário na interface. Para bases existentes, siga o procedimento explícito `--adopt-existing` no [guia de deploy](docs/deployment.md#separação-de-privilégios-postgresql); não altere ownership de uma base real sem backup e revisão.
 
 ## Documentação

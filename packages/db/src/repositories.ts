@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { DomainError, type ExpenseForecast, type FinanceRepository, type TransactionContext, type TransactionRevision } from "@finance/domain";
 import type { Database } from "./client.js";
 import {
@@ -230,9 +230,10 @@ function createContext(db: Database): TransactionContext {
       },
       async setOpeningDebt(id, amount) {
         const [updated] = await db.update(cardStatements).set({ openingDebtMinor: amount, updatedAt: new Date() })
-          .where(and(eq(cardStatements.id, id), eq(cardStatements.status, "open"), isNull(cardStatements.openingDebtMinor)))
+          .where(and(eq(cardStatements.id, id), eq(cardStatements.status, "open"),
+            amount === null ? isNotNull(cardStatements.openingDebtMinor) : isNull(cardStatements.openingDebtMinor)))
           .returning({ id: cardStatements.id });
-        if (!updated) throw new DomainError("CONFLICT", "A fatura foi fechada ou já contém dívida de abertura.");
+        if (!updated) throw new DomainError("CONFLICT", "O estado da fatura ou da dívida de abertura mudou.");
       },
       async addItems(values) { return values.length ? db.insert(cardStatementItems).values(values).returning() : []; },
       async items(id) { return db.select().from(cardStatementItems).where(eq(cardStatementItems.statementId, id)); },

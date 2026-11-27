@@ -46,7 +46,8 @@ export const correctOpeningBalanceSchema = z.object({
 export type CorrectOpeningBalanceInput = z.infer<typeof correctOpeningBalanceSchema>;
 const openingDebtAmountSchema = z.string().regex(positiveMinorAmountPattern).refine(value => !positiveMinorAmountPattern.test(value) || BigInt(value) <= -MIN_BIGINT, "Valor excede o máximo da dívida de abertura");
 export const allocateOpeningDebtSchema = z.object({
-  cardAccountId: idSchema, statementId: idSchema.optional(), amountMinor: openingDebtAmountSchema, confirmsOutstandingDebt: z.literal(true),
+  cardAccountId: idSchema, statementId: idSchema.optional(), sourceStatementId: idSchema.optional(),
+  amountMinor: openingDebtAmountSchema, confirmsOutstandingDebt: z.literal(true),
 }).strict();
 export type AllocateOpeningDebtInput = z.infer<typeof allocateOpeningDebtSchema>;
 export const creditCardSettingsSchema = creditCardSettingsInputSchema.extend({ accountId: idSchema });
@@ -114,7 +115,11 @@ export const payStatementSchema = transactionMetadataSchema.extend({ statementId
 export const reportQuerySchema = z.object({ from: dateSchema, to: dateSchema, currency: currencySchema.optional() }).refine(value => value.from <= value.to, { path: ["to"], message: "A data final deve ser igual ou posterior à inicial" });
 export const idempotentRequestSchema = z.object({ idempotencyKey: idempotencyKeySchema });
 
-export const accountWithBalanceSchema = accountSchema.extend({ balanceMinor: derivedMinorAmountSchema, availableCreditMinor: derivedMinorAmountSchema.nullable().optional() });
+export const accountWithBalanceSchema = accountSchema.extend({
+  balanceMinor: derivedMinorAmountSchema,
+  availableCreditMinor: derivedMinorAmountSchema.nullable().optional(),
+  hasUnallocatedOpeningDebt: z.boolean().optional(),
+});
 export const institutionResponseSchema = institutionSchema;
 export const accountResponseSchema = accountWithBalanceSchema;
 export const categoryResponseSchema = categorySchema;
