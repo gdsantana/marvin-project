@@ -179,7 +179,7 @@ async function main() {
         for (const route of routes) {
           await page.goto(`${base.origin}${route}`);
           await page.locator("#main-content").waitFor();
-          await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "BRL 9.007.199.254.740.993,01");
+          await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "R$ 9.007.199.254.740.993,01");
           assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: rolagem horizontal`);
           await page.screenshot({ path: join(output, `${viewport.width}-audit-${route.slice(1) || "overview"}.png`), fullPage: true });
           if (route === "/entries") {
@@ -249,7 +249,7 @@ async function main() {
           if (route === "/login") await page.getByLabel("Senha", { exact: true }).waitFor();
           else {
             await page.getByRole("combobox", { name: "Criar novo registro" }).waitFor();
-            await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "BRL 9.007.199.254.740.993,01");
+            await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "R$ 9.007.199.254.740.993,01");
             for (const destination of routes) {
               const link = page.locator(`nav a[href="${destination}"]:visible`).first();
               await link.waitFor();
@@ -370,8 +370,19 @@ async function main() {
         });
         await scenario("P5-values-capabilities", async page => {
           await page.goto(base.origin);
-          await visibleText(page, "BRL 9.007.199.254.740.993,01");
-          for (const value of ["BRL 234,56", "BRL 123,45", "BRL 67,89"]) assert((await page.locator("body").innerText()).includes(value), `P5: valor ausente ${value}`);
+          await visibleText(page, "R$ 9.007.199.254.740.993,01");
+          for (const value of ["R$ 234,56", "R$ 123,45", "R$ 67,89"]) assert((await page.locator("body").innerText()).includes(value), `P5: valor ausente ${value}`);
+          await page.getByRole("banner").getByRole("combobox", { name: "Período do resumo" }).waitFor();
+          assert.match(await page.getByRole("heading", { name: "Visão geral", level: 1 }).getAttribute("class") ?? "", /\bsr-only\b/);
+          const bills = page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: "Faturas a pagar" }) });
+          await bills.getByText("R$ 200,02", { exact: true }).waitFor();
+          assert.equal(await bills.getByRole("listitem").count(), 2);
+          await page.getByRole("region", { name: "Gastos por categoria em BRL" }).getByText("100%", { exact: true }).waitFor();
+          assert.deepEqual(await page.getByRole("main").getByRole("heading", { level: 2 }).allTextContents(), [
+            "Resumo do período", "Evolução mensal", "Gastos por categoria", "Faturas a pagar", "Últimas movimentações", "Saldos atuais",
+          ]);
+          const evolution = page.getByRole("region", { name: "Evolução mensal em BRL" });
+          await evolution.locator(".recharts-line").nth(1).waitFor();
           assert.equal(await page.getByText(/patrimônio líquido|sincronizar banco|análise por ia|meta de economia/i).count(), 0);
           await page.goto(`${base.origin}/entries`);
           await visibleText(page, "Transferência própria sintética");
@@ -400,7 +411,7 @@ async function main() {
           await page.getByLabel("Senha", { exact: true }).fill("senha-sintetica");
           await page.getByRole("button", { name: "Entrar", exact: true }).click();
           await page.waitForURL(`${base.origin}/`);
-          await visibleText(page, "BRL 9.007.199.254.740.993,01");
+          await visibleText(page, "R$ 9.007.199.254.740.993,01");
           await page.getByRole("button", { name: "Sair", exact: true }).filter({ visible: true }).first().click();
           await page.waitForURL(`${base.origin}/login`);
           assert.equal(state.authenticated, false);

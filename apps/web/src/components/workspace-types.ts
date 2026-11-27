@@ -28,3 +28,13 @@ export const primaryActions: Action[] = ["income", "expense", "transfer", "purch
 
 
 export const settingsActions: Action[] = ["institution", "account", "correctOpeningBalance", "allocateOpeningDebt", "configureCard", "category"];
+
+export function statementStatusLabel(status: StatementOption["status"]) {
+  return {
+    open: "Aberta",
+    closed: "Fechada",
+    paid: "Quitada",
+    partially_paid: "Parcialmente paga",
+    overdue: "Vencida",
+  }[status];
+}

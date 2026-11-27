@@ -13,6 +13,10 @@ export function formatMinor(value: string, currency: string) {
   return `${amount < 0n ? "−" : ""}${currency} ${new Intl.NumberFormat("pt-BR").format(whole)},${cents}`;
 }
 
+export function formatCurrencyMinor(value: string, currency: string) {
+  return formatMinor(value, currency === "BRL" ? "R$" : currency);
+}
+
 export function majorInputFromMinor(value: string | null) {
   if (value === null) return "";
   const amount = BigInt(value), absolute = amount < 0n ? -amount : amount;

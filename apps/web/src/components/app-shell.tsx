@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import Image from "next/image";
 import logo from "../../marvin-logo.webp";
 import { ArrowDownUpIcon, ChartNoAxesCombinedIcon, CreditCardIcon, HouseIcon, LogOutIcon, PlusCircleIcon, ReceiptTextIcon, SettingsIcon, WalletIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
 import { actionLabels, primaryActions, type Action, type Section } from "./workspace-types";
@@ -22,9 +22,10 @@ const navigation = [
   { id: "settings", href: "/settings", label: "Configurações", mobileLabel: "Configurações", icon: SettingsIcon },
 ] as const;
 
-export function AppShell({ section, title, description, onCreate, onSignOut, createDisabled, children }: { section: Section; title: string; description: string; onCreate: (action: Action) => void; onSignOut: () => void; createDisabled?: boolean; children: ReactNode }) {
+export function AppShell({ section, title, description, headerControl, onCreate, onSignOut, createDisabled, children }: { section: Section; title: string; description: string; headerControl?: ReactNode; onCreate: (action: Action) => void; onSignOut: () => void; createDisabled?: boolean; children: ReactNode }) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
+  const isOverview = section === "overview";
   const mobileNavigation = navigation.filter(item => ["overview", "entries", "new", "reports"].includes(item.id));
   return <div className="min-h-dvh md:grid md:grid-cols-[16rem_minmax(0,1fr)]">
     <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-primary focus:p-3 focus:text-primary-foreground">Ir para o conteúdo</a>
@@ -36,15 +37,23 @@ export function AppShell({ section, title, description, onCreate, onSignOut, cre
     <div className="min-w-0 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-0">
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur-sm">
         <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-3 px-4 pt-[env(safe-area-inset-top)] sm:px-6 lg:px-6">
-          <Link href="/" aria-label="Marvin, início" className="flex min-w-0 items-center gap-2 md:hidden"><Brand /><span className="min-w-0"><span className="block font-mono text-[10px] tracking-widest text-muted-foreground">MARVIN</span><span className="block text-xl font-medium tracking-tight [overflow-wrap:anywhere]">{title}</span></span></Link>
-          <Link href="/entries" className="hidden min-h-9 w-64 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-xs text-muted-foreground md:flex"><ArrowDownUpIcon className="size-3.5" aria-hidden="true" />Buscar transações…</Link>
-          <div className="flex min-w-0 items-center gap-2">
-            <NativeSelect disabled={createDisabled} aria-label="Criar novo registro" value="" onChange={event => { if (event.target.value) onCreate(event.target.value as Action); }} className="hidden max-w-48 md:flex"><NativeSelectOption value="">Novo registro</NativeSelectOption>{primaryActions.map(action => <NativeSelectOption key={action} value={action}>{actionLabels[action]}</NativeSelectOption>)}</NativeSelect>
+          <Link href="/" aria-label="Marvin, início" className="flex min-w-0 items-center gap-2 md:hidden"><Brand />{isOverview ? <span className="text-sm font-semibold">Marvin Finanças</span> : <span className="min-w-0"><span className="block font-mono text-[10px] tracking-widest text-muted-foreground">MARVIN</span><span className="block text-xl font-medium tracking-tight [overflow-wrap:anywhere]">{title}</span></span>}</Link>
+          <div className="flex items-center gap-4">
+            {headerControl}
+            <Link href="/entries" className={cn("hidden min-h-11 items-center gap-2 whitespace-nowrap text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline", isOverview ? "lg:inline-flex" : "md:inline-flex")}><ArrowDownUpIcon className="size-4" aria-hidden="true" />Ver transações</Link>
+          </div>
+          <div className="hidden min-w-0 items-center gap-2 md:flex">
+            <NativeSelect disabled={createDisabled} aria-label="Criar novo registro" value="" onChange={event => { if (event.target.value) onCreate(event.target.value as Action); }} className="max-w-48"><NativeSelectOption value="">Outros registros</NativeSelectOption>{primaryActions.map(action => <NativeSelectOption key={action} value={action}>{actionLabels[action]}</NativeSelectOption>)}</NativeSelect>
+            <Link href="/new" className={buttonVariants()}>Nova transação</Link>
           </div>
         </div>
       </header>
-      <main id="main-content" tabIndex={-1} className="mx-auto max-w-7xl px-4 py-6 outline-none sm:px-6 lg:px-6 lg:py-6">
-        <div className={cn("mb-6 flex flex-col gap-2", section === "new" && "hidden md:flex")}><span className="hidden font-mono text-[10px] tracking-widest text-primary md:block">● SISTEMA OPERACIONAL FINANCEIRO</span><h1 className="sr-only text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] md:not-sr-only lg:text-3xl">{title}</h1><p className="hidden max-w-2xl text-sm leading-6 text-muted-foreground md:block">{description}</p></div>
+      <main id="main-content" tabIndex={-1} className={cn("mx-auto max-w-7xl px-4 outline-none sm:px-6", isOverview ? "py-4" : "py-6")}>
+        {isOverview ? <h1 className="sr-only">{title}</h1> : <div className={cn("mb-6 flex flex-col gap-2", section === "new" && "hidden md:flex")}>
+          <span className="hidden font-mono text-[10px] tracking-widest text-primary md:block">● SISTEMA OPERACIONAL FINANCEIRO</span>
+          <h1 className="sr-only text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] md:not-sr-only lg:text-3xl">{title}</h1>
+          {description && <p className="hidden max-w-2xl text-sm leading-6 text-muted-foreground md:block">{description}</p>}
+        </div>}
         <div key={pathname} className="page-enter">{children}</div>
       </main>
     </div>

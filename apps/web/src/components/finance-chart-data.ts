@@ -19,7 +19,10 @@ export function monthlyChartData(series: FinanceSeriesPoint[], currency: string)
     expenseMinor: point.expenseMinorByCurrency[currency] ?? "0",
   }));
   const maximum = rows.reduce((max, row) => [max, magnitude(BigInt(row.incomeMinor)), magnitude(BigInt(row.expenseMinor))].reduce((a, b) => a > b ? a : b), 0n);
-  return rows.map(row => ({ ...row, income: chartCoordinate(BigInt(row.incomeMinor), maximum), expense: chartCoordinate(BigInt(row.expenseMinor), maximum) }));
+  return {
+    maximum,
+    rows: rows.map(row => ({ ...row, income: chartCoordinate(BigInt(row.incomeMinor), maximum), expense: chartCoordinate(BigInt(row.expenseMinor), maximum) })),
+  };
 }
 
 export function amountChartData(rows: { label: string; amountMinor: string; fill?: string }[]) {

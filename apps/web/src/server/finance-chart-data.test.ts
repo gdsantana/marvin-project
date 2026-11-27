@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { recentMonths } from "../components/finance-chart-data";
+import { monthlyChartData, recentMonths } from "../components/finance-chart-data";
 
 test("annual chart includes all twelve months instead of only July through December", () => {
   const months = recentMonths("2026-12-31", 12);
@@ -15,4 +15,19 @@ test("six-month history crosses years and preserves leap February", () => {
   assert.deepEqual(months[0], { from: "2027-10-01", to: "2027-10-31" });
   assert.deepEqual(months[4], { from: "2028-02-01", to: "2028-02-29" });
   assert.deepEqual(months[5], { from: "2028-03-01", to: "2028-03-31" });
+});
+
+test("monthly chart retains the exact amount behind its normalized scale", () => {
+  const [month] = recentMonths("2026-11-30", 1);
+  const amount = "9223372036854775808";
+  const { maximum, rows } = monthlyChartData([{
+    ...month!,
+    incomeMinorByCurrency: { BRL: amount },
+    expenseMinorByCurrency: { BRL: "-4611686018427387904" },
+  }], "BRL");
+
+  assert.equal(maximum, BigInt(amount));
+  assert.equal(rows[0]?.income, 100);
+  assert.equal(rows[0]?.expense, -50);
+  assert.equal(rows[0]?.incomeMinor, amount);
 });

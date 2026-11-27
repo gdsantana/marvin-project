@@ -13,21 +13,21 @@ import { ListSkeleton } from "./workspace-skeleton";
 import { Badge } from "@/components/ui/badge";
 import { AppShell } from "./app-shell";
 import { recentMonths } from "./finance-chart-data";
-import { DashboardOverview } from "./dashboard-overview";
+import { DashboardOverview, DashboardPeriodSelect } from "./dashboard-overview";
 import { readCategoryAllocations } from "./transaction-form-data";
 import { DateRangeSelect } from "./date-range-select";
 import { TransactionList } from "./transaction-list";
 import { SpendingBreakdown } from "./spending-breakdown";
 import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
-import { settingsActions, actionLabels, openingDebtCards, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
+import { settingsActions, actionLabels, openingDebtCards, statementStatusLabel, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
 import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod } from "./finance-format";
 
 const titles: Record<Section, { title: string; intro: string }> = {
   settings: { title: "Configurações", intro: "Gerencie instituições, contas, cartões e categorias da plataforma." },
   new: { title: "Nova transação", intro: "Registre uma receita ou despesa." },
-  overview: { title: "Visão geral", intro: "Uma visão simples do que está acontecendo nas suas contas." },
+  overview: { title: "Visão geral", intro: "" },
   accounts: { title: "Contas", intro: "Instituições e contas que fazem parte da sua vida financeira." },
   cards: { title: "Cartões", intro: "Acompanhe limites, compras e próximos vencimentos." },
   entries: { title: "Lançamentos", intro: "Histórico registrado e previsões avulsas em áreas separadas." },
@@ -43,17 +43,6 @@ function transactionKindLabel(kind: string) {
     case "refund": return "Estorno";
     case "adjustment": return "Ajuste";
     default: return kind;
-  }
-}
-
-function statementStatusLabel(status: string) {
-  switch (status) {
-    case "open": return "Aberta";
-    case "closed": return "Fechada";
-    case "paid": return "Quitada";
-    case "partially_paid": return "Parcialmente paga";
-    case "overdue": return "Vencida";
-    default: return status;
   }
 }
 
@@ -343,6 +332,7 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const historyLoading = loadedHistoryScope !== historyScope && !dataError;
 
   return <AppShell createDisabled={!authenticated || dataLoading || Boolean(dataError)} section={section} title={selectedAccount?.name ?? current.title} description={accountId ? "Gastos e meios de pagamento da conta." : current.intro}
+    headerControl={section === "overview" ? <DashboardPeriodSelect range={range} setRange={value => setRange(value as ReportRange)} /> : undefined}
     onCreate={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }}
     onSignOut={async () => {
       if (!authenticated) return;
@@ -365,7 +355,7 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
                 <Button className="min-h-11" variant="outline" onClick={() => setForm("allocateOpeningDebt")}>{actionLabels.allocateOpeningDebt}</Button>
               </AlertDescription>
             </Alert>}
-          {section === "overview" && <DashboardOverview referencesLoading={referencesLoading} newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} setForm={setForm} range={range} setRange={value => setRange(value as ReportRange)} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
+          {section === "overview" && <DashboardOverview referencesLoading={referencesLoading} newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} analyticsUnavailable={Boolean(analyticsError && !currentAnalytics)} range={range} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
           {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" disabled={referencesLoading} onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
           {section === "accounts" && (accountId ? <div className="grid gap-4">
             <Link href="/accounts" className={buttonVariants({ variant: "outline", className: "w-fit" })}>Voltar para contas</Link>

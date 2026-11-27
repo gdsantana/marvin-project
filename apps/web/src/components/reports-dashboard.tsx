@@ -129,7 +129,7 @@ function CategoryBreakdown({ currency, categories, loading }: { currency: string
   const rows = categories.filter(item => item.currency === currency);
   const total = rows.reduce((sum, item) => sum + BigInt(item.expenseMinor), 0n);
 
-  return <Card>
+  return <Card id={`spending-by-category-${currency}`} className="scroll-mt-20">
     <CardContent className="p-4 sm:p-5">
       <div><p className="font-mono text-[10px] tracking-[.14em] text-muted-foreground">DISTRIBUIÇÃO DAS DESPESAS</p><h3 className="mt-1 text-lg font-medium">Por categoria <span className="font-mono text-xs text-muted-foreground">{currency}</span></h3></div>
       <div className="mt-5 min-h-56" aria-busy={loading}>{loading && rows.length === 0 ? <CategorySkeleton /> : rows.length === 0 ? <p className="mt-5 text-sm text-muted-foreground">Sem despesas por categoria neste período.</p> : <ul className="grid gap-4">{rows.map(item => {
