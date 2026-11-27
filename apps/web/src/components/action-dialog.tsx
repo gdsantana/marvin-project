@@ -207,13 +207,36 @@ function AccountFields({ references }: { references: References }) {
   </>;
 }
 
-function OpeningDebtFields({ references, busy }: { references: References; busy: boolean }) {
+function OpeningDebtUnavailable({ accounts, onCorrectBalance }: { accounts: AccountOption[]; onCorrectBalance: () => void }) {
+  const cards = accounts.filter(account => account.type === "credit_card" && !account.isArchived);
+  if (cards.length === 0) return <p className="text-sm text-muted-foreground">Cadastre um cartão em Configurações para acompanhar suas faturas.</p>;
+  const hasNonnegativeBalance = cards.some(card => card.openingBalanceMinor !== undefined && BigInt(card.openingBalanceMinor) >= 0n);
+  return <div className="grid gap-3 text-sm">
+    <p>O vínculo exige um saldo inicial negativo e só pode ser feito uma vez por cartão.</p>
+    <ul className="divide-y divide-border">
+      {cards.map(card => <li key={card.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 py-2">
+        <span className="min-w-0 break-words">{card.name}</span>
+        <span className="text-muted-foreground">{card.openingBalanceMinor === undefined
+          ? "Saldo inicial indisponível"
+          : BigInt(card.openingBalanceMinor) >= 0n
+            ? `Saldo inicial ${formatMinor(card.openingBalanceMinor, card.currency)}`
+            : card.hasUnallocatedOpeningDebt === false ? "Dívida inicial já vinculada" : "Vínculo indisponível"}</span>
+      </li>)}
+    </ul>
+    {hasNonnegativeBalance && <>
+      <p className="text-muted-foreground">Se a dívida já existia na abertura e o saldo foi cadastrado incorretamente, corrija o saldo inicial e volte para vincular.</p>
+      <Button type="button" variant="outline" className="min-h-11 justify-self-start" onClick={onCorrectBalance}>{actionLabels.correctOpeningBalance}</Button>
+    </>}
+  </div>;
+}
+
+function OpeningDebtFields({ references }: { references: References }) {
   const [cardId, setCardId] = useState("");
+  const busy = useContext(PendingContext);
   const cards = references.accounts.filter(account => account.hasUnallocatedOpeningDebt);
   const openStatements = references.statements.filter(statement => statement.cardAccountId === cardId && statement.status === "open");
   return <>
     <Alert role="note" className="sm:col-span-2"><AlertDescription>Vincule somente o valor ainda pendente da dívida de abertura. O valor entra uma vez na fatura, sem criar despesa nem alterar o saldo do cartão.</AlertDescription></Alert>
-    {cards.length === 0 && <p className="text-sm text-muted-foreground sm:col-span-2">Nenhum cartão elegível para vincular dívida inicial.</p>}
     <FormField label="Cartão" name="cardAccountId" value={cardId} onChange={event => setCardId(event.target.value)} options={[["", "Selecione um cartão"], ...cards.map(card => [card.id, card.name] as [string, string])]} />
     <FormField key={cardId} label="Fatura aberta" name="statementId" required={false} options={[["", "Usar ciclo vigente"], ...openStatements.map(statement => [statement.id, `Vence em ${formatDate(statement.dueOn)}`] as [string, string])]} />
     <FormField label="Valor pendente" name="amountMinor" placeholder="800,00" />
@@ -290,7 +313,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     switch (action) {
       case "institution": return <FormField label="Nome da instituição" name="name" placeholder="Ex.: Banco do Brasil" />;
       case "correctOpeningBalance": return <OpeningBalanceFields accounts={references.accounts} />;
-      case "allocateOpeningDebt": return <OpeningDebtFields references={references} busy={busy} />;
+      case "allocateOpeningDebt": return <OpeningDebtFields references={references} />;
       case "account": return <AccountFields references={references} />;
       case "configureCard": return <CardSettingsFields accounts={references.accounts} onReady={setCardSettingsReady} />;
       case "category": return <><FormField label="Nome da categoria" name="name" placeholder="Ex.: Moradia" /><FormField label="Tipo" name="type" options={[["expense", "Despesa"], ["income", "Receita"]]} /><FormField label="Categoria superior" name="parentId" required={false} options={[["", "Sem categoria superior"], ...categoryOptions()]} /></>;
@@ -312,7 +335,8 @@ export function ActionDialog({ action, busy, message, close, submit, references,
   }, [action, references, selectedTransaction, selectedForecast]);
 
   const typePicker = !selectedTransaction && !selectedForecast && !settingsActions.includes(action) && (action === "income" || action === "expense" || action === "purchase" ? <TransactionKindPicker action={action} setAction={setAction} clearPreview={clearPreview} busy={busy || loading} /> : <FormField label="Tipo de registro" name="actionType" value={action} onChange={event => { clearPreview(); setAction(event.target.value as Action); }} options={(presentation === "inline" ? transactionActions : primaryActions).map(key => [key, actionLabels[key]])} />);
-  const form = <>
+  const openingDebtUnavailable = action === "allocateOpeningDebt" && !references.accounts.some(account => account.hasUnallocatedOpeningDebt);
+  const form = openingDebtUnavailable ? <OpeningDebtUnavailable accounts={references.accounts} onCorrectBalance={() => setAction("correctOpeningBalance")} /> : <>
     <span role="status" className="sr-only">{busy ? "Processando operação" : ""}</span>
     <form ref={formRef} className={`flex flex-col gap-4 ${presentation === "inline" ? "pb-[var(--form-actions-height,6rem)] md:pb-0" : ""}`} onChange={clearPreview} onSubmit={event => {
       const data = new FormData(event.currentTarget);
@@ -333,7 +357,7 @@ export function ActionDialog({ action, busy, message, close, submit, references,
     </form>
   </>;
   const title = action === "income" || action === "expense" ? "Nova transação" : actionLabels[action];
-  const description = action === "cancelForecast" ? "Confira a previsão antes de cancelar." : "Confira os dados da operação. Para valores em reais, use o formato 2500,00.";
+  const description = openingDebtUnavailable ? "Nenhum cartão com dívida inicial disponível para vínculo." : action === "cancelForecast" ? "Confira a previsão antes de cancelar." : "Confira os dados da operação. Para valores em reais, use o formato 2500,00.";
 
   if (presentation === "inline") return <PendingContext value={busy || loading}>
     <div className="w-full">

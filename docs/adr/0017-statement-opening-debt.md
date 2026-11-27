@@ -24,3 +24,8 @@ A consulta de contas sinaliza cartões ativos com saldo inicial negativo e
 sem vínculo, considerando todo o histórico de faturas. Essa indicação abre
 o fluxo de confirmação existente na Visão geral e em Faturas e fica disponível
 ao Hermes em `get_accounts`.
+
+Quando nenhum cartão está elegível, o modal indica o saldo de abertura de
+cartões sem dívida cadastrada e identifica cartões com dívida já vinculada.
+O modal oferece acesso à correção de saldo inicial quando há cartão ativo
+com saldo de abertura zero ou positivo.
