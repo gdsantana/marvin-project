@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/gdsantana/marvin-project/compare/v0.4.0...v0.4.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* sinaliza dívida inicial sem vínculo na fatura ([#41](https://github.com/gdsantana/marvin-project/issues/41)) ([bc380f8](https://github.com/gdsantana/marvin-project/commit/bc380f854a60b209eca517816983594c8b001bb8))
+
 ## [0.4.0](https://github.com/gdsantana/marvin-project/compare/v0.3.0...v0.4.0) (2026-11-26)
 
 
