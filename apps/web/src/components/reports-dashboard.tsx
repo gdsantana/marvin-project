@@ -9,9 +9,8 @@ import { ChartSkeleton, CategorySkeleton } from "./workspace-skeleton";
 import { MonthlyFinanceChart, AmountFinanceChart } from "./finance-charts";
 import type { CategoryReport, MonthlySummary } from "@finance/contracts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate, formatMinor, percentChangeBasisPoints, reportPeriod } from "./finance-format";
+import { formatDate, formatMinor, formatReportMonth, percentChangeBasisPoints, reportPeriod, type ReportRange } from "./finance-format";
 
-export type ReportRange = "month" | "last-month" | "year";
 export type ReportsSummary = MonthlySummary;
 export type ReportSeriesPoint = Pick<MonthlySummary, "from" | "to" | "incomeMinorByCurrency" | "expenseMinorByCurrency">;
 export type ReportCategory = CategoryReport;
@@ -29,7 +28,7 @@ export type ReportsDashboardProps = {
   onRetry?: () => void;
 };
 
-const rangeLabels: Record<ReportRange, string> = { month: "Este mês", "last-month": "Mês passado", year: "Este ano" };
+const rangeLabels = { month: "Este mês", "last-month": "Mês passado", year: "Este ano" };
 
 export function ReportsDashboard({ range, onRangeChange, report, series, categories, analyticsLoading, loading = false, error, onRetry, spending }: ReportsDashboardProps) {
   const pending = !report && !error;
@@ -43,7 +42,8 @@ export function ReportsDashboard({ range, onRangeChange, report, series, categor
     <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-card px-3 py-2 sm:w-fit">
       <CalendarDaysIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <NativeSelect aria-label="Período do relatório" value={range} onChange={event => onRangeChange(event.target.value as ReportRange)} className="min-h-11 min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none sm:min-w-36">
-        {(Object.keys(rangeLabels) as ReportRange[]).map(option => <option key={option} value={option}>{rangeLabels[option]}</option>)}
+        {!(range in rangeLabels) && <option value={range}>{formatReportMonth(period.from)}</option>}
+        {Object.entries(rangeLabels).map(([option, label]) => <option key={option} value={option}>{label}</option>)}
       </NativeSelect>
       <span className="w-full pl-7 text-xs tabular-nums text-muted-foreground sm:w-auto sm:pl-0" aria-live="polite">{report ? `${formatDate(report.from)} – ${formatDate(report.to)}` : "Carregando período…"}</span>
     </div>

@@ -24,7 +24,12 @@ export const actionLabels: Record<Action, string> = {
   allocateOpeningDebt: "Vincular dívida inicial",
   correctOpeningBalance: "Corrigir saldo inicial", institution: "Nova instituição", account: "Nova conta ou cartão", configureCard: "Configurar cartão", category: "Nova categoria", income: "Registrar receita", expense: "Registrar despesa", transfer: "Transferir entre contas", purchase: "Compra no cartão de crédito", cashback: "Registrar cashback", refund: "Registrar reembolso", statementAdjustment: "Ajustar fatura", payment: "Pagar fatura", close: "Fechar fatura", forecast: "Nova previsão de despesa", realizeForecast: "Realizar previsão", cancelForecast: "Cancelar previsão", correct: "Corrigir lançamento", reverse: "Cancelar lançamento",
 };
-export const primaryActions: Action[] = ["income", "expense", "transfer", "purchase", "cashback", "refund", "payment", "statementAdjustment", "close", "forecast"];
+export const primaryActionGroups: { label: string; actions: Action[] }[] = [
+  { label: "Transações", actions: ["income", "expense", "transfer", "purchase", "cashback", "refund"] },
+  { label: "Faturas", actions: ["payment", "statementAdjustment", "close"] },
+  { label: "Previsões", actions: ["forecast"] },
+];
+export const primaryActions = primaryActionGroups.flatMap(group => group.actions);
 
 
 export const settingsActions: Action[] = ["institution", "account", "correctOpeningBalance", "allocateOpeningDebt", "configureCard", "category"];

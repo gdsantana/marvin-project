@@ -39,9 +39,30 @@ export function todayCivil(now = new Date()) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-export function reportPeriod(range: string, now = new Date()) {
+export type ReportMonth = `${number}-${number}`;
+export type ReportRange = "month" | "last-month" | "year" | ReportMonth;
+
+export function offsetReportMonth(from: string, offset: number): ReportMonth {
+  const date = new Date(`${from}T00:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + offset, 1);
+  return date.toISOString().slice(0, 7) as ReportMonth;
+}
+
+const reportMonthFormat = new Intl.DateTimeFormat("pt-BR", { month: "short", year: "numeric", timeZone: "UTC" });
+
+export function formatReportMonth(from: string) {
+  const parts = reportMonthFormat.formatToParts(new Date(`${from}T00:00:00Z`));
+  const month = parts.find(part => part.type === "month")!.value;
+  const year = parts.find(part => part.type === "year")!.value;
+  return `${month[0]!.toUpperCase()}${month.slice(1)} ${year}`;
+}
+
+export function reportPeriod(range: ReportRange, now = new Date()) {
   const [year, month] = todayCivil(now).split("-").map(Number);
-  const start = new Date(Date.UTC(year!, range === "year" ? 0 : month! - 1 + (range === "last-month" ? -1 : 0), 1));
-  const end = new Date(Date.UTC(start.getUTCFullYear(), range === "year" ? 12 : start.getUTCMonth() + 1, 0));
+  const start = range === "month" || range === "last-month" || range === "year"
+    ? new Date(Date.UTC(year!, range === "year" ? 0 : month! - 1 + (range === "last-month" ? -1 : 0), 1))
+    : new Date(`${range}-01T00:00:00Z`);
+  const end = new Date(start);
+  end.setUTCMonth(range === "year" ? 12 : start.getUTCMonth() + 1, 0);
   return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
 }

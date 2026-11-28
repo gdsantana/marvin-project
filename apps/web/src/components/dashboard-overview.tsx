@@ -1,17 +1,17 @@
 "use client";
 
 import { useListArrival } from "@/hooks/use-list-arrival";
-import { ArrowRightIcon, WalletIcon } from "lucide-react";
+import { ArrowRightIcon, ChevronLeftIcon, ChevronRightIcon, WalletIcon } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select";
 import { ExpenseDonutChart, MonthlyFinanceChart } from "./finance-charts";
 import { ChartSkeleton, ListSkeleton } from "./workspace-skeleton";
 import { visibleTransactions } from "./transaction-list";
 import { chartCoordinate, magnitude } from "./finance-chart-data";
-import { formatDate, formatCurrencyMinor, reportPeriod } from "@/components/finance-format";
+import { formatDate, formatCurrencyMinor, formatReportMonth, offsetReportMonth, reportPeriod, type ReportMonth, type ReportRange } from "@/components/finance-format";
 import type { CategoryReport } from "@finance/contracts";
 import { statementStatusLabel, type References, type ReportData, type TransactionOption } from "@/components/workspace-types";
 
@@ -28,7 +28,7 @@ export type DashboardOverviewProps = {
   categories: DashboardCategory[];
   analyticsLoading: boolean;
   analyticsUnavailable: boolean;
-  range: string;
+  range: ReportRange;
 };
 
 export function DashboardOverview({ referencesLoading = false, newTransactionIds = [], references, report, reportError, series, categories, analyticsLoading, analyticsUnavailable, range }: DashboardOverviewProps) {
@@ -140,11 +140,36 @@ function DashboardLink({ href, children }: { href: string; children: string }) {
   return <Link href={href} className="inline-flex min-h-11 w-fit items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline">{children}<ArrowRightIcon aria-hidden="true" className="size-3.5" /></Link>;
 }
 
-export function DashboardPeriodSelect({ range, setRange }: { range: string; setRange: (range: string) => void }) {
-  const { from, to } = reportPeriod(range);
-  return <div className="flex items-center gap-2">
-    <NativeSelect size="sm" className="[&>select]:border-transparent [&>select]:bg-transparent [&>select]:text-sm [&>select:hover]:bg-muted" aria-label="Período do resumo" aria-describedby="dashboard-period-dates" value={range} onChange={event => setRange(event.target.value)}><NativeSelectOption value="month">Este mês</NativeSelectOption><NativeSelectOption value="last-month">Mês passado</NativeSelectOption><NativeSelectOption value="year">Este ano</NativeSelectOption></NativeSelect>
-    <span id="dashboard-period-dates" className="sr-only text-xs whitespace-nowrap text-muted-foreground xl:not-sr-only"><time dateTime={from}>{formatDate(from)}</time> a <time dateTime={to}>{formatDate(to)}</time></span>
+export function DashboardPeriodSelect({ range, setRange }: { range: ReportRange; setRange: (range: ReportRange) => void }) {
+  const now = new Date();
+  const { from, to } = reportPeriod(range, now);
+  const currentMonth = reportPeriod("month", now).from;
+  const anchor = range === "year" ? currentMonth : from;
+  const presets = ["month", "last-month", "year"] as const;
+  const periods: ReportRange[] = range === "month" || range === "last-month" || range === "year" ? [...presets] : [range, ...presets];
+  const arrowClass = "inline-flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35 disabled:hover:bg-transparent pointer-fine:size-8";
+
+  function selectMonth(month: ReportMonth) {
+    if (month === offsetReportMonth(currentMonth, 0)) setRange("month");
+    else if (month === offsetReportMonth(currentMonth, -1)) setRange("last-month");
+    else setRange(month);
+  }
+
+  return <div role="group" aria-label="Navegação por período" className="flex shrink-0 items-center gap-0.5 rounded-full bg-muted p-0.5">
+    <button type="button" aria-label="Mês anterior" className={arrowClass} disabled={anchor <= "0001-01-01"} onClick={() => selectMonth(offsetReportMonth(anchor, -1))}>
+      <ChevronLeftIcon className="size-4" aria-hidden="true" />
+    </button>
+    <NativeSelect className="w-20 min-[360px]:w-24 [&>svg]:hidden [&>select]:rounded-full [&>select]:border-transparent [&>select]:bg-transparent [&>select]:px-1 [&>select]:text-center [&>select]:text-sm [&>select]:font-medium [&>select:hover]:bg-background pointer-fine:[&>select]:min-h-8" aria-label="Período do resumo" aria-describedby="dashboard-period-dates" value={range} onChange={event => setRange(event.target.value as ReportRange)}>
+      {periods.map(value => {
+        const period = reportPeriod(value, now);
+        const label = value === "year" ? `Ano ${period.from.slice(0, 4)}` : formatReportMonth(period.from);
+        return <NativeSelectOptGroup key={value} label={`${formatDate(period.from)} a ${formatDate(period.to)}`}><NativeSelectOption value={value}>{label}</NativeSelectOption></NativeSelectOptGroup>;
+      })}
+    </NativeSelect>
+    <button type="button" aria-label="Próximo mês" className={arrowClass} disabled={anchor >= currentMonth} onClick={() => selectMonth(offsetReportMonth(anchor, 1))}>
+      <ChevronRightIcon className="size-4" aria-hidden="true" />
+    </button>
+    <span id="dashboard-period-dates" aria-live="polite" className="sr-only"><time dateTime={from}>{formatDate(from)}</time> a <time dateTime={to}>{formatDate(to)}</time></span>
   </div>;
 }
 

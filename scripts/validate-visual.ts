@@ -200,11 +200,46 @@ async function main() {
           results.push({ scenario: `${viewport.width}-audit-${route}`, passed: true });
         }
         if (viewport.width < 768) {
-          await page.getByRole("button", { name: "Mais opções", exact: true }).click();
-          await page.getByRole("navigation", { name: "Mais opções", exact: true }).getByRole("link", { name: "Contas", exact: true }).click();
+          const more = page.getByRole("button", { name: "Mais opções", exact: true });
+          const options = page.getByRole("navigation", { name: "Mais opções", exact: true });
+          const accountsLink = options.getByRole("link", { name: "Contas", exact: true });
+          await more.focus();
+          await page.keyboard.press("Enter");
+          await page.keyboard.press("Tab");
+          assert(await accountsLink.evaluate(element => document.activeElement === element));
+          await page.keyboard.press("Escape");
+          await options.waitFor({ state: "hidden" });
+          assert(await more.evaluate(element => document.activeElement === element));
+          await page.keyboard.press("Enter");
+          await accountsLink.click();
           await page.waitForURL(`${base.origin}/accounts`);
+          await options.waitFor({ state: "hidden" });
+          await more.click();
+          assert.equal(await accountsLink.getAttribute("aria-current"), "page");
+          await page.keyboard.press("Escape");
         } else {
-          await page.getByRole("combobox", { name: "Criar novo registro" }).selectOption("account");
+          const header = page.getByRole("banner");
+          const sidebar = page.getByRole("complementary");
+          await page.setViewportSize({ width: 768, height: 500 });
+          await page.waitForFunction(() => document.querySelector("aside")?.getBoundingClientRect().height === innerHeight);
+          const sidebarBox = (await sidebar.boundingBox())!;
+          assert.equal(sidebarBox.width, 192);
+          const brand = sidebar.getByRole("link", { name: "Marvin Finanças", exact: true });
+          const brandBox = (await brand.boundingBox())!;
+          const headerBox = (await header.boundingBox())!;
+          assert.equal(brandBox.width, sidebarBox.width - 1);
+          assert.equal(brandBox.y + brandBox.height, headerBox.y + headerBox.height);
+          const footer = sidebar.getByRole("navigation", { name: "Configurações e sessão" });
+          assert.equal(await footer.getByRole("link", { name: "Configurações", exact: true }).getAttribute("href"), "/settings");
+          assert.equal(await footer.evaluate(element => getComputedStyle(element).borderTopWidth), "0px");
+          const signOutButton = footer.getByRole("button", { name: "Sair", exact: true });
+          const signOut = (await signOutButton.boundingBox())!;
+          assert(signOut.y + signOut.height <= 500);
+          const operations = header.getByRole("combobox", { name: "Outras operações" });
+          assert.deepEqual(await operations.locator("optgroup").evaluateAll(groups => groups.map(group => group.getAttribute("label"))), ["Transações", "Faturas", "Previsões"]);
+          assert.equal(await sidebar.getByRole("link", { name: "Nova transação", exact: true }).count(), 0);
+          await page.goto(`${base.origin}/settings`);
+          await page.getByRole("button", { name: "Nova conta ou cartão", exact: true }).click();
           await page.getByRole("dialog").waitFor();
           assert.equal(await page.locator('input[name="currency"]').inputValue(), "BRL");
           assert.equal(await page.getByRole("combobox", { name: "Moeda", exact: true }).count(), 0);
@@ -248,7 +283,7 @@ async function main() {
           await page.goto(`${base.origin}${route}`);
           if (route === "/login") await page.getByLabel("Senha", { exact: true }).waitFor();
           else {
-            await page.getByRole("combobox", { name: "Criar novo registro" }).waitFor();
+            await page.getByRole("combobox", { name: "Outras operações" }).waitFor();
             await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "R$ 9.007.199.254.740.993,01");
             for (const destination of routes) {
               const link = page.locator(`nav a[href="${destination}"]:visible`).first();
@@ -266,7 +301,7 @@ async function main() {
             await link.focus();
             await page.keyboard.press("Enter");
             await page.waitForURL(`${base.origin}${destination}`);
-            await page.getByRole("combobox", { name: "Criar novo registro" }).waitFor();
+            await page.getByRole("combobox", { name: "Outras operações" }).waitFor();
             assert.equal(await page.locator(`nav a[href="${destination}"]:visible`).first().getAttribute("aria-current"), "page");
             await controls(page);
             await appearance(page);
@@ -275,9 +310,9 @@ async function main() {
         await scenario("P4-dialogs", async page => {
           await page.goto(`${base.origin}/entries`);
           await visibleText(page, "Receita sintética");
-          const trigger = page.getByRole("combobox", { name: "Criar novo registro" });
+          const trigger = page.getByRole("combobox", { name: "Outras operações" });
           const options = await trigger.locator("option").evaluateAll(elements => elements.filter((element): element is HTMLOptionElement => element instanceof HTMLOptionElement && !!element.value).map(element => ({ value: element.value, title: element.textContent! })));
-          assert.equal(options.length, 13, "P4: inventário de ações mudou");
+          assert.equal(options.length, 10, "P4: inventário de ações mudou");
           for (const option of options) { await trigger.selectOption(option.value); await dialogCheck(page, option.title, join(output, `${viewport.width}-${colorScheme}-dialog-${option.value}.png`)); }
           await page.locator(`#transaction-${ids[3]} summary`).click();
           for (const [button, title] of [["Corrigir dados ou categoria", "Corrigir lançamento"], ["Reverter lançamento", "Reverter lançamento"], ["Realizar", "Realizar previsão"], ["Cancelar", "Cancelar previsão"]]) {
@@ -322,8 +357,8 @@ async function main() {
             }
             return json(route, { accountId: secondCard.id, creditLimitMinor: "20000", closingDay: 12, dueDay: 22, billingTimezone: "America/Sao_Paulo", billingMode: "manual" });
           });
-          await page.goto(`${base.origin}/cards`);
-          await page.getByRole("combobox", { name: "Criar novo registro" }).selectOption("configureCard");
+          await page.goto(`${base.origin}/settings`);
+          await page.getByRole("button", { name: "Configurar cartão", exact: true }).click();
           const dialog = page.getByRole("dialog", { name: "Configurar cartão", exact: true });
           await Promise.race([requested, new Promise((_, reject) => setTimeout(() => reject(new Error("Configuração inicial não solicitada")), 7000))]);
           assert(await dialog.getByRole("button", { name: "Configurar cartão", exact: true }).isDisabled());
@@ -340,7 +375,7 @@ async function main() {
         await scenario("P3-preview-retry", async (page, state) => {
           await page.goto(`${base.origin}/entries`);
           await visibleText(page, "Receita sintética");
-          await page.getByRole("combobox", { name: "Criar novo registro" }).selectOption("income");
+          await page.getByRole("combobox", { name: "Outras operações" }).selectOption("income");
           const dialog = page.getByRole("dialog", { name: "Registrar receita", exact: true });
           await dialog.getByLabel("Valor (R$)", { exact: true }).fill("123,45");
           await dialog.getByLabel("Descrição", { exact: true }).fill("Receita mockada");
@@ -372,7 +407,11 @@ async function main() {
           await page.goto(base.origin);
           await visibleText(page, "R$ 9.007.199.254.740.993,01");
           for (const value of ["R$ 234,56", "R$ 123,45", "R$ 67,89"]) assert((await page.locator("body").innerText()).includes(value), `P5: valor ausente ${value}`);
-          await page.getByRole("banner").getByRole("combobox", { name: "Período do resumo" }).waitFor();
+          const period = page.getByRole("banner").getByRole("combobox", { name: "Período do resumo" });
+          await period.waitFor();
+          const ranges = await period.locator("optgroup").evaluateAll(groups => groups.map(group => group.getAttribute("label")));
+          assert.equal(ranges.length, 3);
+          assert(ranges.every(range => /^\d{2}\/\d{2}\/\d{4} a \d{2}\/\d{2}\/\d{4}$/.test(range ?? "")));
           assert.match(await page.getByRole("heading", { name: "Visão geral", level: 1 }).getAttribute("class") ?? "", /\bsr-only\b/);
           const bills = page.locator('[data-slot="card"]').filter({ has: page.getByRole("heading", { name: "Faturas a pagar" }) });
           await bills.getByText("R$ 200,02", { exact: true }).waitFor();
@@ -383,6 +422,17 @@ async function main() {
           ]);
           const evolution = page.getByRole("region", { name: "Evolução mensal em BRL" });
           await evolution.locator(".recharts-line").nth(1).waitFor();
+          const previousMonth = page.getByRole("button", { name: "Mês anterior", exact: true });
+          const nextMonth = page.getByRole("button", { name: "Próximo mês", exact: true });
+          assert(await nextMonth.isDisabled());
+          await previousMonth.click();
+          assert.equal(await period.inputValue(), "last-month");
+          await previousMonth.click();
+          assert.match(await period.inputValue(), /^\d{4}-\d{2}$/);
+          await nextMonth.click();
+          await nextMonth.click();
+          assert.equal(await period.inputValue(), "month");
+          assert(await nextMonth.isDisabled());
           assert.equal(await page.getByText(/patrimônio líquido|sincronizar banco|análise por ia|meta de economia/i).count(), 0);
           await page.goto(`${base.origin}/entries`);
           await visibleText(page, "Transferência própria sintética");

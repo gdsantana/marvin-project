@@ -18,11 +18,11 @@ import { readCategoryAllocations } from "./transaction-form-data";
 import { DateRangeSelect } from "./date-range-select";
 import { TransactionList } from "./transaction-list";
 import { SpendingBreakdown } from "./spending-breakdown";
-import { ReportsDashboard, type ReportRange } from "./reports-dashboard";
+import { ReportsDashboard } from "./reports-dashboard";
 import { ActionDialog } from "./action-dialog";
 import { settingsActions, actionLabels, openingDebtCards, statementStatusLabel, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
-import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod } from "./finance-format";
+import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod, type ReportRange } from "./finance-format";
 
 const titles: Record<Section, { title: string; intro: string }> = {
   settings: { title: "Configurações", intro: "Gerencie instituições, contas, cartões e categorias da plataforma." },
@@ -30,7 +30,7 @@ const titles: Record<Section, { title: string; intro: string }> = {
   overview: { title: "Visão geral", intro: "" },
   accounts: { title: "Contas", intro: "Instituições e contas que fazem parte da sua vida financeira." },
   cards: { title: "Cartões", intro: "Acompanhe limites, compras e próximos vencimentos." },
-  entries: { title: "Lançamentos", intro: "Histórico registrado e previsões avulsas em áreas separadas." },
+  entries: { title: "Transações", intro: "Histórico registrado e previsões avulsas em áreas separadas." },
   statements: { title: "Faturas", intro: "Fechamentos, parcelas e pagamentos dos seus cartões." },
   reports: { title: "Relatórios", intro: "Receitas e despesas por período, em reais." },
 };
@@ -332,7 +332,7 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const historyLoading = loadedHistoryScope !== historyScope && !dataError;
 
   return <AppShell createDisabled={!authenticated || dataLoading || Boolean(dataError)} section={section} title={selectedAccount?.name ?? current.title} description={accountId ? "Gastos e meios de pagamento da conta." : current.intro}
-    headerControl={section === "overview" ? <DashboardPeriodSelect range={range} setRange={value => setRange(value as ReportRange)} /> : undefined}
+    headerControl={section === "overview" ? <DashboardPeriodSelect range={range} setRange={setRange} /> : undefined}
     onCreate={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }}
     onSignOut={async () => {
       if (!authenticated) return;

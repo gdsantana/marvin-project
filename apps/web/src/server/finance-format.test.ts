@@ -41,3 +41,11 @@ test("civil date and report periods use Sao Paulo across UTC and year boundaries
   assert.deepEqual(reportPeriod("last-month", instant), { from: "2026-11-01", to: "2026-11-30" });
   assert.deepEqual(reportPeriod("year", instant), { from: "2026-01-01", to: "2026-12-31" });
 });
+
+test("monthly navigation uses absolute civil months across years and leap days", async () => {
+  const { formatReportMonth, offsetReportMonth, reportPeriod } = await import("../components/finance-format");
+  assert.equal(offsetReportMonth("2026-01-01", -1), "2025-12");
+  assert.equal(offsetReportMonth("2025-12-01", 1), "2026-01");
+  assert.deepEqual(reportPeriod("2028-02", new Date("2029-04-01T12:00:00Z")), { from: "2028-02-01", to: "2028-02-29" });
+  assert.equal(formatReportMonth("2026-11-01"), "Nov. 2026");
+});
