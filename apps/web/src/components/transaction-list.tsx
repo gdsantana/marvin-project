@@ -3,7 +3,7 @@
 import { ListSkeleton } from "./workspace-skeleton";
 import { useListArrival } from "@/hooks/use-list-arrival";
 import { useMemo, useState } from "react";
-import { ArrowDownIcon, ArrowDownLeftIcon, ArrowUpRightIcon, ChevronRightIcon, CircleCheckIcon, SearchIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowDownLeftIcon, ArrowUpRightIcon, CircleCheckIcon, SearchIcon } from "lucide-react";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -82,7 +82,6 @@ export function TransactionList({ loading = false, rows, newTransactionIds = [],
   };
 
   return <div ref={listRoot}><section aria-busy={loading} aria-label="Extrato de transações" className="flex flex-col gap-4">
-    <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={showCancelled} onChange={event => setShowCancelled(event.target.checked)} />Mostrar cancelados</label>
     <div className="flex flex-col gap-3 rounded-xl bg-card p-3 sm:p-4">
       <label className="relative block">
         <SearchIcon aria-hidden="true" className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -101,14 +100,13 @@ export function TransactionList({ loading = false, rows, newTransactionIds = [],
         <NativeSelect aria-label="Filtrar por categoria" value={categoryId} onChange={event => setCategoryId(event.target.value)} className="w-full sm:w-48"><NativeSelectOption value="">Todas as categorias</NativeSelectOption>{categories.map(([id, name]) => <NativeSelectOption key={id} value={id}>{name}</NativeSelectOption>)}</NativeSelect>
         {(query || filter !== "all" || accountId || categoryId) && <Button variant="ghost" onClick={() => { setQuery(""); setFilter("all"); setAccountId(""); setCategoryId(""); }}>Limpar filtros</Button>}
       </div>
+      <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={showCancelled} onChange={event => setShowCancelled(event.target.checked)} />Mostrar cancelados</label>
     </div>
 
-    <div className="rounded-xl bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0"><p className="font-mono text-[11px] tracking-widest text-muted-foreground">TRANSAÇÕES</p><p className="text-xs text-muted-foreground">Extrato consolidado</p></div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2 px-1">
+        <h2 className="font-medium">Lançamentos</h2>
         <p className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{loading ? "Carregando registros…" : `${filteredRows.length} ${filteredRows.length === 1 ? "transação listada" : "transações listadas"}`}</p>
       </div>
-    </div>
 
     <div className="min-h-96">{loading ? <ListSkeleton rows={3} rowClassName="min-h-28 xl:min-h-16" /> : !filteredRows.length ? <Empty><EmptyDescription>{rows.length ? "Nenhuma transação corresponde à busca." : empty}</EmptyDescription></Empty> : <>
       <div className="flex flex-col gap-4 xl:hidden">
@@ -137,7 +135,7 @@ function TransactionCard({ row, rows, transactionActions, isNew }: { isNew: bool
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">{incomeKinds.has(row.kind) ? <ArrowDownLeftIcon aria-hidden="true" className="text-success" /> : <ArrowUpRightIcon aria-hidden="true" className="text-destructive" />}</div>
         <div className="min-w-0"><p className="truncate text-sm font-medium">{row.description}</p><div className="mt-1 flex flex-wrap items-center gap-1.5"><Badge variant="outline" className="h-5 rounded px-1.5 py-0 font-mono text-[10px] uppercase tracking-wide">{category ?? kindLabel(row.kind)}</Badge>{row.reviewStatus === "needs_review" ? <Badge variant="outline" className="h-5 rounded px-1.5 py-0 text-[10px]">Precisa revisar</Badge> : <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><CircleCheckIcon aria-hidden="true" className="size-3 text-success" />Confirmado</span>}</div></div>
       </div>
-      <div className="flex max-w-[48%] min-w-0 shrink-0 items-center gap-1"><div className="min-w-0 break-words text-right"><p className={`font-mono text-sm font-medium tabular-nums ${amountTone(row)}`}>{formatAmount(row)}</p><p className="font-mono text-[10px] text-muted-foreground">{formatDate(row.occurredOn)}</p></div><ChevronRightIcon aria-hidden="true" className="size-4 text-muted-foreground" /></div>
+      <div className="flex max-w-[48%] min-w-0 shrink-0 items-center gap-1"><div className="min-w-0 break-words text-right"><p className={`font-mono text-sm font-medium tabular-nums ${amountTone(row)}`}>{formatAmount(row)}</p><p className="font-mono text-[10px] text-muted-foreground">{formatDate(row.occurredOn)}</p></div></div>
     </div>
     {(transactionActions || row.notes) && <details className="mt-2 border-t border-border pt-1 text-xs"><summary className="flex min-h-9 cursor-pointer items-center text-muted-foreground">Detalhes do lançamento</summary><div className="grid gap-3 pb-2 text-muted-foreground">{row.notes && <p className="whitespace-pre-wrap">{row.notes}</p>}<TransactionMeta row={row} />{transactionActions && <ActionButtons row={row} rows={rows} actions={transactionActions} />}</div></details>}
   </li>;

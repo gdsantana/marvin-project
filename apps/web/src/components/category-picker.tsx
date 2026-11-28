@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useId, useRef, useState, type FormEvent } from "react";
+import { createContext, useContext, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { CreateCategoryInput } from "@finance/contracts";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,8 @@ import type { CategoryOption } from "./workspace-types";
 
 export const CategoryCreationContext = createContext<((input: CreateCategoryInput, key: string) => Promise<CategoryOption>) | null>(null);
 
-export function CategoryPicker({ categories, type, name = "categoryId", label = "Categoria", defaultValue = "", disabled = false }: {
-  categories: CategoryOption[]; type: "income" | "expense"; name?: string; label?: string; defaultValue?: string; disabled?: boolean;
+export function CategoryPicker({ categories, type, name = "categoryId", label = "Categoria", defaultValue = "", disabled = false, action }: {
+  categories: CategoryOption[]; type: "income" | "expense"; name?: string; label?: string; defaultValue?: string; disabled?: boolean; action?: ReactNode;
 }) {
   const createCategory = useContext(CategoryCreationContext);
   const id = useId();
@@ -55,6 +55,7 @@ export function CategoryPicker({ categories, type, name = "categoryId", label = 
         {available.map(category => <option key={category.id} value={category.id}>{categoryPath(category, categories)}</option>)}
       </NativeSelect>
     </Field>
+    {(createCategory || action) && <div className="flex flex-wrap items-center gap-x-2">
     {createCategory && <Dialog open={open} onOpenChange={next => { if (!inFlight.current) { setOpen(next); if (next) setError(""); } }}>
       <Button type="button" variant="ghost" disabled={disabled} className="min-h-11 self-start" onClick={() => { setError(""); setOpen(true); }}>Criar categoria</Button>
       <DialogContent showCloseButton={false} initialFocus={nameRef} finalFocus={selectRef}>
@@ -70,5 +71,7 @@ export function CategoryPicker({ categories, type, name = "categoryId", label = 
         </form>
       </DialogContent>
     </Dialog>}
+    {action}
+    </div>}
   </FieldGroup>;
 }

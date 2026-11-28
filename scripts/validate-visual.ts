@@ -54,6 +54,7 @@ async function intercept(context: BrowserContext): Promise<State> {
     const url = new URL(request.url());
     if (url.origin !== new URL(process.env.VISUAL_BASE_URL!).origin) return route.abort();
     if (!url.pathname.startsWith("/api/")) return route.continue();
+    if (url.pathname === "/api/events") return route.fulfill({ status: 204 });
     if (url.pathname === "/api/auth/session") {
       if (request.method() === "DELETE") state.authenticated = false;
       return json(route, { authenticated: state.authenticated, csrfToken: "synthetic-csrf" });
@@ -61,6 +62,12 @@ async function intercept(context: BrowserContext): Promise<State> {
     if (url.pathname === "/api/auth/login") {
       state.authenticated = true;
       return json(route, { authenticated: true });
+    }
+    if (request.method() === "GET" && url.pathname === "/api/v1/reports/spending") {
+      return route.fulfill({ json: { ok: true, data: {
+        categories: state.empty ? [] : [{ categoryId: ids[7], categoryName: "Categoria sintética", amountMinor: "6789" }],
+        paymentMethods: state.empty ? [] : [{ method: "pix", amountMinor: "6789" }],
+      } } });
     }
     if (request.method() === "GET" && ["/api/v1/reports/summary", "/api/v1/reports/monthly-series"].includes(url.pathname)) {
       if (state.reportHook && url.pathname.endsWith("/summary")) return state.reportHook(route, url);
@@ -113,7 +120,9 @@ async function controls(page: Page) {
   }
   const excessiveMotion = await page.evaluate(() => [...document.querySelectorAll("*")].filter(element => {
     const style = getComputedStyle(element);
-    return [style.animationDuration, style.transitionDuration].some(value => value.split(",").some(duration => parseFloat(duration) > 0.01));
+    const animationLimit = style.animationName === "page-enter" ? 0.15 : 0.01;
+    return style.animationDuration.split(",").some(duration => parseFloat(duration) > animationLimit)
+      || style.transitionDuration.split(",").some(duration => parseFloat(duration) > 0.01);
   }).length);
   assert.equal(excessiveMotion, 0, "P4: movimento não reduzido");
   await noOverflow(page);
@@ -179,7 +188,7 @@ async function main() {
         for (const route of routes) {
           await page.goto(`${base.origin}${route}`);
           await page.locator("#main-content").waitFor();
-          await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "R$ 9.007.199.254.740.993,01");
+          await visibleText(page, route === "/reports" ? "R$ 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "R$ 9.007.199.254.740.993,01");
           assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: rolagem horizontal`);
           await page.screenshot({ path: join(output, `${viewport.width}-audit-${route.slice(1) || "overview"}.png`), fullPage: true });
           if (route === "/entries") {
@@ -283,9 +292,15 @@ async function main() {
           await page.goto(`${base.origin}${route}`);
           if (route === "/login") await page.getByLabel("Senha", { exact: true }).waitFor();
           else {
-            await page.getByRole("combobox", { name: "Outras operações" }).waitFor();
-            await visibleText(page, route === "/reports" ? "BRL 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "R$ 9.007.199.254.740.993,01");
-            for (const destination of routes) {
+            if (route === "/reports") {
+              await page.getByRole("banner").getByRole("combobox", { name: "Período do relatório" }).waitFor();
+              await page.getByRole("heading", { name: "Gastos por meio de pagamento" }).waitFor();
+              assert.deepEqual(await page.locator("main h2, main h3").allTextContents(), [
+                "Resumo do período", "Evolução mensal", "Gastos por categoria", "Indicadores do período", "Gastos por meio de pagamento", "Compromissos futuros",
+              ]);
+            } else await page.getByRole("combobox", { name: "Outras operações" }).waitFor();
+            await visibleText(page, route === "/reports" ? "R$ 123,45" : route === "/entries" ? "Receita sintética" : route === "/cards" || route === "/statements" ? "Cartão sintético" : route === "/accounts" ? "Conta sintética BRL" : "R$ 9.007.199.254.740.993,01");
+            for (const destination of route === "/reports" && viewport.width < 768 ? [route] : routes) {
               const link = page.locator(`nav a[href="${destination}"]:visible`).first();
               await link.waitFor();
               if (destination === route) assert.equal(await link.getAttribute("aria-current"), "page");
@@ -320,9 +335,161 @@ async function main() {
             await dialogCheck(page, title!, join(output, `${viewport.width}-${colorScheme}-dialog-${title!.normalize("NFD").replace(/[^a-zA-Z]/g, "")}.png`));
           }
         });
+        await scenario("quick-transaction-dialog", async (page, state) => {
+          await page.route("**/api/v1/transactions/income", async route => {
+            assert.equal(route.request().postDataJSON().amountMinor, "1842");
+            await json(route, { transactionId: ids[3] }, 201);
+          });
+          await page.goto(`${base.origin}/reports`);
+          await visibleText(page, "R$ 123,45");
+          const trigger = page.getByRole("button", { name: "Nova transação", exact: true });
+          await trigger.focus();
+          await page.keyboard.press("Enter");
+          const dialog = page.getByRole("dialog", { name: "Nova transação" });
+          const amount = dialog.getByRole("textbox", { name: "Valor", exact: true });
+          await amount.waitFor();
+          assert.equal(new URL(page.url()).pathname, "/reports");
+          await amount.fill("18,42");
+          await dialog.getByRole("textbox", { name: "Descrição" }).fill("Receita no diálogo");
+          await dialog.getByRole("button", { name: "Receita", exact: true }).click();
+          assert.equal(await amount.inputValue(), "18,42");
+          assert.equal(await dialog.getByRole("textbox", { name: "Descrição" }).inputValue(), "Receita no diálogo");
+          await dialog.getByRole("combobox", { name: "Conta", exact: true }).selectOption(ids[0]!);
+          await dialog.getByRole("button", { name: "Revisar transação", exact: true }).click();
+          await dialog.getByRole("button", { name: "Confirmar e salvar" }).waitFor();
+          assert.equal(state.previews.at(-1)?.amountMinor, "1842");
+          await dialog.getByRole("button", { name: "Editar dados" }).click();
+          await amount.waitFor();
+          assert.equal(await amount.inputValue(), "18,42");
+          await page.screenshot({ path: join(output, `quick-transaction-${viewport.width}-${colorScheme}.png`) });
+          await dialog.getByRole("button", { name: "Revisar transação", exact: true }).click();
+          await dialog.getByRole("button", { name: "Confirmar e salvar" }).click();
+          await dialog.waitFor({ state: "hidden" });
+          await visibleText(page, "Transação salva.");
+          await page.waitForFunction(() => document.activeElement?.matches('button[aria-haspopup="dialog"]'));
+          assert(await trigger.evaluate(element => element === document.activeElement));
+          assert.equal(new URL(page.url()).pathname, "/reports");
+
+          await page.goto(`${base.origin}/new`);
+          await dialog.waitFor();
+          await amount.waitFor();
+          await page.locator('nav a[href="/entries"][aria-current="page"]').first().waitFor({ state: "attached" });
+          await dialog.getByRole("button", { name: "Cancelar" }).click();
+          await page.waitForURL(`${base.origin}/entries`);
+          await dialog.waitFor({ state: "hidden" });
+          await noOverflow(page);
+        });
+        await scenario("P4-statement-adjustment", async page => {
+          const first = { id: "10000000-0000-4000-8000-000000000010", cardAccountId: ids[2], cardAccountName: accounts[2]!.name, currency: "BRL", dueOn: "2026-11-10", status: "open", remainingMinor: "10001" };
+          const secondCard = { ...accounts[2], id: "10000000-0000-4000-8000-000000000011", name: "Segundo cartão" };
+          const second = { ...first, id: "10000000-0000-4000-8000-000000000012", cardAccountId: secondCard.id, cardAccountName: secondCard.name };
+          await page.route("**/api/v1/accounts", route => json(route, [...accounts, secondCard]));
+          await page.route("**/api/v1/statements?*", route => json(route, [first, second]));
+          await page.goto(`${base.origin}/statements`);
+          const openAdjustment = page.getByRole("button", { name: "Ajustar fatura", exact: true });
+          await openAdjustment.click();
+          const dialog = page.getByRole("dialog");
+          const cards = dialog.locator('select[name="cardAccountId"]');
+          const statements = dialog.locator('select[name="statementId"]');
+          await statements.waitFor();
+          assert.equal(await cards.inputValue(), first.cardAccountId);
+          assert.deepEqual(await statements.locator("option").evaluateAll(options => options.map(option => option.getAttribute("value"))), ["", first.id]);
+          await statements.selectOption(first.id);
+          await cards.selectOption(secondCard.id);
+          assert.deepEqual(await statements.locator("option").evaluateAll(options => options.map(option => option.getAttribute("value"))), ["", second.id]);
+          assert.equal(await statements.inputValue(), "");
+          await page.keyboard.press("Escape");
+          await dialog.waitFor({ state: "hidden" });
+        });
+        await scenario("statement-dialogs", async page => {
+          const [open, payable] = fixtures["/api/v1/statements"] as { id: string; status: string; remainingMinor: string }[];
+          const paid = { ...payable!, id: ids[8], status: "paid", remainingMinor: "0" };
+          let closed = false;
+          await page.route("**/api/v1/statements?*", route => json(route, [{ ...open, closingOn: "2026-11-01", status: closed ? "closed" : "open" }, payable, paid]));
+          await page.route("**/api/v1/statements/close", async route => {
+            assert.deepEqual(route.request().postDataJSON(), { statementId: open!.id });
+            closed = true;
+            await json(route, { id: open!.id });
+          });
+          await page.route("**/api/v1/transactions/preview", async route => {
+            assert.equal(route.request().postDataJSON().statementId, payable!.id);
+            await json(route, { operation: "statement_payment", statementId: payable!.id, entries: [{ accountId: ids[0], amountMinor: "-1000" }, { accountId: ids[2], amountMinor: "1000" }], remainingStatementMinor: "9001" });
+          });
+          await page.goto(`${base.origin}/statements`);
+          const openGlobal = page.getByRole("button", { name: "Fechar fatura", exact: true });
+          await openGlobal.click();
+          const close = page.getByRole("dialog", { name: "Fechar fatura" });
+          const closeSubmit = close.getByRole("button", { name: "Fechar fatura", exact: true });
+          await close.getByRole("combobox", { name: "Fatura" }).waitFor();
+          assert(await closeSubmit.isDisabled());
+          assert.equal(await close.getByRole("combobox").count(), 1);
+          assert.equal(await close.getByRole("textbox").count(), 0);
+          await page.keyboard.press("Escape");
+          await close.waitFor({ state: "hidden" });
+
+          const openFromRow = page.getByRole("button", { name: /^Fechar fatura de/ });
+          await openFromRow.click();
+          assert.equal(await close.getByRole("combobox", { name: "Fatura" }).inputValue(), open!.id);
+          await close.getByText("01/11/2026", { exact: true }).waitFor();
+          await closeSubmit.click();
+          await close.waitFor({ state: "hidden" });
+          await visibleText(page, "Fatura fechada.");
+
+          await page.getByRole("button", { name: /^Pagar fatura de/ }).nth(1).click();
+          const payment = page.getByRole("dialog", { name: "Pagar fatura" });
+          const picker = payment.getByRole("combobox", { name: "Fatura" });
+          assert.equal(await picker.inputValue(), payable!.id);
+          assert.deepEqual(await picker.locator("option").evaluateAll(options => options.map(option => option.value)), ["", open!.id, payable!.id]);
+          await payment.getByText("R$ 100,01", { exact: true }).waitFor();
+          assert(!(await payment.getByLabel("Data de postagem").isVisible()));
+          await payment.getByRole("textbox", { name: "Valor do pagamento" }).fill("10,00");
+          await payment.getByRole("combobox", { name: "Conta de origem" }).selectOption(ids[0]!);
+          await payment.getByRole("textbox", { name: "Descrição" }).fill("Pagamento sintético");
+          const review = payment.getByRole("button", { name: "Revisar pagamento" });
+          const body = payment.locator('[data-slot="action-dialog-body"]');
+          await body.evaluate(element => { element.scrollTop = 0; });
+          await review.waitFor();
+          const box = await review.boundingBox();
+          assert(box && box.y + box.height <= viewport.height, "Botão do diálogo fora da viewport");
+          await review.click();
+          await payment.getByText(/Saldo restante da fatura/).waitFor();
+          await payment.getByRole("button", { name: "Editar dados" }).click();
+          assert.equal(await payment.getByRole("textbox", { name: "Valor do pagamento" }).inputValue(), "10,00");
+          await page.keyboard.press("Escape");
+          await payment.waitFor({ state: "hidden" });
+          await noOverflow(page);
+        });
+        await scenario("reports-comparison-commitments", async page => {
+          await page.clock.setFixedTime(new Date("2026-11-27T15:00:00Z"));
+          const requestedPeriods = new Set<string>();
+          await page.route("**/api/v1/reports/categories?*", async route => {
+            const from = new URL(route.request().url()).searchParams.get("from")!;
+            requestedPeriods.add(from);
+            const categories = fixtures["/api/v1/reports/categories"] as { expenseMinor: string }[];
+            await route.fulfill({ json: { ok: true, data: categories.map(category => ({ ...category, expenseMinor: ["2026-10-01", "2025-01-01"].includes(from) ? "5000" : "6789" })) } });
+          });
+          await page.route("**/api/v1/statements?*", route => json(route, [{ ...(fixtures["/api/v1/statements"] as object[])[0], dueOn: "2026-12-15", remainingMinor: "10000" }]));
+          await page.route("**/api/v1/expense-forecasts?*", route => json(route, [{ ...(fixtures["/api/v1/expense-forecasts"] as object[])[0], expectedOn: "2026-12-21", amountMinor: "5000" }]));
+          await page.goto(`${base.origin}/reports`);
+          await visibleText(page, "R$ 150,00");
+          assert.deepEqual([...requestedPeriods], ["2026-11-01"]);
+          const comparison = page.getByRole("button", { name: "Comparação", exact: true });
+          await comparison.click();
+          await visibleText(page, "+R$ 17,89");
+          await visibleText(page, "+35,78%");
+          assert.equal(await comparison.getAttribute("aria-pressed"), "true");
+          assert(requestedPeriods.has("2026-10-01"));
+          await page.getByRole("combobox", { name: "Período do relatório" }).selectOption("year");
+          await visibleText(page, "2026 vs. 2025");
+          await visibleText(page, "+R$ 17,89");
+          await visibleText(page, "R$ 150,00");
+          assert(requestedPeriods.has("2025-01-01"));
+          assert.equal(await page.getByRole("link", { name: "Ver previsões" }).getAttribute("href"), "/entries#previsoes");
+          await noOverflow(page);
+        });
         await scenario("P2-out-of-order", async (page, state) => {
           await page.goto(`${base.origin}/reports`);
-          await visibleText(page, "BRL 123,45");
+          await visibleText(page, "R$ 123,45");
           let held: Route | undefined;
           let markHeld!: () => void;
           const requested = new Promise<void>(resolve => { markHeld = resolve; });
@@ -331,19 +498,19 @@ async function main() {
             held = route;
             markHeld();
           };
-          const period = page.getByRole("combobox", { name: "Período do relatório" });
+          const period = page.getByRole("banner").getByRole("combobox", { name: "Período do relatório" });
           await period.selectOption("last-month");
           await Promise.race([requested, new Promise((_, reject) => setTimeout(() => reject(new Error("P2: consulta não observada")), 7000))]);
           await period.selectOption("year");
-          await visibleText(page, "BRL 222,22");
+          await visibleText(page, "R$ 222,22");
           assert(held);
           await json(held, summary(new URL(held.request().url()), "11111")).catch(error => {
             assert(/closed|handled|canceled|cancelled|aborted/i.test(String(error)), "P2: erro inesperado ao liberar resposta antiga");
           });
           await page.waitForTimeout(300);
           assert.equal(await period.inputValue(), "year");
-          await visibleText(page, "BRL 222,22");
-          assert.equal(await page.getByText("BRL 111,11", { exact: true }).count(), 0, "P2: resposta obsoleta exibida");
+          await visibleText(page, "R$ 222,22");
+          assert.equal(await page.getByText("R$ 111,11", { exact: true }).count(), 0, "P2: resposta obsoleta exibida");
         });
         await scenario("P2-card-settings", async page => {
           const secondCard = { ...accounts[2], id: "30000000-0000-4000-8000-000000000000", name: "Segundo cartão sintético" };
@@ -440,18 +607,55 @@ async function main() {
           assert.match(await page.locator(`#transaction-${ids[6]}`).innerText(), /Transferência/);
           assert.equal(await page.getByRole("searchbox").count(), 0, "P5: busca sem suporte no contrato atual");
         });
+        await scenario("account-detail", async page => {
+          await page.goto(`${base.origin}/accounts/${ids[0]}`);
+          const balance = page.getByText("R$ 9.007.199.254.740.993,01", { exact: true });
+          await balance.waitFor();
+          assert.equal(await balance.evaluate(element => Boolean(element.closest('[data-slot="card"]'))), false);
+          await page.getByRole("heading", { name: "Gastos por categoria" }).waitFor();
+          await page.getByRole("heading", { name: "Gastos por meio de pagamento" }).waitFor();
+          await visibleText(page, "Categoria sintética");
+          await visibleText(page, "Pix");
+          await noOverflow(page);
+
+          const header = page.getByRole("banner");
+          assert.equal(await header.getByRole("combobox", { name: "Outras operações", includeHidden: true }).count(), 0);
+          if (viewport.width >= 768) await header.getByRole("button", { name: "Nova transação" }).waitFor();
+          const period = header.getByRole("combobox", { name: "Período da conta" });
+          assert.equal(await period.inputValue(), "month");
+          const [response] = await Promise.all([
+            page.waitForResponse(response => {
+              const url = new URL(response.url());
+              return url.pathname === "/api/v1/reports/spending" && url.searchParams.get("accountId") === ids[0];
+            }),
+            header.getByRole("button", { name: "Mês anterior" }).click(),
+          ]);
+          assert.equal(await period.inputValue(), "last-month");
+          const dates = await period.locator("option:checked").evaluate(option => option.parentElement?.getAttribute("label"));
+          const query = new URL(response.url()).searchParams;
+          const displayDate = (date: string | null) => date?.split("-").reverse().join("/");
+          assert.equal(`${displayDate(query.get("from"))} a ${displayDate(query.get("to"))}`, dates);
+          const main = page.getByRole("main");
+          const backLink = main.getByRole("link", { name: "Contas", exact: true });
+          assert.equal(await backLink.getAttribute("href"), "/accounts");
+          assert(await backLink.evaluate(element => element.getBoundingClientRect().height >= 44));
+          assert.deepEqual(await main.locator("a, h1").allTextContents(), ["Contas", "Conta sintética BRL"]);
+          await backLink.click();
+          await page.waitForURL(`${base.origin}/accounts`);
+        });
         await scenario("P2-empty-error-retry", async (page, state) => {
           state.empty = true;
           await page.goto(`${base.origin}/reports`);
-          await page.getByText(/Não há movimentações/).waitFor();
+          await visibleText(page, "Sem despesas por categoria neste período.");
           state.empty = false;
           state.failReport = true;
           await page.reload();
-          await page.getByRole("alert").filter({ hasText: "Não foi possível carregar o relatório. Tente novamente." }).waitFor();
-          assert.equal(await page.getByText("BRL 0,00", { exact: true }).count(), 0);
+          const summaryError = page.getByRole("alert").filter({ hasText: "Não foi possível carregar o relatório. Tente novamente." });
+          await summaryError.waitFor();
+          assert.equal(await page.getByText("R$ 0,00", { exact: true }).count(), 0);
           state.failReport = false;
-          await page.getByRole("button", { name: "Tentar novamente", exact: true }).click();
-          await visibleText(page, "BRL 123,45");
+          await summaryError.getByRole("button", { name: "Tentar novamente", exact: true }).click();
+          await visibleText(page, "R$ 123,45");
         });
         await scenario("P4-auth", async (page, state) => {
           state.authenticated = false;

@@ -140,7 +140,7 @@ function DashboardLink({ href, children }: { href: string; children: string }) {
   return <Link href={href} className="inline-flex min-h-11 w-fit items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline">{children}<ArrowRightIcon aria-hidden="true" className="size-3.5" /></Link>;
 }
 
-export function DashboardPeriodSelect({ range, setRange }: { range: ReportRange; setRange: (range: ReportRange) => void }) {
+export function DashboardPeriodSelect({ range, setRange, label = "Período do resumo" }: { range: ReportRange; setRange: (range: ReportRange) => void; label?: string }) {
   const now = new Date();
   const { from, to } = reportPeriod(range, now);
   const currentMonth = reportPeriod("month", now).from;
@@ -159,7 +159,7 @@ export function DashboardPeriodSelect({ range, setRange }: { range: ReportRange;
     <button type="button" aria-label="Mês anterior" className={arrowClass} disabled={anchor <= "0001-01-01"} onClick={() => selectMonth(offsetReportMonth(anchor, -1))}>
       <ChevronLeftIcon className="size-4" aria-hidden="true" />
     </button>
-    <NativeSelect className="w-20 min-[360px]:w-24 [&>svg]:hidden [&>select]:rounded-full [&>select]:border-transparent [&>select]:bg-transparent [&>select]:px-1 [&>select]:text-center [&>select]:text-sm [&>select]:font-medium [&>select:hover]:bg-background pointer-fine:[&>select]:min-h-8" aria-label="Período do resumo" aria-describedby="dashboard-period-dates" value={range} onChange={event => setRange(event.target.value as ReportRange)}>
+    <NativeSelect className="w-20 min-[360px]:w-24 [&>svg]:hidden [&>select]:rounded-full [&>select]:border-transparent [&>select]:bg-transparent [&>select]:px-1 [&>select]:text-center [&>select]:text-sm [&>select]:font-medium [&>select:hover]:bg-background pointer-fine:[&>select]:min-h-8" aria-label={label} aria-describedby="dashboard-period-dates" value={range} onChange={event => setRange(event.target.value as ReportRange)}>
       {periods.map(value => {
         const period = reportPeriod(value, now);
         const label = value === "year" ? `Ano ${period.from.slice(0, 4)}` : formatReportMonth(period.from);

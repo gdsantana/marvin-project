@@ -32,13 +32,13 @@ function monthlyTickLabel(coordinate: number, maximum: bigint, currency: string)
   return `${amount < 0n ? "−" : ""}${symbol} ${compactMoney.format(magnitude(amount) / 100n)}`;
 }
 
-export function MonthlyFinanceChart({ series, currency, variant = "bar" }: { series: FinanceSeriesPoint[]; currency: string; variant?: "bar" | "line" }) {
+export function MonthlyFinanceChart({ series, currency, variant = "bar", showLegend = true, compactEmpty = false }: { series: FinanceSeriesPoint[]; currency: string; variant?: "bar" | "line"; showLegend?: boolean; compactEmpty?: boolean }) {
   const animate = useChartAnimation();
   const { rows: data, maximum } = monthlyChartData(series, currency);
   const isLine = variant === "line";
   const Chart = isLine ? LineChart : BarChart;
   const formatAmount = isLine ? formatCurrencyMinor : formatMinor;
-  if (!data.some(row => BigInt(row.incomeMinor) !== 0n || BigInt(row.expenseMinor) !== 0n)) return <div className="h-64 lg:h-72"><ChartEmpty /></div>;
+  if (!data.some(row => BigInt(row.incomeMinor) !== 0n || BigInt(row.expenseMinor) !== 0n)) return <div className={compactEmpty ? "h-40" : "h-64 lg:h-72"}><ChartEmpty /></div>;
   return <>
     <div className="relative"><ChartContainer config={monthlyConfig} className="h-64 min-h-64 w-full min-w-0 aspect-auto lg:h-72" aria-label={`Receitas e despesas líquidas por mês em ${currency}`}>
       <Chart accessibilityLayer data={data} margin={{ top: 12, right: 8, left: 8, bottom: 0 }}>
@@ -54,7 +54,7 @@ export function MonthlyFinanceChart({ series, currency, variant = "bar" }: { ser
           const key = name === "income" ? "incomeMinor" : "expenseMinor";
           return <span>{name === "income" ? monthlyConfig.income.label : monthlyConfig.expense.label}: <span className="font-mono">{formatAmount(row[key], currency)}</span></span>;
         }} />} />
-        <ChartLegend content={<ChartLegendContent />} />
+        {showLegend && <ChartLegend content={<ChartLegendContent />} />}
         {isLine ? <>
           <Line dataKey="income" stroke="var(--color-income)" strokeWidth={2.5} dot={{ r: 2.5 }} isAnimationActive={animate} animationBegin={0} animationDuration={280} animationEasing="ease-in-out" />
           <Line dataKey="expense" stroke="var(--color-expense)" strokeWidth={2.5} strokeDasharray="5 4" dot={{ r: 2.5 }} isAnimationActive={animate} animationBegin={0} animationDuration={280} animationEasing="ease-in-out" />
@@ -87,28 +87,6 @@ export function ExpenseDonutChart({ rows, currency, groupLabel = "categoria", to
 
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><div className={compact ? "w-3/5 max-w-28 text-center" : "max-w-32 text-center"}><p className="text-xs text-muted-foreground">{totalLabel}</p><p className="break-words font-mono text-sm font-medium">{formatAmount(total.toString(), currency)}</p>{groupLabel === "categoria" && !compact && <p className="mt-1 text-xs text-muted-foreground">{rows.length} categorias</p>}</div></div>
   </div>;
-}
-
-export function AmountFinanceChart({ rows, currency }: { rows: { label: string; amountMinor: string; fill?: string }[]; currency: string }) {
-  const animate = useChartAnimation();
-  const data = amountChartData(rows);
-  if (!data.some(row => BigInt(row.amountMinor) !== 0n)) return <ChartEmpty />;
-  return <>
-    <div className="relative"><ChartContainer config={{ value: { label: "Valor", color: "var(--chart-income)" } }} className="min-h-40 w-full min-w-0 aspect-auto" style={{ height: Math.max(160, rows.length * 48) }} aria-label={`Valores por categoria em ${currency}`}>
-      <BarChart accessibilityLayer layout="vertical" data={data} margin={{ left: 0, right: 12 }}>
-        <CartesianGrid horizontal={false} />
-        <XAxis type="number" hide domain={["auto", "auto"]} />
-        <YAxis type="category" dataKey="label" tickLine={false} axisLine={false} width={100} tickFormatter={label => String(label).length > 14 ? `${String(label).slice(0, 13)}…` : String(label)} />
-        <ReferenceLine x={0} stroke="var(--border)" />
-        <ChartTooltip content={<ChartTooltipContent hideLabel formatter={(_value, _name, item) => {
-          const row = item.payload as (typeof data)[number];
-          return <span>{row.label}: <span className="font-mono">{formatMinor(row.amountMinor, currency)}</span></span>;
-        }} />} />
-        <Bar dataKey="value" fill="var(--color-value)" radius={3} maxBarSize={16} isAnimationActive={animate} animationBegin={0} animationDuration={280} animationEasing="ease-in-out" />
-      </BarChart>
-    </ChartContainer></div>
-    <ul className="sr-only">{rows.map((row, index) => <li key={index}>{row.label}: {formatMinor(row.amountMinor, currency)}</li>)}</ul>
-  </>;
 }
 
 function ChartEmpty() {

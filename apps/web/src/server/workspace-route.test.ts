@@ -4,10 +4,11 @@ import { workspaceRoute } from "../components/workspace-route-data";
 
 test("persistent workspace resolves supported routes and account details", () => {
   assert.deepEqual(workspaceRoute("/"), { section: "overview" });
-  for (const section of ["settings", "new", "accounts", "cards", "entries", "statements", "reports"]) {
+  for (const section of ["settings", "accounts", "cards", "entries", "statements", "reports"]) {
     assert.deepEqual(workspaceRoute(`/${section}`), { section });
     assert.deepEqual(workspaceRoute(`/${section}/`), { section });
   }
+  for (const path of ["/new", "/new/"]) assert.deepEqual(workspaceRoute(path), { section: "entries", openNew: true });
   const accountId = "00000000-0000-4000-8000-000000000001";
   assert.deepEqual(workspaceRoute(`/accounts/${accountId}`), { section: "accounts", accountId });
 });

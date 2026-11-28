@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowLeftIcon } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createdIdResponseSchemaEnvelope, type CreateCategoryInput, type CategoryReport } from "@finance/contracts";
 import { addedTransactionIds, type TransactionSnapshot } from "./transaction-updates";
@@ -11,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Empty, EmptyDescription } from "@/components/ui/empty";
 import { ListSkeleton } from "./workspace-skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { AppShell } from "./app-shell";
 import { recentMonths } from "./finance-chart-data";
 import { DashboardOverview, DashboardPeriodSelect } from "./dashboard-overview";
@@ -19,20 +21,20 @@ import { DateRangeSelect } from "./date-range-select";
 import { TransactionList } from "./transaction-list";
 import { SpendingBreakdown } from "./spending-breakdown";
 import { ReportsDashboard } from "./reports-dashboard";
+import { ReportCommitments } from "./report-commitments";
 import { ActionDialog } from "./action-dialog";
-import { settingsActions, actionLabels, openingDebtCards, statementStatusLabel, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
+import { settingsActions, actionLabels, canPayStatement, openingDebtCards, statementStatusLabel, type Section, type Action, type AccountOption, type CategoryOption, type TransactionOption, type ExpenseForecastOption, type StatementOption, type References, type ReportData } from "./workspace-types";
 import { useRouter } from "next/navigation";
-import { formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod, type ReportRange } from "./finance-format";
+import { formatCurrencyMinor, formatDate, formatMinor, parseMajorToMinor, todayCivil, reportPeriod, type ReportRange } from "./finance-format";
 
 const titles: Record<Section, { title: string; intro: string }> = {
   settings: { title: "Configurações", intro: "Gerencie instituições, contas, cartões e categorias da plataforma." },
-  new: { title: "Nova transação", intro: "Registre uma receita ou despesa." },
   overview: { title: "Visão geral", intro: "" },
   accounts: { title: "Contas", intro: "Instituições e contas que fazem parte da sua vida financeira." },
-  cards: { title: "Cartões", intro: "Acompanhe limites, compras e próximos vencimentos." },
+  cards: { title: "Cartões", intro: "Acompanhe os saldos e limites disponíveis dos seus cartões." },
   entries: { title: "Transações", intro: "Histórico registrado e previsões avulsas em áreas separadas." },
   statements: { title: "Faturas", intro: "Fechamentos, parcelas e pagamentos dos seus cartões." },
-  reports: { title: "Relatórios", intro: "Receitas e despesas por período, em reais." },
+  reports: { title: "Relatórios", intro: "" },
 };
 
 function transactionKindLabel(kind: string) {
@@ -46,16 +48,16 @@ function transactionKindLabel(kind: string) {
   }
 }
 
-export function Workspace({ section, accountId }: { section: Section; accountId?: string }) {
+export function Workspace({ section, accountId, openNew = false }: { section: Section; accountId?: string; openNew?: boolean }) {
   const router = useRouter();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [csrf, setCsrf] = useState("");
-  const [form, setForm] = useState<Action | null>(section === "new" ? "expense" : null);
+  const [form, setForm] = useState<Action | null>(openNew ? "expense" : null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [range, setRange] = useState<ReportRange>("month");
   const [references, setReferences] = useState<References>({ accounts: [], categories: [], transactions: [], statements: [], institutions: [] });
-  const [spendingPeriod, setSpendingPeriod] = useState(() => reportPeriod("month"));
+  const [spendingRange, setSpendingRange] = useState<ReportRange>("month");
   const [historyPeriod, setHistoryPeriod] = useState(() => reportPeriod("month"));
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
@@ -75,6 +77,7 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const [pendingRequest, setPendingRequest] = useState<{ signature: string; key: string } | null>(null);
   const [pendingPreview, setPendingPreview] = useState<{ signature: string; data: Record<string, unknown> } | null>(null);
   const [forecasts, setForecasts] = useState<ExpenseForecastOption[]>([]);
+  const [initialStatementId, setInitialStatementId] = useState<string>();
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionOption | null>(null);
   const [selectedForecast, setSelectedForecast] = useState<ExpenseForecastOption | null>(null);
   const [pendingReverseReview, setPendingReverseReview] = useState<{ signature: string; reason: string; replacement: Record<string, unknown> | null } | null>(null);
@@ -82,9 +85,13 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   useEffect(() => {
     setMessage("");
     setNewTransactionIds([]);
-    setForm(section === "new" ? "expense" : null);
-    setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null);
+    setForm(null);
+    setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null); setInitialStatementId(undefined);
   }, [section]);
+
+  useEffect(() => {
+    if (openNew) setForm("expense");
+  }, [openNew]);
 
   useEffect(() => {
     fetch("/api/auth/session", { cache: "no-store" }).then(response => response.json()).then(result => {
@@ -203,7 +210,12 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const current = titles[section];
   const openTransactionAction = (action: "correct" | "reverse", transaction: TransactionOption) => { setSelectedTransaction(transaction); setSelectedForecast(null); setPendingReverseReview(null); setPendingPreview(null); setForm(action); };
   const openForecastAction = (action: "realizeForecast" | "cancelForecast", forecast: ExpenseForecastOption) => { setSelectedForecast(forecast); setSelectedTransaction(null); setPendingPreview(null); setForm(action); };
-  const closeDialog = useCallback(() => { setForm(null); setMessage(""); setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null); if (section === "new") router.push("/entries"); }, [section, router]);
+  const openStatementAction = (action: "close" | "payment", statementId?: string) => {
+    setMessage("");
+    setInitialStatementId(statementId);
+    setForm(action);
+  };
+  const closeDialog = useCallback((returnToEntries = true) => { setForm(null); setMessage(""); setPendingPreview(null); setPendingReverseReview(null); setSelectedTransaction(null); setSelectedForecast(null); setInitialStatementId(undefined); if (openNew && returnToEntries) router.replace("/entries"); }, [openNew, router]);
 
   async function createInlineCategory(input: CreateCategoryInput, key: string): Promise<CategoryOption> {
     const response = await fetch("/api/v1/categories", { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": csrf, "idempotency-key": key }, body: JSON.stringify(input) });
@@ -323,7 +335,7 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
       const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-csrf-token": csrf, "idempotency-key": idempotencyKey }, body: JSON.stringify(body) });
       const result = await response.json().catch(() => null);
       if (!response.ok) { setMessage(result?.error?.message ?? "Não foi possível salvar."); return; }
-      setPendingRequest(null); setPendingPreview(null); setPendingReverseReview(null); setForm(null); setSelectedForecast(null); setSelectedTransaction(null); setMessage(["income", "expense", "transfer", "purchase", "cashback", "refund", "payment"].includes(form) ? "Transação salva." : "Registro salvo."); setReloadToken(value => value + 1); if (section === "new") router.push("/entries"); else router.refresh();
+      setPendingRequest(null); setPendingPreview(null); setPendingReverseReview(null); setForm(null); setSelectedForecast(null); setSelectedTransaction(null); setInitialStatementId(undefined); setMessage(form === "close" ? "Fatura fechada." : form === "payment" ? "Pagamento registrado." : form === "statementAdjustment" ? "Ajuste registrado." : ["income", "expense", "transfer", "purchase", "cashback", "refund"].includes(form) ? "Transação salva." : "Registro salvo."); setReloadToken(value => value + 1); if (openNew) router.replace("/entries"); else router.refresh();
     } catch { setMessage("Falha de conexão. Tente novamente; a mesma chave de idempotência será reutilizada."); }
     finally { setBusy(false); }
   }
@@ -331,9 +343,12 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
   const referencesLoading = !hasData && !dataError;
   const historyLoading = loadedHistoryScope !== historyScope && !dataError;
 
-  return <AppShell createDisabled={!authenticated || dataLoading || Boolean(dataError)} section={section} title={selectedAccount?.name ?? current.title} description={accountId ? "Gastos e meios de pagamento da conta." : current.intro}
-    headerControl={section === "overview" ? <DashboardPeriodSelect range={range} setRange={setRange} /> : undefined}
-    onCreate={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }}
+  return <AppShell createDisabled={!authenticated || dataLoading || Boolean(dataError)} newTransactionDisabled={!authenticated || !hasData || Boolean(dataError)} section={section} title={selectedAccount?.name ?? current.title} description={accountId ? "" : current.intro} compact={Boolean(accountId)} showOperations={!accountId}
+    beforeTitle={accountId ? <Link href="/accounts" className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-sm text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+      <ArrowLeftIcon aria-hidden="true" className="size-4 shrink-0" />Contas
+    </Link> : undefined}
+    headerControl={accountId ? <DashboardPeriodSelect range={spendingRange} setRange={setSpendingRange} label="Período da conta" /> : section === "overview" || section === "reports" ? <DashboardPeriodSelect range={range} setRange={setRange} label={section === "reports" ? "Período do relatório" : undefined} /> : undefined}
+    onCreate={action => { setSelectedForecast(null); setSelectedTransaction(null); setInitialStatementId(undefined); setMessage(""); setForm(action); }}
     onSignOut={async () => {
       if (!authenticated) return;
       try {
@@ -356,15 +371,20 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
               </AlertDescription>
             </Alert>}
           {section === "overview" && <DashboardOverview referencesLoading={referencesLoading} newTransactionIds={newTransactionIds} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} analyticsUnavailable={Boolean(analyticsError && !currentAnalytics)} range={range} references={references} report={currentReport} reportError={Boolean(reportError && !currentReport)} />}
-          {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.map(action => <Button key={action} variant="outline" disabled={referencesLoading} onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></CardContent></Card>}
-          {section === "accounts" && (accountId ? <div className="grid gap-4">
-            <Link href="/accounts" className={buttonVariants({ variant: "outline", className: "w-fit" })}>Voltar para contas</Link>
+          {section === "settings" && <Card><CardHeader><CardTitle><h2>Cadastros e configurações</h2></CardTitle><CardDescription>Crie os cadastros usados nos lançamentos e ajuste o fechamento dos cartões.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.filter(action => !["correctOpeningBalance", "allocateOpeningDebt"].includes(action)).map(action => <Button key={action} variant="outline" disabled={referencesLoading} onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div><div className="mt-6 border-t pt-5"><h3 className="font-medium">Ajustes de abertura</h3><p className="mt-1 text-sm text-muted-foreground">Corrija o saldo cadastrado ou vincule a dívida inicial de um cartão à fatura.</p><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap">{settingsActions.filter(action => ["correctOpeningBalance", "allocateOpeningDebt"].includes(action)).map(action => <Button key={action} variant="outline" disabled={referencesLoading} onClick={() => setForm(action)}>{actionLabels[action]}</Button>)}</div></div></CardContent></Card>}
+          {section === "accounts" && (accountId ? <div className="grid gap-3 sm:gap-4">
             {selectedAccount || referencesLoading ? <>
-              <div className="w-full sm:max-w-72"><DateRangeSelect value={spendingPeriod} onChange={setSpendingPeriod} /></div>
-              <SpendingBreakdown key={accountId} accountId={accountId} period={spendingPeriod} reloadToken={reloadToken} />
+              <div className="grid min-w-0 gap-0.5">
+                <p className="text-sm text-muted-foreground">Saldo atual</p>
+                {selectedAccount ? <>
+                  <p className="font-mono text-xl font-medium tabular-nums [overflow-wrap:anywhere]">{formatCurrencyMinor(selectedAccount.balanceMinor, selectedAccount.currency)}</p>
+                  <p className="text-xs text-muted-foreground">{({ checking: "Conta corrente", savings: "Poupança", cash: "Dinheiro" } as Record<string, string>)[selectedAccount.type] ?? "Conta"}</p>
+                </> : <div role="status"><span className="sr-only">Carregando saldo</span><Skeleton aria-hidden="true" className="h-7 w-32" /></div>}
+              </div>
+              <SpendingBreakdown key={accountId} accountId={accountId} period={reportPeriod(spendingRange)} reloadToken={reloadToken} />
             </> : <EmptyInline text="Conta não encontrada." />}
           </div> : <ResourceSection loading={referencesLoading} title="Suas contas" detail="Saldos derivados do saldo inicial e das movimentações registradas." setForm={setForm} rows={references.accounts.filter(account => account.type !== "credit_card")} linkAccounts />)}
-          {section === "cards" && <ResourceSection loading={referencesLoading} title="Seus cartões" detail="Cartões e limites disponíveis." setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} />}
+          {section === "cards" && <ResourceSection loading={referencesLoading} title="Seus cartões" detail="Saldos e limites disponíveis dos cartões cadastrados." setForm={setForm} rows={references.accounts.filter(account => account.type === "credit_card")} linkCards />}
           {section === "entries" && <div className="mb-4 w-full"><DateRangeSelect value={historyPeriod} onChange={setHistoryPeriod} /></div>}
           {section === "statements" && <div className="mb-4 flex flex-wrap gap-3">
             <label className="grid gap-1 text-sm">De<input className="min-h-11 rounded-md border border-border bg-card px-3" type="date" value={historyPeriod.from} max={historyPeriod.to} onChange={event => { if (event.target.value) setHistoryPeriod(period => ({ ...period, from: event.target.value })); }} /></label>
@@ -374,29 +394,43 @@ export function Workspace({ section, accountId }: { section: Section; accountId?
             <TransactionList loading={historyLoading} newTransactionIds={newTransactionIds} rows={references.transactions} transactionActions={{ correct: transaction => openTransactionAction("correct", transaction), reverse: transaction => openTransactionAction("reverse", transaction) }} />
             <ExpenseForecasts loading={historyLoading} forecasts={forecasts} references={references} setForm={setForm} onRealize={forecast => openForecastAction("realizeForecast", forecast)} onCancel={forecast => openForecastAction("cancelForecast", forecast)} />
           </>}
-          {section === "statements" && <ResourceSection loading={historyLoading} title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={setForm} rows={references.statements} />}
-          {section === "reports" && (!reportError || currentReport) && <ReportsDashboard spending={<SpendingBreakdown period={reportPeriod(range)} reloadToken={reloadToken} />} series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []} analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} range={range} onRangeChange={setRange} report={currentReport} />}
+          {section === "statements" && <ResourceSection loading={historyLoading} title="Faturas dos cartões" detail="Faturas, parcelas, créditos e pagamentos." action="close" setForm={action => { if (action === "close") openStatementAction(action); else { setMessage(""); setForm(action); } }} onStatementAction={openStatementAction} rows={references.statements} />}
+          {section === "reports" && <div className="grid gap-3 sm:gap-4">
+            {(!reportError || currentReport) && <ReportsDashboard
+              spending={<SpendingBreakdown period={reportPeriod(range)} reloadToken={reloadToken} />}
+              series={currentAnalytics?.series ?? []} categories={currentAnalytics?.categories ?? []}
+              analyticsLoading={analyticsLoading || (!currentAnalytics && !analyticsError)} analyticsUnavailable={!!analyticsError && !currentAnalytics}
+              range={range} report={currentReport} reloadToken={reloadToken}
+            />}
+            <ReportCommitments statements={references.statements} forecasts={forecasts} loading={referencesLoading} />
+          </div>}
         </>}
-    {form && (section !== "new" || !dataError) && <CategoryCreationContext value={createInlineCategory}><ActionDialog loading={section === "new" && referencesLoading} presentation={section === "new" ? "inline" : "dialog"} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} /></CategoryCreationContext>}
+    {form && (!dataError || hasData) && <CategoryCreationContext value={createInlineCategory}><ActionDialog loading={referencesLoading} action={form} busy={busy} message={message} close={closeDialog} submit={submit} references={references} selectedTransaction={selectedTransaction} selectedForecast={selectedForecast} initialStatementId={initialStatementId} setAction={action => { setSelectedForecast(null); setSelectedTransaction(null); setForm(action); }} pendingPreview={pendingPreview} pendingReverseReview={pendingReverseReview} clearPreview={() => { setPendingPreview(null); setPendingReverseReview(null); }} /></CategoryCreationContext>}
   </AppShell>;
 }
 
 function EmptyInline({ text }: { text: string }) { return <Empty><EmptyDescription>{text}</EmptyDescription></Empty>; }
 
-function ResourceSection({ title, detail, action, setForm, rows, transactionActions, linkAccounts, loading = false }: { loading?: boolean; title: string; detail: string; action?: Action; linkAccounts?: boolean; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
-  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{action === "close" && <Button disabled={loading} variant="outline" onClick={() => setForm("statementAdjustment")}>Ajustar fatura</Button>}{action && <Button disabled={loading} onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button>}</div></div></CardHeader><CardContent className="min-h-48" aria-busy={loading}>{loading ? <ListSkeleton /> : <Rows rows={rows} empty="Ainda não há registros. Adicione o primeiro para começar." transactionActions={transactionActions} linkAccounts={linkAccounts} />}</CardContent></Card>;
+type StatementRowAction = (action: "close" | "payment", statementId: string) => void;
+
+function ResourceSection({ title, detail, action, setForm, rows, transactionActions, onStatementAction, linkAccounts, linkCards, loading = false }: { loading?: boolean; title: string; detail: string; action?: Action; onStatementAction?: StatementRowAction; linkAccounts?: boolean; linkCards?: boolean; setForm: (action: Action) => void; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
+  return <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>{title}</h2></CardTitle><CardDescription>{detail}</CardDescription></div><div className="flex flex-wrap gap-2">{action === "close" && <Button disabled={loading} variant="outline" onClick={() => setForm("statementAdjustment")}>Ajustar fatura</Button>}{action && <Button disabled={loading} onClick={() => setForm(action)}>{action === "close" ? "Fechar fatura" : actionLabels[action]}</Button>}</div></div></CardHeader><CardContent className={loading || !linkCards ? "min-h-48" : undefined} aria-busy={loading}>{loading ? <ListSkeleton /> : <Rows rows={rows} empty={action === "close" ? "Nenhuma fatura encontrada neste período." : "Ainda não há registros. Adicione o primeiro para começar."} transactionActions={transactionActions} onStatementAction={onStatementAction} linkAccounts={linkAccounts} linkCards={linkCards} />}</CardContent></Card>;
 }
 
-function Rows({ rows, empty, transactionActions, linkAccounts }: { linkAccounts?: boolean; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; empty: string; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
-  if (!rows.length) return <EmptyInline text={empty} />;
+function Rows({ rows, empty, transactionActions, onStatementAction, linkAccounts, linkCards }: { onStatementAction?: StatementRowAction; linkAccounts?: boolean; linkCards?: boolean; rows: (AccountOption | CategoryOption | TransactionOption | StatementOption)[]; empty: string; transactionActions?: { correct: (transaction: TransactionOption) => void; reverse: (transaction: TransactionOption) => void } }) {
+  if (!rows.length) return linkAccounts || linkCards ? <Empty><EmptyDescription>{linkCards ? "Você ainda não cadastrou nenhum cartão." : "Você ainda não cadastrou nenhuma conta."}</EmptyDescription><Link href="/settings" className={buttonVariants({ variant: "outline", className: "mt-3" })}>{linkCards ? "Cadastrar cartão em configurações" : "Cadastrar conta em configurações"}</Link></Empty> : <EmptyInline text={empty} />;
   return <ul className="divide-y divide-border">{rows.map(row => {
     let title: string, detail: string, amount = "";
-    if ("balanceMinor" in row) { title = row.name; detail = `${row.type === "credit_card" ? "Cartão" : "Conta"} · ${row.currency}${row.type === "credit_card" && row.availableCreditMinor !== undefined ? ` · disponível ${row.availableCreditMinor === null ? "sem limite definido" : formatMinor(row.availableCreditMinor, row.currency)}` : ""}`; amount = formatMinor(row.balanceMinor, row.currency); }
-    else if ("dueOn" in row) { title = row.cardAccountName; detail = `Vence em ${formatDate(row.dueOn)} · ${statementStatusLabel(row.status)}${row.billedMinor !== undefined ? ` · Total ${formatMinor(row.billedMinor, row.currency)}` : ""}${row.paidMinor !== undefined ? ` · Pago ${formatMinor(row.paidMinor, row.currency)}` : ""}${row.openingDebtMinor ? ` · Dívida inicial ${formatMinor(row.openingDebtMinor, row.currency)}` : ""}`; amount = row.creditBalanceMinor && BigInt(row.creditBalanceMinor) > 0n ? `Crédito ${formatMinor(row.creditBalanceMinor, row.currency)}` : row.remainingMinor ? formatMinor(row.remainingMinor, row.currency) : ""; }
+    if ("balanceMinor" in row) { title = row.name; detail = `${row.type === "credit_card" ? "Cartão" : "Conta"} · ${row.currency}${row.type === "credit_card" && row.availableCreditMinor !== undefined ? ` · ${row.availableCreditMinor === null ? "Limite não definido" : `Limite disponível ${formatMinor(row.availableCreditMinor, row.currency)}`}` : ""}`; amount = formatMinor(row.balanceMinor, row.currency); }
+    else if ("dueOn" in row) { title = row.cardAccountName; detail = `Vence em ${formatDate(row.dueOn)} · ${statementStatusLabel(row.status)}${row.billedMinor !== undefined ? ` · Total ${formatMinor(row.billedMinor, row.currency)}` : ""}${row.paidMinor !== undefined ? ` · Pago ${formatMinor(row.paidMinor, row.currency)}` : ""}${row.openingDebtMinor ? ` · Dívida inicial ${formatMinor(row.openingDebtMinor, row.currency)}` : ""}`; amount = row.creditBalanceMinor && BigInt(row.creditBalanceMinor) > 0n ? `Crédito ${formatMinor(row.creditBalanceMinor, row.currency)}` : row.remainingMinor !== undefined ? `A pagar ${formatMinor(row.remainingMinor, row.currency)}` : ""; }
     else if ("occurredOn" in row) { title = row.description; detail = [formatDate(row.occurredOn), transactionKindLabel(row.kind), row.counterpartyName].filter(Boolean).join(" · "); amount = row.entries?.map(entry => entry.currency ? formatMinor(entry.amountMinor, entry.currency) : entry.amountMinor).join(" / ") ?? ""; }
     else { title = row.name; detail = row.type === "income" ? "Categoria de receita" : "Categoria de despesa"; }
+    const statementAction = "dueOn" in row && (row.status === "open" ? "close" : canPayStatement(row) ? "payment" : null);
     return <li id={"occurredOn" in row ? `transaction-${row.id}` : undefined} key={row.id} className="py-3">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1 basis-36"><p className="break-words text-sm font-medium">{linkAccounts && "balanceMinor" in row ? <Link className="inline-flex min-h-11 max-w-full items-center font-medium text-primary underline-offset-4 hover:underline [overflow-wrap:anywhere]" href={`/accounts/${row.id}`}><span>{title}</span></Link> : title}</p><p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{detail}</p>{"occurredOn" in row && <>{row.reviewStatus && row.reviewStatus !== "confirmed" && <Badge variant="outline" className="mt-2">Precisa revisar</Badge>}{row.notes && <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">{row.notes}</p>}</>}</div>{amount && <span className={`max-w-full break-words font-mono text-sm font-medium tabular-nums ${"balanceMinor" in row && BigInt(row.balanceMinor) < 0n ? "text-destructive" : "balanceMinor" in row && BigInt(row.balanceMinor) > 0n ? "text-success" : ""}`}>{amount}</span>}</div>
+      <div className={linkAccounts ? "grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4" : "flex flex-wrap items-start justify-between gap-3"}><div className="min-w-0 flex-1 basis-36"><p className="break-words text-sm font-medium">{linkAccounts && "balanceMinor" in row ? <Link className="inline-flex min-h-11 max-w-full items-center font-medium text-primary underline-offset-4 hover:underline [overflow-wrap:anywhere]" href={`/accounts/${row.id}`}><span>{title}</span></Link> : title}</p><p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{detail}</p>{"occurredOn" in row && <>{row.reviewStatus && row.reviewStatus !== "confirmed" && <Badge variant="outline" className="mt-2">Precisa revisar</Badge>}{row.notes && <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">{row.notes}</p>}</>}</div>{amount && <div>{linkCards && <p className="mb-1 text-xs text-muted-foreground">Saldo do cartão</p>}<span className={`max-w-full break-words font-mono text-sm font-medium tabular-nums [overflow-wrap:anywhere] ${"balanceMinor" in row && BigInt(row.balanceMinor) < 0n ? "text-destructive" : "balanceMinor" in row && BigInt(row.balanceMinor) > 0n ? "text-success" : ""}`}>{amount}</span></div>}</div>
+      {onStatementAction && statementAction && "dueOn" in row && <Button type="button" variant="outline" className="mt-2 w-fit" onClick={() => onStatementAction(statementAction, row.id)} aria-label={`${actionLabels[statementAction]} de ${row.cardAccountName} com vencimento em ${formatDate(row.dueOn)}`}>
+        {actionLabels[statementAction]}
+      </Button>}
       {transactionActions && "occurredOn" in row && <details className="mt-3 rounded-lg bg-muted px-3 py-2 text-sm"><summary className="flex min-h-11 cursor-pointer items-center text-xs font-medium text-primary">Detalhes, revisões e vínculos</summary><div className="mt-3 grid gap-3 text-xs text-muted-foreground">
         <p>O histórico preserva as revisões deste lançamento.</p>
         <div><p className="font-medium text-foreground">Contas movimentadas</p>{row.entries?.map((entry, index) => <p key={`${entry.accountId}-${index}`} className="mt-1 flex flex-wrap justify-between gap-2 [&>span]:min-w-0 [&>span]:max-w-full [&>span]:break-words"><span>{entry.accountName}</span><span className="tabular-nums">{formatMinor(entry.amountMinor, entry.currency)}</span></p>)}</div>
@@ -411,10 +445,10 @@ function Rows({ rows, empty, transactionActions, linkAccounts }: { linkAccounts?
 
 function ExpenseForecasts({ forecasts, references, setForm, onRealize, onCancel, loading = false }: { loading?: boolean; forecasts: ExpenseForecastOption[]; references: References; setForm: (action: Action) => void; onRealize: (forecast: ExpenseForecastOption) => void; onCancel: (forecast: ExpenseForecastOption) => void }) {
   const groups: [ExpenseForecastOption["status"], string][] = [["projected", "Projetadas"], ["realized", "Realizadas"], ["cancelled", "Canceladas"]];
-  return <Card className="mt-6"><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>Previsões avulsas</h2></CardTitle><CardDescription>Compromissos esperados. Só alteram o saldo e as despesas quando realizados.</CardDescription></div><Button disabled={loading} onClick={() => setForm("forecast")}>Nova previsão</Button></div></CardHeader>
+  return <Card id="previsoes" className="mt-6 scroll-mt-20"><CardHeader><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex flex-col gap-1"><CardTitle><h2>Previsões avulsas</h2></CardTitle><CardDescription>Compromissos esperados. Só alteram o saldo e as despesas quando realizados.</CardDescription></div><Button disabled={loading} onClick={() => setForm("forecast")}>Nova previsão</Button></div></CardHeader>
     <CardContent className="grid gap-5">{groups.map(([status, title]) => {
       const items = forecasts.filter(forecast => forecast.status === status).sort((a, b) => a.expectedOn.localeCompare(b.expectedOn));
-      return <section key={status} aria-labelledby={`forecast-${status}`}><div className="flex items-baseline justify-between gap-2"><h3 id={`forecast-${status}`} className="font-medium">{title}</h3><span className="text-xs text-muted-foreground">{loading ? "…" : items.length}</span></div><div className="flow-root min-h-24">{loading ? <ListSkeleton rows={1} /> : items.length ? <ul className="mt-2 divide-y divide-border">{items.map(forecast => {
+      return <section key={status} aria-labelledby={`forecast-${status}`}><div className="flex items-baseline gap-2"><h3 id={`forecast-${status}`} className="font-medium">{title}</h3><span className="text-xs tabular-nums text-muted-foreground">{loading ? "…" : `(${items.length})`}</span></div><div className="flow-root">{loading ? <ListSkeleton rows={1} /> : items.length ? <ul className="mt-2 divide-y divide-border">{items.map(forecast => {
         const account = references.accounts.find(item => item.id === forecast.accountId);
         const category = references.categories.find(item => item.id === forecast.categoryId);
         return <li key={forecast.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{forecast.description}</p><p className="mt-1 text-xs text-muted-foreground">{formatDate(forecast.expectedOn)} · {account?.name ?? "Conta"} · {category?.name ?? "Sem categoria"}</p>{forecast.realizedTransactionId && <a className="mt-1 inline-block inline-flex min-h-11 items-center font-medium text-primary underline-offset-4 hover:underline text-xs" href={`/entries#transaction-${forecast.realizedTransactionId}`}>Ver despesa realizada</a>}</div><div className="flex max-w-full flex-wrap items-center gap-3"><strong className="break-words font-mono text-sm tabular-nums">{formatMinor(forecast.amountMinor, forecast.currency)}</strong>{status === "projected" && <div className="flex gap-1"><Button variant="outline" onClick={() => onRealize(forecast)}>Realizar</Button><Button variant="outline" onClick={() => onCancel(forecast)}>Cancelar</Button></div>}</div></li>;
